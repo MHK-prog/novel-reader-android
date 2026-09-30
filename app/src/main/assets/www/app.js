@@ -2,18 +2,17 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.1';
+const APP_VERSION = '0.2.2';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
 let activeText = '';
 let scrollTimer = 0;
 let restoringScroll = false;
-let lastReaderScrollY = 0;
+let lastEditorScrollTop = 0;
 let lastReaderScrollAt = 0;
 let quickScrollTimer = 0;
 let activeTags = new Set();
-let readerMode = 'read';
 let nativeStorageReady = false;
 let pendingNativeStorageResult = null;
 const $ = id => document.getElementById(id);
@@ -136,11 +135,15 @@ function showPage(name, title, writeHistory = true) {
   document.querySelectorAll('.page').forEach(page => page.classList.toggle('hidden', page.id !== `page-${name}`));
   $('topTitle').textContent = title || 'کتابخانه‌ی کتاب‌ها';
   document.body.classList.toggle('reader-mode', name === 'reader');
-  document.body.classList.toggle('reading-mode', name === 'reader' && readerMode === 'read');
   if (writeHistory && current !== name) history.pushState({ appPage: name, title: title || '' }, '', `#${name}`);
   window.scrollTo(0, 0);
 }
 window.addEventListener('popstate', event => {
+  if (document.body.classList.contains('reader-mode') && $('chapterEditor').value !== activeText) {
+    history.pushState({ appPage: 'reader', title: currentBook()?.title }, '', '#reader');
+    showToast('ابتدا تغییرات فصل را ذخیره کن.');
+    return;
+  }
   const name = event.state?.appPage || 'dashboard';
   if (name === 'reader' && !currentBook()) return showPage('dashboard', 'کتابخانه‌ی کتاب‌ها', false);
   showPage(name, event.state?.title || (name === 'dashboard' ? 'کتابخانه‌ی کتاب‌ها' : currentBook()?.title), false);
@@ -283,90 +286,36 @@ async function openReader(index) {
   $('readerBookTitle').textContent = book.title;
   $('readerChapterTitle').textContent = `فصل ${fa(index + 1)} از ${fa(book.chapters.length)}`;
   $('chapterEditor').value = activeText;
-  $('readingText').textContent = activeText;
   $('readerProgressFill').style.width = `${chapter.done ? 100 : chapter.percent}%`;
   $('readerProgressFill').classList.toggle('done', chapter.done);
   $('prevReaderChapter').disabled = index === 0;
   $('nextReaderChapter').disabled = index === book.chapters.length - 1;
-  setReaderMode(activeText ? 'read' : 'write');
+  clearTimeout(quickScrollTimer);
+  $('quickScroll').classList.remove('visible');
   showPage('reader', book.title);
-  restoreChapterPosition(chapter.scroll || 0, readerMode);
+  restoreChapterPosition(chapter.scroll || 0);
 }
-function currentChapterOffset() {
-  if (readerMode === 'write') return $('chapterEditor').scrollTop;
-  const { start } = readerScrollBounds();
-  return Math.max(0, window.scrollY - start);
-}
-function restoreChapterPosition(offset, mode = readerMode) {
+function restoreChapterPosition(offset) {
   restoringScroll = true;
   requestAnimationFrame(() => {
-    if (mode === 'write') {
-      const editor = $('chapterEditor');
-      const editorTop = editor.getBoundingClientRect().top + window.scrollY;
-      window.scrollTo(0, Math.max(0, editorTop - $('readerSticky').offsetHeight));
-      const maxOffset = Math.max(0, editor.scrollHeight - editor.clientHeight);
-      const safeOffset = Math.min(Math.max(0, offset), maxOffset);
-      const ratio = maxOffset ? safeOffset / maxOffset : 0;
-      const caret = Math.round(editor.value.length * ratio);
-      editor.setSelectionRange(caret, caret);
-      editor.scrollTop = safeOffset;
-    } else {
-      const { start } = readerScrollBounds();
-      window.scrollTo(0, Math.max(0, start + offset));
-    }
+    const editor = $('chapterEditor');
+    const maxOffset = Math.max(0, editor.scrollHeight - editor.clientHeight);
+    editor.scrollTop = Math.min(Math.max(0, offset), maxOffset);
+    lastEditorScrollTop = editor.scrollTop;
+    lastReaderScrollAt = performance.now();
     requestAnimationFrame(() => {
       restoringScroll = false;
-      if (mode === 'read') updateReadProgress();
+      updateReadProgress();
     });
   });
 }
-function readerScrollBounds() {
-  const article = $('readingText').getBoundingClientRect();
-  const articleTop = article.top + window.scrollY;
-  const articleBottom = article.bottom + window.scrollY;
-  const stickyHeight = $('readerSticky').offsetHeight;
-  const toolbarHeight = $('readerToolbar').offsetHeight;
-  return {
-    start: articleTop - stickyHeight,
-    end: articleBottom - window.innerHeight + toolbarHeight
-  };
-}
-function setReaderMode(mode) {
-  readerMode = mode;
-  clearTimeout(quickScrollTimer);
-  $('quickScroll').classList.remove('visible');
-  const writing = mode === 'write';
-  $('chapterEditor').classList.toggle('hidden', !writing);
-  $('readArea').classList.toggle('hidden', writing);
-  $('importChapter').classList.toggle('hidden', !writing);
-  $('saveText').classList.toggle('hidden', !writing);
-  $('modeIcon').src = writing ? './icons/open-book.svg' : './icons/pencil.svg';
-  $('modeToggle').setAttribute('aria-label', writing ? 'رفتن به خواندن' : 'رفتن به نوشتن');
-  $('modeToggle').title = writing ? 'خواندن' : 'نوشتن';
-  document.body.classList.toggle('reading-mode', !writing && !$('page-reader').classList.contains('hidden'));
-}
-$('modeToggle').onclick = () => {
-  if (readerMode === 'read') {
-    const offset = currentChapterOffset();
-    $('chapterEditor').value = activeText;
-    setReaderMode('write');
-    restoreChapterPosition(offset, 'write');
-    return;
-  }
-  if ($('chapterEditor').value !== activeText) return showToast('متن تغییر کرده؛ اول ذخیره‌اش کن.');
-  if (!activeText) return showToast('اول متن فصل را ذخیره کن.');
-  const offset = currentChapterOffset();
-  $('readingText').textContent = activeText;
-  setReaderMode('read');
-  restoreChapterPosition(offset, 'read');
-};
 $('importChapter').onclick = () => $('chapterFile').click();
 $('chapterFile').onchange = async () => {
   const file = $('chapterFile').files?.[0]; if (!file) return;
   try {
     let text = (await file.text()).replace(/^\uFEFF/, '');
     if (/\.md$/i.test(file.name)) text = markdownToText(text);
-    $('chapterEditor').value = text; setReaderMode('write'); $('chapterEditor').focus();
+    $('chapterEditor').value = text; $('chapterEditor').focus();
     showToast('فایل وارد شد؛ برای ثبت تغییرات ذخیره را بزن.');
   } catch (error) { console.error(error); showToast('خواندن فایل انجام نشد.'); }
   finally { $('chapterFile').value = ''; }
@@ -386,16 +335,15 @@ $('saveText').onclick = async () => {
   chapter.scroll = offset;
   activeText = value; chapter.hasText = !!value.trim();
   await putText(textId(book.id, activeChapterIndex), value); await persist();
-  $('readingText').textContent = value;
-  setReaderMode(value.trim() ? 'read' : 'write');
-  if (value.trim()) restoreChapterPosition(offset, 'read');
-  renderChapters(book); showToast('متن فصل ذخیره شد.');
+  $('chapterEditor').scrollTop = offset;
+  updateReadProgress(); renderChapters(book); showToast('متن فصل ذخیره شد.');
 };
 function showQuickScroll() {
   const button = $('quickScroll');
-  if (!button || readerMode !== 'read' || $('page-reader').classList.contains('hidden')) return;
-  const { start, end } = readerScrollBounds();
-  const goToTop = window.scrollY - start > Math.max(0, end - start) / 2;
+  const editor = $('chapterEditor');
+  const maxOffset = editor.scrollHeight - editor.clientHeight;
+  if (!button || maxOffset <= 12 || $('page-reader').classList.contains('hidden')) return;
+  const goToTop = editor.scrollTop > maxOffset / 2;
   const icon = $('quickScrollIcon');
   icon.src = goToTop ? './icons/scroll-top.svg' : './icons/scroll-bottom.svg';
   button.setAttribute('aria-label', goToTop ? 'رفتن به ابتدای فصل' : 'رفتن به انتهای فصل');
@@ -407,11 +355,11 @@ function showQuickScroll() {
 }
 function updateReadProgress() {
   const book = currentBook(), chapter = book?.chapters[activeChapterIndex];
-  if (!chapter || !activeText || readerMode !== 'read' || $('page-reader').classList.contains('hidden')) return;
-  const { start, end } = readerScrollBounds();
-  const distance = end - start;
-  const pct = distance <= 1 ? 100 : Math.max(0, Math.min(100, Math.round((window.scrollY - start) / distance * 100)));
-  chapter.scroll = Math.max(0, window.scrollY - start);
+  if (!chapter || !activeText || $('page-reader').classList.contains('hidden')) return;
+  const editor = $('chapterEditor');
+  const maxOffset = Math.max(0, editor.scrollHeight - editor.clientHeight);
+  const pct = maxOffset <= 1 ? 100 : Math.max(0, Math.min(100, Math.round(editor.scrollTop / maxOffset * 100)));
+  chapter.scroll = editor.scrollTop;
   chapter.percent = pct;
   if (pct >= 100 && !chapter.done) {
     chapter.done = true;
@@ -421,33 +369,33 @@ function updateReadProgress() {
   $('readerProgressFill').classList.toggle('done', chapter.done);
   clearTimeout(scrollTimer); scrollTimer = setTimeout(() => persist(), 450);
 }
-window.addEventListener('scroll', () => {
-  const now = performance.now(), y = window.scrollY;
-  if (restoringScroll) { lastReaderScrollY = y; lastReaderScrollAt = now; return; }
-  if (!$('page-reader').classList.contains('hidden') && readerMode === 'read') {
-    updateReadProgress();
-    const elapsed = Math.max(1, now - lastReaderScrollAt);
-    if (Math.abs(y - lastReaderScrollY) >= 20 && Math.abs(y - lastReaderScrollY) / elapsed >= 0.85) showQuickScroll();
-  }
-  lastReaderScrollY = y;
-  lastReaderScrollAt = now;
-}, { passive: true });
 $('chapterEditor').addEventListener('scroll', () => {
-  if (readerMode !== 'write') return;
+  if (restoringScroll || $('page-reader').classList.contains('hidden')) return;
+  const now = performance.now(), y = $('chapterEditor').scrollTop;
+  const elapsed = Math.max(1, now - lastReaderScrollAt);
+  if (Math.abs(y - lastEditorScrollTop) >= 20 && Math.abs(y - lastEditorScrollTop) / elapsed >= 0.85) showQuickScroll();
+  lastEditorScrollTop = y;
+  lastReaderScrollAt = now;
+  updateReadProgress();
   const chapter = currentBook()?.chapters[activeChapterIndex];
   if (!chapter) return;
-  chapter.scroll = $('chapterEditor').scrollTop;
+  chapter.scroll = y;
   clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => persist(), 450);
 }, { passive: true });
 $('quickScroll').onclick = () => {
-  const { start, end } = readerScrollBounds();
+  const editor = $('chapterEditor');
   const top = $('quickScroll').dataset.target === 'top';
-  window.scrollTo({ top: Math.max(0, top ? start : end), behavior: 'smooth' });
+  editor.scrollTo({ top: top ? 0 : editor.scrollHeight, behavior: 'smooth' });
 };
-$('readerBack').onclick = () => navigateBack('chapters');
-$('prevReaderChapter').onclick = () => { if (activeChapterIndex > 0) openReader(activeChapterIndex - 1); };
-$('nextReaderChapter').onclick = () => { const book = currentBook(); if (activeChapterIndex < book.chapters.length - 1) openReader(activeChapterIndex + 1); };
+function hasUnsavedChapterText() {
+  if ($('chapterEditor').value === activeText) return false;
+  showToast('ابتدا تغییرات فصل را ذخیره کن.');
+  return true;
+}
+$('readerBack').onclick = () => { if (!hasUnsavedChapterText()) navigateBack('chapters'); };
+$('prevReaderChapter').onclick = () => { if (!hasUnsavedChapterText() && activeChapterIndex > 0) openReader(activeChapterIndex - 1); };
+$('nextReaderChapter').onclick = () => { const book = currentBook(); if (!hasUnsavedChapterText() && activeChapterIndex < book.chapters.length - 1) openReader(activeChapterIndex + 1); };
 
 async function persist() { await saveMeta(); }
 function openSidebar() { document.body.classList.add('sidebar-open'); $('menuButton').setAttribute('aria-expanded', 'true'); }
