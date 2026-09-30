@@ -2,12 +2,14 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.4';
+const APP_VERSION = '0.2.5';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
 let activeText = '';
 let scrollTimer = 0;
+let autoSaveTimer = 0;
+let chapterSaveQueue = Promise.resolve();
 let restoringScroll = false;
 let lastEditorScrollTop = 0;
 let lastReaderScrollAt = 0;
@@ -141,12 +143,8 @@ function showPage(name, title, writeHistory = true) {
   if (writeHistory && current !== name) history.pushState({ appPage: name, title: title || '' }, '', `#${name}`);
   window.scrollTo(0, 0);
 }
-window.addEventListener('popstate', event => {
-  if (document.body.classList.contains('reader-mode') && $('chapterEditor').value !== activeText) {
-    history.pushState({ appPage: 'reader', title: currentBook()?.title }, '', '#reader');
-    showToast('ابتدا تغییرات فصل را ذخیره کن.');
-    return;
-  }
+window.addEventListener('popstate', async event => {
+  if (document.body.classList.contains('reader-mode')) await saveActiveChapter();
   const name = event.state?.appPage || 'dashboard';
   if (name === 'reader' && !currentBook()) return showPage('dashboard', 'کتابخانه‌ی کتاب‌ها', false);
   showPage(name, event.state?.title || (name === 'dashboard' ? 'کتابخانه‌ی کتاب‌ها' : currentBook()?.title), false);
@@ -164,10 +162,10 @@ function renderDashboard() {
     return;
   }
   list.innerHTML = books.map(book => `<article class="work-card" data-open-book="${esc(book.id)}">
-    <button type="button" class="book-open"><strong>${esc(book.title)}</strong><small>${esc(book.author || '—')} · ${fa(book.chapters.length)} فصل</small></button>
+    <button type="button" class="book-open"><strong>${esc(book.title)}</strong><small>${esc(book.author || '—')} · ${book.chapters.length} Ch</small></button>
     <div class="book-row"><div class="book-tags">${book.tags.map(tag => `<span class="book-tag">${esc(tag)}</span>`).join('')}</div>
-    <div class="book-actions"><button type="button" class="reaction ${book.reaction === 'like' ? 'selected' : ''}" data-react="like" data-book="${esc(book.id)}" aria-label="${book.reaction === 'like' ? 'برداشتن پسند' : 'پسندیدن'}"><img src="./icons/like-${book.reaction === 'like' ? 'filled' : 'empty'}.svg" alt=""></button>
-    <button type="button" class="reaction ${book.reaction === 'dislike' ? 'selected' : ''}" data-react="dislike" data-book="${esc(book.id)}" aria-label="${book.reaction === 'dislike' ? 'برداشتن نپسند' : 'نپسندیدن'}"><img src="./icons/dislike-${book.reaction === 'dislike' ? 'filled' : 'empty'}.svg" alt=""></button></div></div></article>`).join('');
+    <div class="book-actions"><button type="button" class="reaction ${book.reaction === 'like' ? 'selected' : ''}" data-react="like" data-book="${esc(book.id)}" aria-label="${book.reaction === 'like' ? 'Remove like' : 'Like book'}"><img src="./icons/like-${book.reaction === 'like' ? 'filled' : 'empty'}.svg" alt=""></button>
+    <button type="button" class="reaction ${book.reaction === 'dislike' ? 'selected' : ''}" data-react="dislike" data-book="${esc(book.id)}" aria-label="${book.reaction === 'dislike' ? 'Remove dislike' : 'Dislike book'}"><img src="./icons/dislike-${book.reaction === 'dislike' ? 'filled' : 'empty'}.svg" alt=""></button></div></div></article>`).join('');
 }
 $('bookSearch').oninput = renderDashboard;
 $('openTagFilter').onclick = openTagFilterDialog;
@@ -212,7 +210,7 @@ function tagFieldHtml(prefix, label) {
 }
 function addBookDialog() {
   const selected = new Set();
-  openModal('افزودن کتاب', `<form class="modal-form" id="newBookForm"><div class="field"><label for="authorInput">نام نویسنده</label><input id="authorInput" autocomplete="name"></div><div class="field"><label for="titleInput">نام کتاب</label><input id="titleInput" required></div><div class="field"><label for="chapterCountInput">تعداد فصل‌ها</label><input id="chapterCountInput" type="number" min="1" max="5000" value="1" required></div>${tagFieldHtml('bookTags', 'تگ‌ها')}<div class="modal-actions"><button class="button" type="button" data-modal-close>انصراف</button><button class="button primary" type="submit">ذخیره</button></div></form>`);
+  openModal('افزودن کتاب', `<form class="modal-form" id="newBookForm"><div class="field"><label for="authorInput">نام نویسنده</label><input id="authorInput" autocomplete="name"></div><div class="field"><label for="titleInput">نام کتاب</label><input id="titleInput" required></div><div class="field"><label for="chapterCountInput">Chapter count</label><input id="chapterCountInput" type="number" min="1" max="5000" value="1" required></div>${tagFieldHtml('bookTags', 'تگ‌ها')}<div class="modal-actions"><button class="button" type="button" data-modal-close>انصراف</button><button class="button primary" type="submit">ذخیره</button></div></form>`);
   bindTagChooser('bookTags', selected);
   $('newBookForm').onsubmit = async event => {
     event.preventDefault();
@@ -257,8 +255,8 @@ function openChapters(book) {
 function renderChapters(book) {
   $('chapterList').innerHTML = book.chapters.map((chapter, index) => {
     const cls = chapter.done ? 'status-done' : chapter.hasText ? 'status-writing' : 'status-empty';
-    const label = chapter.done ? 'علامت‌گذاری به‌عنوان خوانده‌نشده' : 'علامت‌گذاری به‌عنوان خوانده‌شده';
-    return `<article class="chapter-row ${cls}"><button class="chapter-open" data-chapter-open="${index}" aria-label="باز کردن فصل ${fa(index + 1)}"><i class="chapter-dot"></i><span class="chapter-detail"><span class="chapter-name">فصل ${fa(index + 1)}</span><span class="chapter-meter"><span style="width:${chapter.done ? 100 : chapter.percent}%"></span></span></span></button><button class="chapter-status-toggle" type="button" data-chapter-toggle="${index}" aria-label="${label}" title="${label}" aria-pressed="${chapter.done}"><img src="./icons/read-${chapter.done ? 'done' : 'empty'}.svg" alt=""></button></article>`;
+    const label = chapter.done ? 'Mark as unread' : 'Mark as read';
+    return `<article class="chapter-row ${cls}"><button class="chapter-open" data-chapter-open="${index}" aria-label="Open Chapter ${index + 1}"><i class="chapter-dot"></i><span class="chapter-detail"><span class="chapter-name">Chapter ${index + 1}</span><span class="chapter-meter"><span style="width:${chapter.done ? 100 : chapter.percent}%"></span></span></span></button><button class="chapter-status-toggle" type="button" data-chapter-toggle="${index}" aria-label="${label}" title="${label}" aria-pressed="${chapter.done}"><img src="./icons/read-${chapter.done ? 'done' : 'empty'}.svg" alt=""></button></article>`;
   }).join('');
 }
 $('chapterList').addEventListener('click', async event => {
@@ -285,7 +283,7 @@ async function openReader(index) {
   if (!chapter) return;
   activeText = await getText(textId(book.id, index));
   $('readerBookTitle').textContent = book.title;
-  $('readerChapterTitle').textContent = `فصل ${fa(index + 1)} از ${fa(book.chapters.length)}`;
+  $('readerChapterTitle').textContent = `Chapter ${index + 1} of ${book.chapters.length}`;
   $('chapterEditor').value = activeText;
   $('readerProgressFill').style.width = `${chapter.done ? 100 : chapter.percent}%`;
   $('readerProgressFill').classList.toggle('done', chapter.done);
@@ -310,35 +308,45 @@ function restoreChapterPosition(offset) {
     });
   });
 }
-$('importChapter').onclick = () => $('chapterFile').click();
-$('chapterFile').onchange = async () => {
-  const file = $('chapterFile').files?.[0]; if (!file) return;
+async function saveActiveChapter() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = 0;
+  const book = currentBook(), index = activeChapterIndex, chapter = book?.chapters[index];
+  if (!book || !chapter || $('page-reader').classList.contains('hidden')) return;
+  const value = $('chapterEditor').value;
+  const hadText = chapter.hasText;
+  chapter.scroll = $('chapterEditor').scrollTop;
+  chapter.hasText = !!value.trim();
+  activeText = value;
+  const id = textId(book.id, index);
+  const write = async () => { await putText(id, value); await persist(); };
+  chapterSaveQueue = chapterSaveQueue.catch(() => {}).then(write);
   try {
-    let text = (await file.text()).replace(/^\uFEFF/, '');
-    if (/\.md$/i.test(file.name)) text = markdownToText(text);
-    $('chapterEditor').value = text; $('chapterEditor').focus();
-    showToast('فایل وارد شد؛ برای ثبت تغییرات ذخیره را بزن.');
-  } catch (error) { console.error(error); showToast('خواندن فایل انجام نشد.'); }
-  finally { $('chapterFile').value = ''; }
-};
-function markdownToText(value) {
-  return value.replace(/\r\n?/g, '\n').replace(/^\s*```[^\n]*\n?/gm, '').replace(/^\s*~~~[^\n]*\n?/gm, '')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)/g, '$1')
-    .replace(/`([^`]*)`/g, '$1').replace(/^\s{0,3}#{1,6}\s*/gm, '').replace(/^\s*>\s?/gm, '')
-    .replace(/^\s*(?:[-+*]|\d+[.)])\s+/gm, '').replace(/^\s*(?:---+|___+|\*\*\*+)\s*$/gm, '')
-    .replace(/\|/g, ' ').replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1').replace(/^\[[^\]]+\]:\s+\S+.*$/gm, '')
-    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, '$1$2').replace(/~~([^~]+)~~/g, '$1').replace(/\*([^*]+)\*|_([^_]+)_/g, '$1$2')
-    .replace(/<br\s*\/?\s*>/gi, '\n').replace(/<[^>]+>/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    await chapterSaveQueue;
+    if (hadText !== chapter.hasText) renderChapters(book);
+  } catch (error) {
+    console.error(error);
+    showToast('ذخیرهٔ خودکار ناموفق بود.');
+  }
 }
-$('saveText').onclick = async () => {
-  const book = currentBook(), chapter = book.chapters[activeChapterIndex], value = $('chapterEditor').value;
-  const offset = $('chapterEditor').scrollTop;
-  chapter.scroll = offset;
-  activeText = value; chapter.hasText = !!value.trim();
-  await putText(textId(book.id, activeChapterIndex), value); await persist();
-  $('chapterEditor').scrollTop = offset;
-  updateReadProgress(); renderChapters(book); showToast('متن فصل ذخیره شد.');
-};
+function scheduleChapterAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => { void saveActiveChapter(); }, 350);
+}
+$('chapterEditor').addEventListener('input', () => {
+  const book = currentBook(), chapter = book?.chapters[activeChapterIndex];
+  if (!chapter) return;
+  const hadText = chapter.hasText;
+  activeText = $('chapterEditor').value;
+  chapter.hasText = !!activeText.trim();
+  if (hadText !== chapter.hasText) renderChapters(book);
+  updateReadProgress();
+  scheduleChapterAutoSave();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && document.body.classList.contains('reader-mode')) void saveActiveChapter();
+});
 function showQuickScroll() {
   const button = $('quickScroll');
   const editor = $('chapterEditor');
@@ -347,8 +355,8 @@ function showQuickScroll() {
   const goToTop = editor.scrollTop > maxOffset / 2;
   const icon = $('quickScrollIcon');
   icon.src = goToTop ? './icons/scroll-top.svg' : './icons/scroll-bottom.svg';
-  button.setAttribute('aria-label', goToTop ? 'رفتن به ابتدای فصل' : 'رفتن به انتهای فصل');
-  button.title = goToTop ? 'ابتدای فصل' : 'انتهای فصل';
+  button.setAttribute('aria-label', goToTop ? 'رفتن به ابتدای Chapter' : 'رفتن به انتهای Chapter');
+  button.title = goToTop ? 'ابتدای Chapter' : 'انتهای Chapter';
   button.dataset.target = goToTop ? 'top' : 'bottom';
   button.classList.add('visible');
   clearTimeout(quickScrollTimer);
@@ -356,17 +364,17 @@ function showQuickScroll() {
 }
 function updateReadProgress() {
   const book = currentBook(), chapter = book?.chapters[activeChapterIndex];
-  if (!chapter || !activeText || $('page-reader').classList.contains('hidden')) return;
+  if (!chapter || $('page-reader').classList.contains('hidden')) return;
   const editor = $('chapterEditor');
+  const hasContent = !!editor.value.trim();
   const maxOffset = Math.max(0, editor.scrollHeight - editor.clientHeight);
-  const pct = maxOffset <= 1 ? 100 : Math.max(0, Math.min(100, Math.round(editor.scrollTop / maxOffset * 100)));
+  const pct = !hasContent ? 0 : maxOffset <= 1 ? (chapter.done ? 100 : 0) : Math.max(0, Math.min(100, Math.round(editor.scrollTop / maxOffset * 100)));
+  const wasDone = chapter.done;
   chapter.scroll = editor.scrollTop;
   chapter.percent = pct;
-  if (pct >= 100 && !chapter.done) {
-    chapter.done = true;
-    renderChapters(book);
-  }
-  $('readerProgressFill').style.width = `${chapter.done ? 100 : pct}%`;
+  chapter.done = hasContent && (maxOffset <= 1 ? chapter.done : pct >= 100);
+  if (wasDone !== chapter.done) renderChapters(book);
+  $('readerProgressFill').style.width = `${pct}%`;
   $('readerProgressFill').classList.toggle('done', chapter.done);
   clearTimeout(scrollTimer); scrollTimer = setTimeout(() => persist(), 450);
 }
@@ -389,14 +397,9 @@ $('quickScroll').onclick = () => {
   const top = $('quickScroll').dataset.target === 'top';
   editor.scrollTo({ top: top ? 0 : editor.scrollHeight, behavior: 'smooth' });
 };
-function hasUnsavedChapterText() {
-  if ($('chapterEditor').value === activeText) return false;
-  showToast('ابتدا تغییرات فصل را ذخیره کن.');
-  return true;
-}
-$('readerBack').onclick = () => { if (!hasUnsavedChapterText()) navigateBack('chapters'); };
-$('prevReaderChapter').onclick = () => { if (!hasUnsavedChapterText() && activeChapterIndex > 0) openReader(activeChapterIndex - 1); };
-$('nextReaderChapter').onclick = () => { const book = currentBook(); if (!hasUnsavedChapterText() && activeChapterIndex < book.chapters.length - 1) openReader(activeChapterIndex + 1); };
+$('readerBack').onclick = async () => { await saveActiveChapter(); navigateBack('chapters'); };
+$('prevReaderChapter').onclick = async () => { if (activeChapterIndex > 0) { await saveActiveChapter(); openReader(activeChapterIndex - 1); } };
+$('nextReaderChapter').onclick = async () => { const book = currentBook(); if (activeChapterIndex < book.chapters.length - 1) { await saveActiveChapter(); openReader(activeChapterIndex + 1); } };
 
 async function persist() { await saveMeta(); }
 function openSidebar() { document.body.classList.add('sidebar-open'); $('menuButton').setAttribute('aria-expanded', 'true'); }
@@ -405,8 +408,8 @@ $('menuButton').onclick = () => document.body.classList.contains('sidebar-open')
 $('sidebarScrim').onclick = closeSidebar;
 $('sideAddBook').onclick = () => { closeSidebar(); addBookDialog(); };
 $('sideAddTag').onclick = () => { closeSidebar(); addTagDialog(); };
-$('sideFilterTags').onclick = () => { closeSidebar(); openTagFilterDialog(); };
-$('sidebar').addEventListener('click', event => { if (event.target.closest('[data-close-sidebar]')) closeSidebar(); });
+
+
 let touchStart = null;
 document.addEventListener('touchstart', event => {
   const target = event.target;
