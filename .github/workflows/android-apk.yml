@@ -21,11 +21,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build debug APK with Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
-          arguments: assembleDebug --no-daemon
+
+      - name: Build debug APK
+        run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
