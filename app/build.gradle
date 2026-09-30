@@ -10,12 +10,31 @@ android {
         applicationId 'com.novelreader.app'
         minSdk 23
         targetSdk 35
-        versionCode 2
-        versionName '0.2.0'
+        versionCode 3
+        versionName '0.2.1'
     }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+
+    if (System.getenv('ANDROID_KEYSTORE_PATH')) {
+        signingConfigs {
+            stableDebug {
+                storeFile file(System.getenv('ANDROID_KEYSTORE_PATH'))
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (System.getenv('ANDROID_KEYSTORE_PATH')) {
+                signingConfig signingConfigs.stableDebug
+            }
+        }
     }
 }

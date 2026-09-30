@@ -8,7 +8,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.widget.FrameLayout;
 import android.webkit.WebResourceRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -22,6 +24,7 @@ public final class MainActivity extends Activity {
     private static final String START_PAGE = "file:///android_asset/www/index.html";
 
     private WebView webView;
+    private FrameLayout rootLayout;
     private NovelStorageBridge storageBridge;
     private ValueCallback<Uri[]> pendingFileChooser;
 
@@ -29,9 +32,15 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        rootLayout = new FrameLayout(this);
+        rootLayout.setBackgroundColor(0xFF090909);
+
         webView = new WebView(this);
         webView.setBackgroundColor(0xFF090909);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        rootLayout.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
         applySystemBarInsets();
 
         WebSettings settings = webView.getSettings();
@@ -74,8 +83,8 @@ public final class MainActivity extends Activity {
             }
         });
 
-        setContentView(webView);
-        webView.requestApplyInsets();
+        setContentView(rootLayout);
+        rootLayout.requestApplyInsets();
         if (savedInstanceState == null) {
             webView.loadUrl(START_PAGE);
         } else if (webView.restoreState(savedInstanceState) == null) {
@@ -90,39 +99,45 @@ public final class MainActivity extends Activity {
     private void applySystemBarInsets() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
-            getWindow().setStatusBarColor(Color.TRANSPARENT);
-            getWindow().setNavigationBarColor(Color.TRANSPARENT);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                getWindow().setNavigationBarContrastEnforced(false);
-            }
-            webView.setOnApplyWindowInsetsListener((view, insets) -> {
-                Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
-                        | WindowInsets.Type.displayCutout());
-                view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
-                return insets;
-            });
         } else {
             getWindow().getDecorView().setSystemUiVisibility(
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-            getWindow().setStatusBarColor(Color.TRANSPARENT);
-            getWindow().setNavigationBarColor(Color.TRANSPARENT);
-            webView.setOnApplyWindowInsetsListener((view, insets) -> {
-                int left = insets.getSystemWindowInsetLeft();
-                int top = insets.getSystemWindowInsetTop();
-                int right = insets.getSystemWindowInsetRight();
-                int bottom = insets.getSystemWindowInsetBottom();
+        }
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+
+        rootLayout.setOnApplyWindowInsetsListener((view, insets) -> {
+            int left;
+            int top;
+            int right;
+            int bottom;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
+                        | WindowInsets.Type.displayCutout());
+                left = safe.left;
+                top = safe.top;
+                right = safe.right;
+                bottom = safe.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft();
+                top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight();
+                bottom = insets.getSystemWindowInsetBottom();
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && insets.getDisplayCutout() != null) {
                     left = Math.max(left, insets.getDisplayCutout().getSafeInsetLeft());
                     top = Math.max(top, insets.getDisplayCutout().getSafeInsetTop());
                     right = Math.max(right, insets.getDisplayCutout().getSafeInsetRight());
                     bottom = Math.max(bottom, insets.getDisplayCutout().getSafeInsetBottom());
                 }
-                view.setPadding(left, top, right, bottom);
-                return insets;
-            });
-        }
+            }
+            view.setPadding(left, top, right, bottom);
+            return insets;
+        });
     }
 
     @Override
@@ -195,6 +210,7 @@ public final class MainActivity extends Activity {
             webView.destroy();
             webView = null;
         }
+        rootLayout = null;
         super.onDestroy();
     }
 }
