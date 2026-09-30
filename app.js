@@ -1,8 +1,8 @@
-﻿'use strict';
+u{FEFF}'use strict';
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.2';
+const APP_VERSION = '0.2.3';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
@@ -134,6 +134,9 @@ function showPage(name, title, writeHistory = true) {
   const current = document.querySelector('.page:not(.hidden)')?.id.replace('page-', '');
   document.querySelectorAll('.page').forEach(page => page.classList.toggle('hidden', page.id !== `page-${name}`));
   $('topTitle').textContent = title || 'کتابخانه‌ی کتاب‌ها';
+  const subtitle = name === 'chapters' ? currentBook()?.author || '' : '';
+  $('topSubtitle').textContent = subtitle;
+  $('topSubtitle').classList.toggle('hidden', !subtitle);
   document.body.classList.toggle('reader-mode', name === 'reader');
   if (writeHistory && current !== name) history.pushState({ appPage: name, title: title || '' }, '', `#${name}`);
   window.scrollTo(0, 0);
@@ -227,7 +230,7 @@ function editBookDialog(id) {
   bindTagChooser('editTags', selected);
   $('editBookForm').onsubmit = async event => {
     event.preventDefault(); book.author = $('editAuthor').value.trim(); book.title = $('editTitle').value.trim(); book.tags = [...selected];
-    await persist(); closeModal(); $('chapterBookTitle').textContent = book.title; $('chapterAuthor').textContent = book.author; $('readerBookTitle').textContent = book.title; renderDashboard(); renderChapters(book);
+    await persist(); closeModal(); $('topTitle').textContent = book.title; $('topSubtitle').textContent = book.author; $('topSubtitle').classList.toggle('hidden', !book.author); $('readerBookTitle').textContent = book.title; renderDashboard(); renderChapters(book);
   };
 }
 function addTagDialog() {
@@ -245,8 +248,6 @@ function chapterTemplate(count) { return Array.from({ length: count }, () => ({ 
 function openChapters(book) {
   if (!book) return;
   activeBookId = book.id;
-  $('chapterBookTitle').textContent = book.title;
-  $('chapterAuthor').textContent = book.author;
   renderChapters(book);
   showPage('chapters', book.title);
   const next = book.chapters.findIndex(chapter => !chapter.done);
