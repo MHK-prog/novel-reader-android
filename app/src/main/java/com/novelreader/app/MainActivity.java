@@ -444,8 +444,8 @@ public final class MainActivity extends Activity {
             updateProgress(); updateMarker();
             scheduleProgressSave();
         });
-        readerScroll.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (bottom - top != oldBottom - oldTop) { updateProgress(); updateMarker(); }
+        readerScroll.addOnLayoutChangeListener((v, left, top, right, bottomEdge, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (bottomEdge - top != oldBottom - oldTop) { updateProgress(); updateMarker(); }
         });
         chapterEditor.setOnFocusChangeListener((v, focused) -> {
             if (focused) chapterEditor.postDelayed(() -> {
