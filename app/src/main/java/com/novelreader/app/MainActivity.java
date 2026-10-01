@@ -23,6 +23,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.animation.DecelerateInterpolator;
@@ -74,8 +75,11 @@ public final class MainActivity extends Activity {
     private String chapterText = "";
     private boolean chapterDirty;
     private boolean restoringScroll;
-    private long lastScrollTime;
-    private int lastScrollY;
+    private float scrollGestureStartY;
+    private long scrollGestureStartAt;
+    private long lastFastFlickAt;
+    private int lastFastFlickDirection;
+    private int fastFlickCount;
     private Runnable saveRunnable;
     private Runnable progressRunnable;
     private Runnable quickHideRunnable;
@@ -94,6 +98,7 @@ public final class MainActivity extends Activity {
     private BookAdapter bookAdapter;
     private ChapterAdapter chapterAdapter;
     private EditText chapterEditor;
+    private ScrollView readerScroll;
     private View readerProgress;
     private FrameLayout readerFrame;
     private MarkerView markerView;
@@ -341,8 +346,7 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
-        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), "back", "edit",
-                this::handleBack, () -> showBookDialog(book), 10));
+        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), null, null, null, null));
         chaptersList = new ListView(this);
         chaptersList.setDivider(null); chaptersList.setCacheColorHint(Color.TRANSPARENT); chaptersList.setBackgroundColor(BG);
         chaptersList.setPadding(dp(12), dp(6), dp(12), dp(6)); chaptersList.setClipToPadding(false);
@@ -363,7 +367,7 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
-        appColumn.addView(makeHeader(book.optString("title"), "Chapter " + (activeChapter + 1) + " of " + book.optJSONArray("chapters").length(), "back", null, this::handleBack, null));
+        appColumn.addView(makeHeader(book.optString("title"), "Chapter " + (activeChapter + 1) + " of " + book.optJSONArray("chapters").length(), null, null, null, null));
         FrameLayout progressTrack = new FrameLayout(this); progressTrack.setBackgroundColor(0xFF241C2E);
         readerProgress = new View(this); readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
@@ -371,12 +375,19 @@ public final class MainActivity extends Activity {
         appColumn.addView(progressTrack, new LinearLayout.LayoutParams(-1, dp(3)));
 
         readerFrame = new FrameLayout(this); readerFrame.setBackgroundColor(BG);
+        readerScroll = new ReaderScrollView(this);
+        readerScroll.setFillViewport(true);
+        readerScroll.setSmoothScrollingEnabled(true);
+        readerScroll.setVerticalScrollBarEnabled(false);
+        readerScroll.setBackgroundColor(BG);
         chapterEditor = edit("متن Chapter را اینجا بنویس...", true);
         chapterEditor.setTextSize(20); chapterEditor.setLineSpacing(dp(2), 1.52f);
         chapterEditor.setGravity(Gravity.TOP | Gravity.RIGHT);
         chapterEditor.setPadding(dp(22), dp(26), dp(22), dp(40));
+        chapterEditor.setBackgroundColor(Color.TRANSPARENT);
         chapterEditor.setText(chapterText); applyRuleSpans(chapterEditor.getText());
-        readerFrame.addView(chapterEditor, new FrameLayout.LayoutParams(-1, -1));
+        readerScroll.addView(chapterEditor, new ScrollView.LayoutParams(-1, -2));
+        readerFrame.addView(readerScroll, new FrameLayout.LayoutParams(-1, -1));
         markerView = new MarkerView(this);
         FrameLayout.LayoutParams markerParams = new FrameLayout.LayoutParams(-1, dp(28), Gravity.TOP);
         readerFrame.addView(markerView, markerParams);
@@ -391,8 +402,8 @@ public final class MainActivity extends Activity {
         quickScrollButton.setOnClickListener(v -> {
             boolean toTop = "top".equals(v.getTag());
             int targetY = toTop ? 0 : Math.max(0,
-                    chapterEditor.getLayout() == null ? 0 : chapterEditor.getLayout().getHeight() - chapterEditor.getHeight());
-            chapterEditor.scrollTo(0, targetY);
+                    chapterEditor.getHeight() - readerScroll.getHeight());
+            readerScroll.smoothScrollTo(0, targetY);
             updateProgress();
             updateMarker();
         });
@@ -400,19 +411,24 @@ public final class MainActivity extends Activity {
 
         LinearLayout bottom = new LinearLayout(this); bottom.setGravity(Gravity.CENTER); bottom.setPadding(dp(18), dp(7), dp(18), dp(7));
         bottom.setLayoutDirection(View.LAYOUT_DIRECTION_LTR); bottom.setBackgroundColor(BG);
-        bottom.addView(weightedIconButton("back", () -> moveChapter(-1)), new LinearLayout.LayoutParams(0, dp(54), 1));
+        FrameLayout previousChapterButton = weightedIconButton("back", () -> moveChapter(-1));
+        previousChapterButton.setTranslationX(-dp(8));
+        bottom.addView(previousChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         LinearLayout centerControls = new LinearLayout(this); centerControls.setGravity(Gravity.CENTER); centerControls.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         markerToggleButton = iconButton("tag", PURPLE, !chapter.isNull("markerOffset"), this::toggleMarker);
         centerControls.addView(markerToggleButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
         centerControls.addView(iconButton("book", PURPLE, false, () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); }),
                 new LinearLayout.LayoutParams(dp(52), dp(52)));
         bottom.addView(centerControls, new LinearLayout.LayoutParams(dp(104), dp(54)));
-        bottom.addView(weightedIconButton("next", () -> moveChapter(1)), new LinearLayout.LayoutParams(0, dp(54), 1));
+        FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
+        nextChapterButton.setTranslationX(dp(8));
+        bottom.addView(nextChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         appColumn.addView(bottom, new LinearLayout.LayoutParams(-1, dp(68)));
         chapterEditor.setHighlightColor(0x88BB86FC);
+        lastFastFlickDirection = 0; fastFlickCount = 0; lastFastFlickAt = 0;
         int restore = Math.max(0, chapter.optInt("scroll", 0));
         restoringScroll = true;
-        chapterEditor.post(() -> { chapterEditor.scrollTo(0, restore); updateProgress(); restoringScroll = false; updateMarker(); });
+        readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; updateMarker(); });
         chapterEditor.addTextChangedListener(watcher(() -> {
             chapterText = chapterEditor.getText().toString();
             chapterDirty = true;
@@ -421,18 +437,25 @@ public final class MainActivity extends Activity {
             scheduleSave();
             updateProgress();
         }));
-        chapterEditor.setOnScrollChangeListener((View v, int x, int y, int oldX, int oldY) -> {
+        readerScroll.setOnScrollChangeListener((View v, int x, int y, int oldX, int oldY) -> {
             if (restoringScroll) return;
             JSONObject current = activeChapterObject();
             if (current != null) putJson(current, "scroll", y);
             updateProgress(); updateMarker();
-            int delta = Math.abs(y - oldY); long now = System.currentTimeMillis();
-            if (delta > dp(56) && now - lastScrollTime < 90) showQuickScroll();
-            lastScrollTime = now; lastScrollY = y;
             scheduleProgressSave();
         });
+        readerScroll.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (bottom - top != oldBottom - oldTop) { updateProgress(); updateMarker(); }
+        });
         chapterEditor.setOnFocusChangeListener((v, focused) -> {
-            if (focused) chapterEditor.postDelayed(() -> { if (chapterEditor != null) chapterEditor.requestRectangleOnScreen(new android.graphics.Rect(0, chapterEditor.getScrollY(), chapterEditor.getWidth(), chapterEditor.getScrollY() + dp(60))); }, 170);
+            if (focused) chapterEditor.postDelayed(() -> {
+                if (chapterEditor == null || readerScroll == null) return;
+                android.text.Layout layout = chapterEditor.getLayout();
+                int selection = Math.max(0, Math.min(chapterEditor.getSelectionStart(), chapterEditor.length()));
+                int caretY = layout == null ? readerScroll.getScrollY() : layout.getLineTop(layout.getLineForOffset(selection));
+                chapterEditor.requestRectangleOnScreen(new android.graphics.Rect(0, caretY,
+                        chapterEditor.getWidth(), caretY + dp(60)), true);
+            }, 170);
         });
         updateMarker();
     }
@@ -471,7 +494,7 @@ public final class MainActivity extends Activity {
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return;
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
-        putJson(chapter, "scroll", chapterEditor.getScrollY());
+        putJson(chapter, "scroll", readerScroll == null ? 0 : readerScroll.getScrollY());
         String file = "chapter-" + (activeBookId + ":" + (activeChapter + 1)).replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
         if (chapterDirty) {
             if (!storage.write(file, chapterText)) toast("ذخیرهٔ Chapter ناموفق بود.");
@@ -493,17 +516,17 @@ public final class MainActivity extends Activity {
     }
 
     private void updateProgress() {
-        if (chapterEditor == null || readerProgress == null) return;
+        if (chapterEditor == null || readerScroll == null || readerProgress == null) return;
         JSONObject chapter = activeChapterObject(); if (chapter == null) return;
-        int contentHeight = chapterEditor.getLayout() == null ? chapterEditor.getHeight() : chapterEditor.getLayout().getHeight();
-        int range = Math.max(0, contentHeight - chapterEditor.getHeight());
+        int contentHeight = chapterEditor.getHeight();
+        int range = Math.max(0, contentHeight - readerScroll.getHeight());
         boolean hasText = !chapterEditor.getText().toString().trim().isEmpty();
         int percent = !hasText || range == 0 ? (chapter.optBoolean("done") ? 100 : 0)
-                : Math.max(0, Math.min(100, Math.round(chapterEditor.getScrollY() * 100f / range)));
+                : Math.max(0, Math.min(100, Math.round(readerScroll.getScrollY() * 100f / range)));
         putJson(chapter, "percent", percent);
         if (!chapter.optBoolean("manualDone")) putJson(chapter, "done", hasText && percent >= 100);
         if (!hasText && !chapter.optBoolean("manualDone")) putJson(chapter, "done", false);
-        putJson(chapter, "scroll", chapterEditor.getScrollY());
+        putJson(chapter, "scroll", readerScroll.getScrollY());
         int width = readerProgress.getParent() instanceof View ? ((View) readerProgress.getParent()).getWidth() : 0;
         ViewGroup.LayoutParams lp = readerProgress.getLayoutParams(); lp.width = Math.round(width * percent / 100f); readerProgress.setLayoutParams(lp);
         readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
@@ -513,7 +536,7 @@ public final class MainActivity extends Activity {
     private void toggleMarker() {
         JSONObject chapter = activeChapterObject(); if (chapter == null || chapterEditor == null) return;
         if (chapter.isNull("markerOffset") || !chapter.has("markerOffset")) {
-            double offset = (chapterEditor.getScrollY() + chapterEditor.getHeight() * 0.45) / getResources().getDisplayMetrics().density;
+            double offset = (readerScroll.getScrollY() + readerScroll.getHeight() * 0.45) / getResources().getDisplayMetrics().density;
             putJson(chapter, "markerOffset", offset);
         } else putJson(chapter, "markerOffset", JSONObject.NULL);
         updateMarker(); updateMarkerButton(); saveCurrentChapter(true);
@@ -536,15 +559,13 @@ public final class MainActivity extends Activity {
         if (chapter == null || chapter.isNull("markerOffset")) { markerView.setVisibility(View.GONE); return; }
         markerView.setVisibility(View.VISIBLE);
         float offset = (float) (chapter.optDouble("markerOffset", 0) * getResources().getDisplayMetrics().density);
-        markerView.setTranslationY(offset - chapterEditor.getScrollY() - dp(14));
+        markerView.setTranslationY(offset - readerScroll.getScrollY() - dp(14));
     }
 
-    private void showQuickScroll() {
-        if (quickScrollButton == null || chapterEditor == null) return;
-        int content = chapterEditor.getLayout() == null ? 0 : chapterEditor.getLayout().getHeight();
-        if (content <= chapterEditor.getHeight() + dp(30)) return;
-        int range = content - chapterEditor.getHeight();
-        boolean toTop = chapterEditor.getScrollY() > range / 2;
+    private void showQuickScroll(boolean toTop) {
+        if (quickScrollButton == null || chapterEditor == null || readerScroll == null) return;
+        int range = chapterEditor.getHeight() - readerScroll.getHeight();
+        if (range <= dp(30)) return;
         quickScrollButton.setTag(toTop ? "top" : "bottom");
         quickScrollIcon = (NativeIconView) quickScrollButton.getChildAt(0);
         quickScrollIcon.setName(toTop ? "scrolltop" : "scrollbottom");
@@ -771,7 +792,8 @@ public final class MainActivity extends Activity {
     }
 
     private EditText edit(String hint, boolean multiline) {
-        EditText view = new EditText(this); view.setTextColor(TEXT); view.setHintTextColor(0xFF77717D);
+        EditText view = multiline ? new ReaderEditText(this) : new EditText(this);
+        view.setTextColor(TEXT); view.setHintTextColor(0xFF77717D);
         view.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); view.setTextSize(16); view.setHint(hint);
         view.setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE); view.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
         view.setPadding(dp(13), dp(9), dp(13), dp(9)); view.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 12));
@@ -854,6 +876,71 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void recordFastFlick(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            scrollGestureStartY = event.getY();
+            scrollGestureStartAt = event.getEventTime();
+        } else if (action == MotionEvent.ACTION_UP) {
+            float distance = event.getY() - scrollGestureStartY;
+            long duration = event.getEventTime() - scrollGestureStartAt;
+            int direction = distance < 0 ? 1 : -1;
+            if (Math.abs(distance) >= dp(72) && duration <= 360) {
+                long now = event.getEventTime();
+                if (direction == lastFastFlickDirection && now - lastFastFlickAt <= 1000) fastFlickCount++;
+                else fastFlickCount = 1;
+                lastFastFlickDirection = direction;
+                lastFastFlickAt = now;
+                if (fastFlickCount >= 2) {
+                    showQuickScroll(direction < 0);
+                    fastFlickCount = 0;
+                    lastFastFlickDirection = 0;
+                }
+            } else {
+                fastFlickCount = 0;
+                lastFastFlickDirection = 0;
+            }
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            fastFlickCount = 0;
+            lastFastFlickDirection = 0;
+        }
+    }
+
+    private final class ReaderScrollView extends ScrollView {
+        ReaderScrollView(Context context) { super(context); }
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
+            recordFastFlick(event);
+            return super.dispatchTouchEvent(event);
+        }
+    }
+
+    private final class ReaderEditText extends EditText {
+        private float startX;
+        private float startY;
+
+        ReaderEditText(Context context) { super(context); }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            boolean handled = super.onTouchEvent(event);
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                startX = event.getX();
+                startY = event.getY();
+                allowParentScroll();
+            } else if (action == MotionEvent.ACTION_MOVE
+                    && Math.abs(event.getY() - startY) > dp(8)
+                    && Math.abs(event.getY() - startY) > Math.abs(event.getX() - startX) * 1.2f) {
+                allowParentScroll();
+            }
+            return handled;
+        }
+
+        private void allowParentScroll() {
+            ViewParent parent = getParent();
+            if (parent != null) parent.requestDisallowInterceptTouchEvent(false);
+        }
+    }
+
     private final class BookAdapter extends BaseAdapter {
         private String query = "";
         private List<JSONObject> cachedBooks;
@@ -894,7 +981,13 @@ public final class MainActivity extends Activity {
             int total = chapters == null ? 0 : chapters.length(), read = 0;
             if (chapters != null) for (int i = 0; i < total; i++) if (chapters.optJSONObject(i).optBoolean("done")) read++;
             TextView meta = text((book.optString("author").isEmpty() ? "" : book.optString("author") + "  ·  ") + read + "/" + total + " Ch", 11, MUTED);
-            meta.setMaxLines(1); meta.setEllipsize(android.text.TextUtils.TruncateAt.END); details.addView(meta, new LinearLayout.LayoutParams(-1, dp(19)));
+            meta.setMaxLines(1); meta.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout bookMetaRow = new LinearLayout(MainActivity.this); bookMetaRow.setGravity(Gravity.CENTER_VERTICAL);
+            bookMetaRow.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            bookMetaRow.addView(meta, new LinearLayout.LayoutParams(0, dp(34), 1));
+            bookMetaRow.addView(plainIconButton("edit", PURPLE, false, () -> showBookDialog(book)),
+                    new LinearLayout.LayoutParams(dp(40), dp(34)));
+            details.addView(bookMetaRow, new LinearLayout.LayoutParams(-1, dp(34)));
             row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
             String reaction = book.optString("reaction", "none");
             card.addView(row);
