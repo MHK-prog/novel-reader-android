@@ -1,10 +1,10 @@
-# امضای ثابت برای به‌روزرسانی اندروید
+# امضای ثابت برای نصب به‌روزرسانی‌ها
 
-اندروید فقط APKهایی را روی برنامه‌ی نصب‌شده به‌روزرسانی می‌کند که با همان کلید قبلی امضا شده باشند. اگر در GitHub Actions از امضای پیش‌فرض Debug استفاده شود، هر اجرای تازه ممکن است کلید دیگری بسازد؛ در نتیجه نصب APK جدید به حذف نسخه‌ی قبلی نیاز پیدا می‌کند.
+اندروید فقط APKای را روی برنامهٔ نصب‌شده به‌روزرسانی می‌کند که با همان شناسهٔ برنامه و همان کلید امضا ساخته شده باشد. شناسهٔ برنامهٔ این پروژه `com.novelreader.app` است. کلید JKS را امن نگه دار و آن را داخل GitHub یا مخزن پروژه قرار نده.
 
-## ساخت کلید یک‌باره در ویندوز
+## ساخت کلید در ویندوز
 
-PowerShell را باز کن و اجرا کن:
+PowerShell را باز کن و این فرمان را اجرا کن:
 
 ```powershell
 $keytool = (Get-Command keytool.exe -ErrorAction Stop).Source
@@ -14,20 +14,20 @@ New-Item -ItemType Directory -Path $keyDir -Force | Out-Null
 & $keytool -genkeypair -v -keystore $keyPath -alias novelreader -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=Novel Reader'
 if ($LASTEXITCODE -ne 0) { throw 'ساخت کلید ناموفق بود.' }
 [Convert]::ToBase64String([IO.File]::ReadAllBytes($keyPath)) | Set-Clipboard
-Write-Host 'کلید Base64 در Clipboard کپی شد. فایل JKS را امن نگه دار و داخل مخزن Git قرار نده.'
+Write-Host 'مقدار Base64 در Clipboard کپی شد. فایل JKS و رمزهایش را امن نگه دار.'
 ```
 
-هنگام پرسش‌های `keytool` یک رمز انتخاب و نگه‌دار. برای رمز کلید (key password)، همان رمز مخزن را وارد کن. نام alias برابر `novelreader` است.
+رمز مخزن را انتخاب و نگه‌داری کن. برای رمز کلید هم همان رمز را وارد کن. Alias باید `novelreader` باشد.
 
-## ثبت GitHub Secrets
+## ثبت Secretها در GitHub
 
-در مخزن GitHub برو به **Settings → Secrets and variables → Actions → New repository secret** و این چهار Secret را بساز:
+در مخزن برو به **Settings → Secrets and variables → Actions** و این Secretها را بساز:
 
-| نام Secret | مقدار |
+| Secret | مقدار |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | مقدار Base64 که در Clipboard کپی شد |
-| `ANDROID_KEYSTORE_PASSWORD` | رمز مخزن JKS |
+| `ANDROID_KEYSTORE_BASE64` | مقدار Base64 کپی‌شده |
+| `ANDROID_KEYSTORE_PASSWORD` | رمز JKS |
 | `ANDROID_KEY_ALIAS` | `novelreader` |
-| `ANDROID_KEY_PASSWORD` | رمز کلید؛ اگر همان رمز مخزن را انتخاب کردی، همان را وارد کن |
+| `ANDROID_KEY_PASSWORD` | رمز کلید |
 
-از اجرای بعدی Workflow از این کلید پایدار استفاده می‌کند. کلید JKS را گم نکن؛ APKهای نسخه‌های بعدی باید با همین کلید امضا شوند. اگر Secretها ثبت نشده باشند، Workflow همچنان APK می‌سازد اما هشدار می‌دهد که امضای موقت ممکن است نصب نسخه‌ی تازه را به حذف نسخه‌ی قبلی وابسته کند.
+پس از آن، GitHub Actions از همین کلید برای ساخت نسخه‌های بعدی استفاده می‌کند. اگر APK قبلی با کلید دیگری امضا شده باشد، اندروید به‌روزرسانی را نمی‌پذیرد و نصب نسخهٔ قبلی باید حذف شود.
