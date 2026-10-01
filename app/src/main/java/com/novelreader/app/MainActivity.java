@@ -375,7 +375,11 @@ public final class MainActivity extends Activity {
         quickScrollButton.setVisibility(View.GONE);
         quickScrollButton.setOnClickListener(v -> {
             boolean toTop = "top".equals(v.getTag());
-            chapterEditor.smoothScrollTo(0, toTop ? 0 : Math.max(0, chapterEditor.getLayout() == null ? 0 : chapterEditor.getLayout().getHeight() - chapterEditor.getHeight()));
+            int targetY = toTop ? 0 : Math.max(0,
+                    chapterEditor.getLayout() == null ? 0 : chapterEditor.getLayout().getHeight() - chapterEditor.getHeight());
+            chapterEditor.scrollTo(0, targetY);
+            updateProgress();
+            updateMarker();
         });
         appColumn.addView(readerFrame, new LinearLayout.LayoutParams(-1, 0, 1));
 
