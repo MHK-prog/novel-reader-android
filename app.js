@@ -2,7 +2,7 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.5';
+const APP_VERSION = '0.2.6';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
