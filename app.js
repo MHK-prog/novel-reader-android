@@ -2,7 +2,7 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.10';
+const APP_VERSION = '0.2.11';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
@@ -40,7 +40,8 @@ function normalizeState(value) {
       tags: [...new Set((Array.isArray(book.tags) ? book.tags : []).map(tag => String(tag).trim()).filter(Boolean))],
       reaction: ['like', 'dislike'].includes(book.reaction) ? book.reaction : 'none',
       chapters: (Array.isArray(book.chapters) ? book.chapters : []).map(chapter => ({
-        hasText: !!chapter.hasText, percent: Number(chapter.percent) || 0, done: !!chapter.done, scroll: Number(chapter.scroll) || 0
+        hasText: !!chapter.hasText, percent: Number(chapter.percent) || 0, done: !!chapter.done, scroll: Number(chapter.scroll) || 0,
+        markerOffset: chapter.markerOffset == null ? null : Math.max(0, Number(chapter.markerOffset) || 0)
       }))
     }))
   };
@@ -75,7 +76,7 @@ function openDB() {
 }
 async function putText(id, text) {
   if (nativeStorageReady) {
-    const fileName = `chapter-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}.txt`;
+    const fileName = `chapter-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}.md`;
     if (window.NovelStorage.saveNovel(fileName, text) !== 'true') throw new Error(`Unable to save ${fileName}`);
     return;
   }
@@ -89,8 +90,12 @@ async function putText(id, text) {
 }
 async function getText(id) {
   if (nativeStorageReady) {
-    const fileName = `chapter-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}.txt`;
-    return window.NovelStorage.loadNovel(fileName) || '';
+    const baseName = `chapter-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
+    try {
+      const files = JSON.parse(window.NovelStorage.getNovelList() || '[]');
+      if (files.includes(`${baseName}.md`)) return window.NovelStorage.loadNovel(`${baseName}.md`) || '';
+    } catch (error) { console.warn('Could not list chapter files.', error); }
+    return window.NovelStorage.loadNovel(`${baseName}.txt`) || '';
   }
   const db = await openDB();
   const record = await new Promise((resolve, reject) => {
@@ -242,7 +247,7 @@ function addTagDialog() {
   };
 }
 
-function chapterTemplate(count) { return Array.from({ length: count }, () => ({ hasText: false, percent: 0, done: false, scroll: 0 })); }
+function chapterTemplate(count) { return Array.from({ length: count }, () => ({ hasText: false, percent: 0, done: false, scroll: 0, markerOffset: null })); }
 function openChapters(book) {
   if (!book) return;
   activeBookId = book.id;
@@ -277,6 +282,49 @@ function navigateBack(fallback) {
   if (history.state?.appPage && history.state.appPage !== fallback) history.back();
   else showPage(fallback, fallback === 'dashboard' ? 'کتابخانه‌ی کتاب‌ها' : currentBook()?.title);
 }
+function editorBlockMarkdown(node) {
+  if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+  if (node.tagName === 'HR') return '---';
+  if (node.tagName === 'BR') return '\n';
+  const children = [...node.childNodes];
+  if ((node.tagName === 'DIV' || node.tagName === 'P') && children.length === 1 && children[0].tagName === 'BR') return '';
+  return children.map(editorBlockMarkdown).join('');
+}
+function chapterMarkdown() {
+  return [...$('chapterEditor').childNodes].map(editorBlockMarkdown).join('\n');
+}
+function renderChapterMarkdown(markdown) {
+  const editor = $('chapterEditor');
+  if (!markdown) { editor.replaceChildren(); return; }
+  editor.innerHTML = markdown.split(/\r?\n/).map(line => line === '---'
+    ? '<hr class="markdown-rule">'
+    : `<div>${line ? esc(line) : '<br>'}</div>`).join('');
+}
+function positionChapterMarker() {
+  const chapter = currentBook()?.chapters[activeChapterIndex];
+  const marker = $('chapterMarker');
+  const editor = $('chapterEditor');
+  if (!marker || chapter?.markerOffset == null || $('page-reader').classList.contains('hidden')) {
+    marker?.setAttribute('hidden', '');
+    return;
+  }
+  const rect = editor.getBoundingClientRect();
+  const top = rect.top + chapter.markerOffset - editor.scrollTop;
+  if (top < rect.top + 14 || top > rect.bottom - 14) {
+    marker.setAttribute('hidden', '');
+    return;
+  }
+  marker.style.left = `${rect.left}px`;
+  marker.style.width = `${rect.width}px`;
+  marker.style.top = `${top}px`;
+  marker.removeAttribute('hidden');
+}
+function refreshChapterMarkerButton() {
+  const button = $('chapterMarkerToggle');
+  const chapter = currentBook()?.chapters[activeChapterIndex];
+  button.setAttribute('aria-pressed', String(chapter?.markerOffset != null));
+}
 async function openReader(index) {
   activeChapterIndex = index;
   const book = currentBook(), chapter = book?.chapters[index];
@@ -284,15 +332,17 @@ async function openReader(index) {
   activeText = await getText(textId(book.id, index));
   $('readerBookTitle').textContent = book.title;
   $('readerChapterTitle').textContent = `Chapter ${index + 1} of ${book.chapters.length}`;
-  $('chapterEditor').value = activeText;
+  renderChapterMarkdown(activeText);
   $('readerProgressFill').style.width = `${chapter.done ? 100 : chapter.percent}%`;
   $('readerProgressFill').classList.toggle('done', chapter.done);
   $('prevReaderChapter').disabled = index === 0;
   $('nextReaderChapter').disabled = index === book.chapters.length - 1;
+  refreshChapterMarkerButton();
   clearTimeout(quickScrollTimer);
   $('quickScroll').classList.remove('visible');
   showPage('reader', book.title);
   restoreChapterPosition(chapter.scroll || 0);
+  requestAnimationFrame(positionChapterMarker);
 }
 function restoreChapterPosition(offset) {
   restoringScroll = true;
@@ -313,7 +363,7 @@ async function saveActiveChapter() {
   autoSaveTimer = 0;
   const book = currentBook(), index = activeChapterIndex, chapter = book?.chapters[index];
   if (!book || !chapter || $('page-reader').classList.contains('hidden')) return;
-  const value = $('chapterEditor').value;
+  const value = chapterMarkdown();
   const hadText = chapter.hasText;
   chapter.scroll = $('chapterEditor').scrollTop;
   chapter.hasText = !!value.trim();
@@ -337,11 +387,32 @@ $('chapterEditor').addEventListener('input', () => {
   const book = currentBook(), chapter = book?.chapters[activeChapterIndex];
   if (!chapter) return;
   const hadText = chapter.hasText;
-  activeText = $('chapterEditor').value;
+  activeText = chapterMarkdown();
   chapter.hasText = !!activeText.trim();
   if (hadText !== chapter.hasText) renderChapters(book);
+  positionChapterMarker();
   updateReadProgress();
   scheduleChapterAutoSave();
+});
+$('chapterEditor').addEventListener('keydown', event => {
+  if (event.key !== 'Enter') return;
+  const selection = window.getSelection();
+  const anchor = selection?.anchorNode;
+  const element = anchor?.nodeType === Node.ELEMENT_NODE ? anchor : anchor?.parentElement;
+  const block = element?.closest('div, p');
+  if (!block || !$('chapterEditor').contains(block) || block.textContent.trim() !== '---') return;
+  event.preventDefault();
+  const rule = document.createElement('hr');
+  rule.className = 'markdown-rule';
+  const nextLine = document.createElement('div');
+  nextLine.append(document.createElement('br'));
+  block.replaceWith(rule, nextLine);
+  const range = document.createRange();
+  range.selectNodeContents(nextLine);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  $('chapterEditor').dispatchEvent(new Event('input', { bubbles: true }));
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -366,7 +437,7 @@ function updateReadProgress() {
   const book = currentBook(), chapter = book?.chapters[activeChapterIndex];
   if (!chapter || $('page-reader').classList.contains('hidden')) return;
   const editor = $('chapterEditor');
-  const hasContent = !!editor.value.trim();
+  const hasContent = !!activeText.trim();
   const maxOffset = Math.max(0, editor.scrollHeight - editor.clientHeight);
   const pct = !hasContent ? 0 : maxOffset <= 1 ? (chapter.done ? 100 : 0) : Math.max(0, Math.min(100, Math.round(editor.scrollTop / maxOffset * 100)));
   const wasDone = chapter.done;
@@ -376,6 +447,7 @@ function updateReadProgress() {
   if (wasDone !== chapter.done) renderChapters(book);
   $('readerProgressFill').style.width = `${pct}%`;
   $('readerProgressFill').classList.toggle('done', chapter.done);
+  positionChapterMarker();
   clearTimeout(scrollTimer); scrollTimer = setTimeout(() => persist(), 450);
 }
 $('chapterEditor').addEventListener('scroll', () => {
@@ -399,16 +471,33 @@ function syncReaderViewport() {
   if (document.activeElement === editor) requestAnimationFrame(() => editor.scrollIntoView({ block: 'nearest' }));
 }
 window.visualViewport?.addEventListener('resize', syncReaderViewport);
+window.visualViewport?.addEventListener('scroll', positionChapterMarker);
+window.addEventListener('scroll', positionChapterMarker, { passive: true });
+$('chapterEditor').addEventListener('scroll', positionChapterMarker, { passive: true });
 $('chapterEditor').addEventListener('focus', () => {
   document.body.classList.add('keyboard-open');
-  setTimeout(() => {
-    const editor = $('chapterEditor');
-    editor.setSelectionRange(editor.selectionStart, editor.selectionEnd);
-    syncReaderViewport();
-  }, 180);
+  setTimeout(syncReaderViewport, 180);
 });
 $('chapterEditor').addEventListener('blur', () => document.body.classList.remove('keyboard-open'));
 syncReaderViewport();
+$('chapterMarkerToggle').onclick = async () => {
+  const chapter = currentBook()?.chapters[activeChapterIndex];
+  if (!chapter) return;
+  chapter.markerOffset = chapter.markerOffset == null
+    ? $('chapterEditor').scrollTop + $('chapterEditor').clientHeight * 0.45
+    : null;
+  refreshChapterMarkerButton();
+  positionChapterMarker();
+  await persist();
+};
+$('chapterMarkerRemove').onclick = async () => {
+  const chapter = currentBook()?.chapters[activeChapterIndex];
+  if (!chapter) return;
+  chapter.markerOffset = null;
+  refreshChapterMarkerButton();
+  positionChapterMarker();
+  await persist();
+};
 $('quickScroll').onclick = () => {
   const editor = $('chapterEditor');
   const top = $('quickScroll').dataset.target === 'top';
