@@ -62,7 +62,7 @@ public final class MainActivity extends Activity {
     private static final int RED = Color.rgb(255, 76, 76);
     private static final int TEXT = Color.rgb(241, 241, 241);
     private static final int MUTED = Color.rgb(165, 165, 165);
-    private static final String VERSION = "1.0.0";
+    private static final String VERSION = "1.0.1";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Set<String> activeTagFilter = new HashSet<>();
@@ -205,17 +205,24 @@ public final class MainActivity extends Activity {
     }
 
     private void loadLibraryAndDashboard() {
+        String saved;
         try {
-            String saved = storage.read("library.json");
-            library = saved.isEmpty() ? new JSONObject() : new JSONObject(saved);
-            normalizeLibrary();
-            saveLibrary();
+            saved = storage.read("library.json");
         } catch (Exception error) {
-            library = new JSONObject();
-            try { library.put("books", new JSONArray()).put("tags", new JSONArray()); }
-            catch (JSONException ignored) { }
-            toast("فهرست کتاب‌ها خوانده نشد.");
+            toast("خواندن library.json ناموفق بود: " + storage.lastError());
+            showStorageGate();
+            return;
         }
+        try {
+            library = saved == null ? new JSONObject() : new JSONObject(saved);
+            normalizeLibrary();
+        } catch (Exception error) {
+            android.util.Log.e("NovelReader", "library.json is invalid; preserving the file", error);
+            toast("فهرست کتاب‌ها خوانده نشد؛ فایل قبلی دست‌نخورده باقی ماند.");
+            showStorageGate();
+            return;
+        }
+        saveLibrary();
         showDashboard();
         systemRoot.animate().alpha(1f).setDuration(170).start();
     }
@@ -273,8 +280,12 @@ public final class MainActivity extends Activity {
         library.put("tags", cleanTags);
     }
 
-    private void saveLibrary() {
-        if (!storage.write("library.json", library.toString())) toast("ذخیرهٔ اطلاعات ناموفق بود.");
+    private boolean saveLibrary() {
+        if (!storage.write("library.json", library.toString())) {
+            toast("ذخیرهٔ اطلاعات ناموفق بود: " + storage.lastError());
+            return false;
+        }
+        return true;
     }
 
     private void buildDrawer() {
@@ -417,7 +428,7 @@ public final class MainActivity extends Activity {
         LinearLayout centerControls = new LinearLayout(this); centerControls.setGravity(Gravity.CENTER); centerControls.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         markerToggleButton = iconButton("tag", PURPLE, !chapter.isNull("markerOffset"), this::toggleMarker);
         centerControls.addView(markerToggleButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
-        centerControls.addView(iconButton("book", PURPLE, false, () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); }),
+        centerControls.addView(iconButton("book", PURPLE, false, () -> { if (!saveCurrentChapter(true)) return; chapterEditor = null; showChapters(); }),
                 new LinearLayout.LayoutParams(dp(52), dp(52)));
         bottom.addView(centerControls, new LinearLayout.LayoutParams(dp(104), dp(54)));
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
@@ -466,13 +477,20 @@ public final class MainActivity extends Activity {
     }
 
     private void openReader(int index) {
-        saveCurrentChapter(false);
-        activeChapter = index;
+        if (!saveCurrentChapter(false)) return;
         JSONObject book = activeBook();
         if (book == null) return;
         String base = "chapter-" + (book.optString("id") + ":" + (index + 1)).replaceAll("[^A-Za-z0-9._-]", "-");
-        chapterText = storage.read(base + ".md");
-        if (chapterText.isEmpty()) chapterText = storage.read(base + ".txt");
+        String loadedText;
+        try {
+            loadedText = storage.read(base + ".md");
+            if (loadedText == null) loadedText = storage.read(base + ".txt");
+        } catch (Exception error) {
+            toast("خواندن Chapter ناموفق بود: " + storage.lastError());
+            return;
+        }
+        activeChapter = index;
+        chapterText = loadedText == null ? "" : loadedText;
         chapterDirty = false;
         JSONObject chapter = activeChapterObject();
         if (chapter != null && !chapterText.trim().isEmpty()) putJson(chapter, "hasText", true);
@@ -483,24 +501,27 @@ public final class MainActivity extends Activity {
         JSONArray chapters = activeBook() == null ? null : activeBook().optJSONArray("chapters");
         int target = activeChapter + delta;
         if (chapters == null || target < 0 || target >= chapters.length()) return;
-        saveCurrentChapter(true); openReader(target);
+        if (saveCurrentChapter(true)) openReader(target);
     }
 
-    private void saveCurrentChapter(boolean persistNow) {
-        if (!"reader".equals(page) || chapterEditor == null) return;
+    private boolean saveCurrentChapter(boolean persistNow) {
+        if (!"reader".equals(page) || chapterEditor == null) return true;
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
         chapterText = chapterEditor.getText().toString();
         JSONObject chapter = activeChapterObject();
-        if (chapter == null) return;
+        if (chapter == null) return false;
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
         putJson(chapter, "scroll", readerScroll == null ? 0 : readerScroll.getScrollY());
         String file = "chapter-" + (activeBookId + ":" + (activeChapter + 1)).replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
         if (chapterDirty) {
-            if (!storage.write(file, chapterText)) toast("ذخیرهٔ Chapter ناموفق بود.");
-            else chapterDirty = false;
+            if (!storage.write(file, chapterText)) {
+                toast("ذخیرهٔ Chapter ناموفق بود: " + storage.lastError());
+                return false;
+            }
+            chapterDirty = false;
         }
-        saveLibrary();
+        return saveLibrary();
     }
 
     private void scheduleSave() {
@@ -685,7 +706,7 @@ public final class MainActivity extends Activity {
 
     private void handleBack() {
         if (drawerOpen) { closeDrawer(); return; }
-        if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
+        if ("reader".equals(page)) { if (!saveCurrentChapter(true)) return; chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) showDashboard();
         else super.onBackPressed();
     }

@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.provider.DocumentsContract;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +25,7 @@ final class NovelStorage {
 
     private final MainActivity activity;
     private final SharedPreferences preferences;
+    private String lastError = "";
 
     NovelStorage(MainActivity activity) {
         this.activity = activity;
@@ -35,7 +37,8 @@ final class NovelStorage {
         if (dir == null) return false;
         try { queryName(dir); return true; }
         catch (Exception error) {
-            preferences.edit().remove(TREE_URI).remove(FOLDER_ID).apply();
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Saved folder is unavailable", error);
             return false;
         }
     }
@@ -71,40 +74,54 @@ final class NovelStorage {
         preferences.edit().putString(TREE_URI, selectedTree.toString()).putString(FOLDER_ID, folderId).apply();
     }
 
-    String read(String fileName) {
+    String read(String fileName) throws Exception {
         Uri dir = directoryUri();
-        if (dir == null || !safeName(fileName)) return "";
+        if (dir == null) { lastError = "No NovelReader folder is selected."; throw new IOException(lastError); }
+        if (!safeName(fileName)) { lastError = "Invalid file name."; throw new IOException(lastError); }
         try {
             Uri file = findChild(dir, fileName);
-            if (file == null) return "";
+            if (file == null) { lastError = ""; return null; }
             try (InputStream in = activity.getContentResolver().openInputStream(file);
                  ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                if (in == null) return "";
+                if (in == null) throw new IOException("The storage provider returned no input stream.");
                 byte[] buffer = new byte[8192];
                 int count;
                 while ((count = in.read(buffer)) >= 0) out.write(buffer, 0, count);
+                lastError = "";
                 return out.toString("UTF-8");
             }
-        } catch (Exception error) { return ""; }
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not read " + fileName, error);
+            throw error;
+        }
     }
 
     boolean write(String fileName, String contents) {
         Uri dir = directoryUri();
-        if (dir == null || !safeName(fileName)) return false;
+        lastError = "";
+        if (dir == null) { lastError = "No NovelReader folder is selected."; return false; }
+        if (!safeName(fileName)) { lastError = "Invalid file name."; return false; }
         try {
             Uri file = findChild(dir, fileName);
             String mime = fileName.endsWith(".json") ? "application/json" : "text/plain";
             if (file == null) file = DocumentsContract.createDocument(
                     activity.getContentResolver(), dir, mime, fileName);
-            if (file == null) return false;
-            try (OutputStream out = activity.getContentResolver().openOutputStream(file, "wt")) {
-                if (out == null) return false;
+            if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
+            try (OutputStream out = activity.getContentResolver().openOutputStream(file, "rwt")) {
+                if (out == null) throw new IOException("The storage provider returned no output stream.");
                 out.write((contents == null ? "" : contents).getBytes(StandardCharsets.UTF_8));
                 out.flush();
             }
             return true;
-        } catch (Exception error) { return false; }
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not write " + fileName, error);
+            return false;
+        }
     }
+
+    String lastError() { return lastError; }
 
     List<String> listNames() {
         List<String> names = new ArrayList<>();
