@@ -62,7 +62,7 @@ public final class MainActivity extends Activity {
     private static final int RED = Color.rgb(255, 76, 76);
     private static final int TEXT = Color.rgb(241, 241, 241);
     private static final int MUTED = Color.rgb(165, 165, 165);
-    private static final String VERSION = "1.0.1";
+    private static final String VERSION = "1.0.2";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Set<String> activeTagFilter = new HashSet<>();
@@ -428,7 +428,7 @@ public final class MainActivity extends Activity {
         LinearLayout centerControls = new LinearLayout(this); centerControls.setGravity(Gravity.CENTER); centerControls.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         markerToggleButton = iconButton("tag", PURPLE, !chapter.isNull("markerOffset"), this::toggleMarker);
         centerControls.addView(markerToggleButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
-        centerControls.addView(iconButton("book", PURPLE, false, () -> { if (!saveCurrentChapter(true)) return; chapterEditor = null; showChapters(); }),
+        centerControls.addView(iconButton("book", PURPLE, false, () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); }),
                 new LinearLayout.LayoutParams(dp(52), dp(52)));
         bottom.addView(centerControls, new LinearLayout.LayoutParams(dp(104), dp(54)));
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
@@ -477,7 +477,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openReader(int index) {
-        if (!saveCurrentChapter(false)) return;
+        saveCurrentChapter(false);
         JSONObject book = activeBook();
         if (book == null) return;
         String base = "chapter-" + (book.optString("id") + ":" + (index + 1)).replaceAll("[^A-Za-z0-9._-]", "-");
@@ -501,7 +501,8 @@ public final class MainActivity extends Activity {
         JSONArray chapters = activeBook() == null ? null : activeBook().optJSONArray("chapters");
         int target = activeChapter + delta;
         if (chapters == null || target < 0 || target >= chapters.length()) return;
-        if (saveCurrentChapter(true)) openReader(target);
+        saveCurrentChapter(true);
+        openReader(target);
     }
 
     private boolean saveCurrentChapter(boolean persistNow) {
@@ -706,7 +707,7 @@ public final class MainActivity extends Activity {
 
     private void handleBack() {
         if (drawerOpen) { closeDrawer(); return; }
-        if ("reader".equals(page)) { if (!saveCurrentChapter(true)) return; chapterEditor = null; showChapters(); }
+        if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) showDashboard();
         else super.onBackPressed();
     }
