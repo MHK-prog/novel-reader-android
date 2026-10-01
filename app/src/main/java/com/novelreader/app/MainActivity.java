@@ -341,19 +341,13 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
-        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), "back", "edit", this::handleBack, () -> showBookDialog(book)));
+        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), "back", "edit",
+                this::handleBack, () -> showBookDialog(book), 10));
         chaptersList = new ListView(this);
         chaptersList.setDivider(null); chaptersList.setCacheColorHint(Color.TRANSPARENT); chaptersList.setBackgroundColor(BG);
         chaptersList.setPadding(dp(12), dp(6), dp(12), dp(6)); chaptersList.setClipToPadding(false);
         chapterAdapter = new ChapterAdapter(); chaptersList.setAdapter(chapterAdapter);
-        chaptersList.setOnItemClickListener((parent, view, position, id) -> openReader(position));
         appColumn.addView(chaptersList, new LinearLayout.LayoutParams(-1, 0, 1));
-        FrameLayout bottom = new FrameLayout(this);
-        bottom.setPadding(dp(12), dp(6), dp(12), dp(6));
-        bottom.setBackgroundColor(BG);
-        bottom.addView(iconButton("back", PURPLE, false, this::showDashboard),
-                new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
-        appColumn.addView(bottom, new LinearLayout.LayoutParams(-1, dp(66)));
         int next = firstUnread(book);
         chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
     }
@@ -908,10 +902,10 @@ public final class MainActivity extends Activity {
             footer.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
             LinearLayout reactions = new LinearLayout(MainActivity.this); reactions.setGravity(Gravity.CENTER_VERTICAL);
             reactions.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            reactions.addView(plainIconButton("like", "like".equals(reaction) ? GREEN : PURPLE,
-                    "like".equals(reaction), () -> toggleReaction(book, "like")), new LinearLayout.LayoutParams(dp(40), dp(38)));
             reactions.addView(plainIconButton("dislike", "dislike".equals(reaction) ? RED : PURPLE,
                     "dislike".equals(reaction), () -> toggleReaction(book, "dislike")), new LinearLayout.LayoutParams(dp(40), dp(38)));
+            reactions.addView(plainIconButton("like", "like".equals(reaction) ? GREEN : PURPLE,
+                    "like".equals(reaction), () -> toggleReaction(book, "like")), new LinearLayout.LayoutParams(dp(40), dp(38)));
             footer.addView(reactions, new LinearLayout.LayoutParams(-2, dp(38)));
             JSONArray tags = book.optJSONArray("tags"); if (tags != null && tags.length() > 0) {
                 StringBuilder label = new StringBuilder(); for (int i = 0; i < Math.min(4, tags.length()); i++) { if (i > 0) label.append("  ·  "); label.append(tags.optString(i)); }
@@ -948,8 +942,11 @@ public final class MainActivity extends Activity {
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
             detail.addView(name); LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
-            FrameLayout status = iconButton(done ? "check" : hasText ? "edit" : "book", color, done, () -> toggleChapterDone(position));
+            FrameLayout status = plainIconButton(done ? "check" : hasText ? "edit" : "book", color, done,
+                    () -> toggleChapterDone(position));
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
+            row.setClickable(true);
+            row.setOnClickListener(v -> openReader(position));
             return row;
         }
     }
