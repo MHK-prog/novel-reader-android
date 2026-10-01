@@ -205,7 +205,8 @@ public final class MainActivity extends Activity {
             saveLibrary();
         } catch (Exception error) {
             library = new JSONObject();
-            normalizeLibrary();
+            try { library.put("books", new JSONArray()).put("tags", new JSONArray()); }
+            catch (JSONException ignored) { }
             toast("فهرست کتاب‌ها خوانده نشد.");
         }
         showDashboard();
