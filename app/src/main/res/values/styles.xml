@@ -1,6 +1,15 @@
 <resources>
+    <style name="AppAlertDialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_background</item>
+        <item name="android:colorAccent">#BB86FC</item>
+        <item name="android:textColorPrimary">#F1F1F1</item>
+        <item name="android:textColorSecondary">#A5A5A5</item>
+        <item name="android:windowDimAmount">0.72</item>
+    </style>
+
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
+        <item name="android:alertDialogTheme">@style/AppAlertDialogTheme</item>
         <item name="android:colorAccent">#8B5CF6</item>
         <item name="android:colorControlActivated">#BB86FC</item>
         <item name="android:colorControlHighlight">#44BB86FC</item>

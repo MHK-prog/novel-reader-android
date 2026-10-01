@@ -62,8 +62,8 @@ final class NativeIconView extends View {
         canvas.restore();
     }
 
-    private void drawThumb(Canvas canvas, boolean mirrored) {
-        if (mirrored) { canvas.save(); canvas.scale(-1, 1, 12, 12); }
+    private void drawThumb(Canvas canvas, boolean pointingDown) {
+        if (pointingDown) { canvas.save(); canvas.rotate(180, 12, 12); }
         Path p = new Path();
         p.moveTo(7.2f, 10.4f); p.lineTo(10.7f, 4.1f); p.quadTo(12, 2, 13.3f, 3.1f);
         p.quadTo(14.2f, 3.9f, 13.7f, 5.4f); p.lineTo(12.7f, 8.2f); p.lineTo(18.2f, 8.2f);
@@ -73,7 +73,7 @@ final class NativeIconView extends View {
         else canvas.drawPath(p, paint);
         RectF cuff = new RectF(3.8f, 10.2f, 7.2f, 20.2f);
         if (filled) canvas.drawRoundRect(cuff, 1.1f, 1.1f, paint); else canvas.drawRoundRect(cuff, 1.1f, 1.1f, paint);
-        if (mirrored) canvas.restore();
+        if (pointingDown) canvas.restore();
         paint.setStyle(Paint.Style.STROKE);
     }
 

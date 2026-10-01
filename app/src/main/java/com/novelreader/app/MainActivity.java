@@ -25,6 +25,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.BaseAdapter;
@@ -154,6 +155,7 @@ public final class MainActivity extends Activity {
         drawerPanel.setBackgroundColor(SURFACE);
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(-1, -1, Gravity.RIGHT);
         panelParams.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.55f);
+        drawerPanel.setTranslationX(panelParams.width);
         drawerLayer.addView(drawerPanel, panelParams);
         drawerPanel.setOnClickListener(v -> { });
         buildDrawer();
@@ -284,20 +286,39 @@ public final class MainActivity extends Activity {
         drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
     }
 
-    private void openDrawer() { drawerOpen = true; drawerLayer.setVisibility(View.VISIBLE); drawerLayer.setAlpha(0); drawerLayer.animate().alpha(1).setDuration(140).start(); }
-    private void closeDrawer() { drawerOpen = false; drawerLayer.setVisibility(View.GONE); }
+    private void openDrawer() {
+        if (drawerOpen) return;
+        drawerOpen = true;
+        drawerLayer.animate().cancel();
+        drawerPanel.animate().cancel();
+        drawerLayer.setVisibility(View.VISIBLE);
+        drawerLayer.setAlpha(0f);
+        drawerLayer.animate().alpha(1f).setDuration(190).setInterpolator(new DecelerateInterpolator()).start();
+        drawerPanel.animate().translationX(0f).setDuration(190).setInterpolator(new DecelerateInterpolator()).start();
+    }
+
+    private void closeDrawer() {
+        if (!drawerOpen) return;
+        drawerOpen = false;
+        drawerLayer.animate().cancel();
+        drawerPanel.animate().cancel();
+        drawerLayer.animate().alpha(0f).setDuration(170).setInterpolator(new DecelerateInterpolator()).start();
+        drawerPanel.animate().translationX(drawerPanel.getWidth()).setDuration(170)
+                .setInterpolator(new DecelerateInterpolator())
+                .withEndAction(() -> { if (!drawerOpen) drawerLayer.setVisibility(View.GONE); }).start();
+    }
 
     private void showDashboard() {
         page = "dashboard";
         appColumn.removeAllViews();
-        appColumn.addView(makeHeader("کتابخانه", "", "menu", "add", this::openDrawer, () -> showBookDialog(null)));
+        appColumn.addView(makeHeader("کتابخانه", "", "menu", "add", this::openDrawer, () -> showBookDialog(null), 10));
         LinearLayout filters = new LinearLayout(this);
         filters.setGravity(Gravity.CENTER_VERTICAL);
         filters.setPadding(dp(14), dp(7), dp(14), dp(7));
         searchField = edit("جستجو", false);
         searchField.setSingleLine(true);
         searchField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        filters.addView(searchField, new LinearLayout.LayoutParams(0, dp(48), 1));
+        filters.addView(clearableInput(searchField), new LinearLayout.LayoutParams(0, dp(48), 1));
         tagFilterButton = iconButton("filter", PURPLE, !activeTagFilter.isEmpty(), this::showTagFilter);
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(dp(48), dp(48)); fp.leftMargin = dp(8);
         filters.addView(tagFilterButton, fp);
@@ -314,7 +335,6 @@ public final class MainActivity extends Activity {
         TextView version = text(VERSION, 10, MUTED); version.setGravity(Gravity.CENTER);
         appColumn.addView(version, new LinearLayout.LayoutParams(-1, dp(22)));
         searchField.addTextChangedListener(watcher(() -> { if (bookAdapter != null) bookAdapter.notifyDataSetChanged(); }));
-        booksList.setOnItemClickListener((parent, view, position, id) -> openChapters(bookAdapter.getBook(position)));
     }
 
     private void showChapters() {
@@ -545,7 +565,7 @@ public final class MainActivity extends Activity {
     private void showAddTagDialog() {
         EditText input = edit("نام تگ", false);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("افزودن تگ")
-                .setView(dialogPadding(input)).setNegativeButton("لغو", null).setPositiveButton("ذخیره", null).create();
+                .setView(dialogPadding(clearableInput(input))).setNegativeButton("لغو", null).setPositiveButton("ذخیره", null).create();
         dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
             String value = input.getText().toString().trim();
             if (value.isEmpty()) return;
@@ -562,10 +582,10 @@ public final class MainActivity extends Activity {
         EditText author = edit("نام نویسنده", false); author.setText(isNew ? "" : existing.optString("author"));
         EditText title = edit("نام کتاب", false); title.setText(isNew ? "" : existing.optString("title"));
         EditText count = edit("تعداد Chapter", false); count.setInputType(InputType.TYPE_CLASS_NUMBER); count.setText("1");
-        if (isNew) { form.addView(author, fieldParams()); form.addView(title, fieldParams()); form.addView(count, fieldParams()); }
-        else { form.addView(author, fieldParams()); form.addView(title, fieldParams()); }
+        if (isNew) { form.addView(clearableInput(author), fieldParams()); form.addView(clearableInput(title), fieldParams()); form.addView(clearableInput(count), fieldParams()); }
+        else { form.addView(clearableInput(author), fieldParams()); form.addView(clearableInput(title), fieldParams()); }
         TextView tagLabel = text("تگ‌ها", 14, MUTED); tagLabel.setPadding(0, dp(12), 0, dp(4)); form.addView(tagLabel);
-        EditText tagSearch = edit("جستجوی تگ‌ها", false); tagSearch.setSingleLine(true); form.addView(tagSearch, fieldParams());
+        EditText tagSearch = edit("جستجوی تگ‌ها", false); tagSearch.setSingleLine(true); form.addView(clearableInput(tagSearch), fieldParams());
         TagCloud cloud = new TagCloud(this); Set<String> selected = new HashSet<>();
         JSONArray oldTags = isNew ? null : existing.optJSONArray("tags");
         if (oldTags != null) for (int i = 0; i < oldTags.length(); i++) selected.add(oldTags.optString(i));
@@ -597,17 +617,17 @@ public final class MainActivity extends Activity {
 
     private void showTagFilter() {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8), dp(4), dp(8), dp(4));
-        EditText search = edit("جستجوی تگ‌ها", false); search.setSingleLine(true); box.addView(search, fieldParams());
+        EditText search = edit("جستجوی تگ‌ها", false); search.setSingleLine(true); box.addView(clearableInput(search), fieldParams());
         TagCloud cloud = new TagCloud(this); Set<String> selected = new HashSet<>(activeTagFilter);
         Runnable render = () -> cloud.showTags(allTags(), selected, search.getText().toString()); render.run();
         search.addTextChangedListener(watcher(render)); box.addView(cloud);
         ScrollView scroll = new ScrollView(this); scroll.addView(box);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("فیلتر تگ‌ها").setView(dialogPadding(scroll))
-                .setNegativeButton("لغو", null).setNeutralButton("پاک کردن", null).setPositiveButton("اعمال", null).create();
-        dialog.setOnShowListener(v -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> { activeTagFilter.clear(); activeTagFilter.addAll(selected); dialog.dismiss(); styleIconButton(tagFilterButton, !activeTagFilter.isEmpty()); bookAdapter.notifyDataSetChanged(); });
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(b -> { activeTagFilter.clear(); dialog.dismiss(); styleIconButton(tagFilterButton, false); bookAdapter.notifyDataSetChanged(); });
-        });
+                .setNegativeButton("لغو", null).setPositiveButton("اعمال", null).create();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
+            activeTagFilter.clear(); activeTagFilter.addAll(selected); dialog.dismiss();
+            styleIconButton(tagFilterButton, !activeTagFilter.isEmpty()); bookAdapter.notifyDataSetChanged();
+        }));
         dialog.show();
     }
 
@@ -666,6 +686,11 @@ public final class MainActivity extends Activity {
     }
 
     private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon, Runnable left, Runnable right) {
+        return makeHeader(title, subtitle, leftIcon, rightIcon, left, right, 0);
+    }
+
+    private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon,
+                            Runnable left, Runnable right, int sideInsetDp) {
         FrameLayout header = new FrameLayout(this); header.setBackgroundColor(BG);
         LinearLayout textBlock = new LinearLayout(this); textBlock.setGravity(Gravity.CENTER); textBlock.setOrientation(LinearLayout.VERTICAL);
         titleView = text(title, 18, TEXT); titleView.setGravity(Gravity.CENTER); titleView.setMaxLines(1); titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -674,13 +699,31 @@ public final class MainActivity extends Activity {
         if (!subtitle.isEmpty()) textBlock.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
         FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(-1, -1);
         titleParams.leftMargin = dp(68); titleParams.rightMargin = dp(68); header.addView(textBlock, titleParams);
-        if (leftIcon != null) header.addView(iconButton(leftIcon, PURPLE, false, left), new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.RIGHT | Gravity.CENTER_VERTICAL));
-        if (rightIcon != null) header.addView(iconButton(rightIcon, PURPLE, false, right), new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.LEFT | Gravity.CENTER_VERTICAL));
+        if (leftIcon != null) {
+            FrameLayout.LayoutParams button = new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+            button.rightMargin = dp(sideInsetDp);
+            header.addView(iconButton(leftIcon, PURPLE, false, left), button);
+        }
+        if (rightIcon != null) {
+            FrameLayout.LayoutParams button = new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.LEFT | Gravity.CENTER_VERTICAL);
+            button.leftMargin = dp(sideInsetDp);
+            header.addView(iconButton(rightIcon, PURPLE, false, right), button);
+        }
         return header;
     }
 
     private FrameLayout iconButton(String icon, int color, boolean selected, Runnable action) {
-        FrameLayout button = new FrameLayout(this); styleIconButton(button, selected);
+        return makeIconButton(icon, color, selected, action, true);
+    }
+
+    private FrameLayout plainIconButton(String icon, int color, boolean filled, Runnable action) {
+        return makeIconButton(icon, color, filled, action, false);
+    }
+
+    private FrameLayout makeIconButton(String icon, int color, boolean selected, Runnable action, boolean circular) {
+        FrameLayout button = new FrameLayout(this);
+        if (circular) styleIconButton(button, selected);
+        else button.setBackgroundColor(Color.TRANSPARENT);
         NativeIconView glyph = new NativeIconView(this, icon, color, selected && ("like".equals(icon) || "dislike".equals(icon)));
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER); button.addView(glyph, p);
         button.setContentDescription(iconDescription(icon)); button.setClickable(true); button.setFocusable(true);
@@ -746,6 +789,27 @@ public final class MainActivity extends Activity {
             view.setTextSelectHandle(handle); view.setTextSelectHandleLeft(handle); view.setTextSelectHandleRight(handle);
         }
         return view;
+    }
+
+    private View clearableInput(EditText input) {
+        FrameLayout field = new FrameLayout(this);
+        input.setPadding(dp(46), input.getPaddingTop(), input.getPaddingRight(), input.getPaddingBottom());
+        field.addView(input, new FrameLayout.LayoutParams(-1, -1));
+
+        FrameLayout clear = new FrameLayout(this);
+        clear.setContentDescription("پاک کردن متن");
+        clear.setClickable(true);
+        clear.setFocusable(true);
+        NativeIconView close = new NativeIconView(this, "close", MUTED, false);
+        clear.addView(close, new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER));
+        clear.setOnClickListener(v -> { input.setText(""); input.requestFocus(); });
+        clear.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) v.animate().scaleX(.88f).scaleY(.88f).setDuration(65).start();
+            else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) v.animate().scaleX(1).scaleY(1).setDuration(95).start();
+            return false;
+        });
+        field.addView(clear, new FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT | Gravity.CENTER_VERTICAL));
+        return field;
     }
 
     private GradientDrawable roundDrawable(int color, int stroke, int radiusDp) {
@@ -839,14 +903,25 @@ public final class MainActivity extends Activity {
             meta.setMaxLines(1); meta.setEllipsize(android.text.TextUtils.TruncateAt.END); details.addView(meta, new LinearLayout.LayoutParams(-1, dp(19)));
             row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
             String reaction = book.optString("reaction", "none");
-            row.addView(iconButton("like", "like".equals(reaction) ? GREEN : PURPLE, "like".equals(reaction), () -> toggleReaction(book, "like")), new LinearLayout.LayoutParams(dp(42), dp(42)));
-            row.addView(iconButton("dislike", "dislike".equals(reaction) ? RED : PURPLE, "dislike".equals(reaction), () -> toggleReaction(book, "dislike")), new LinearLayout.LayoutParams(dp(42), dp(42)));
             card.addView(row);
+            LinearLayout footer = new LinearLayout(MainActivity.this); footer.setGravity(Gravity.CENTER_VERTICAL);
+            footer.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            LinearLayout reactions = new LinearLayout(MainActivity.this); reactions.setGravity(Gravity.CENTER_VERTICAL);
+            reactions.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+            reactions.addView(plainIconButton("like", "like".equals(reaction) ? GREEN : PURPLE,
+                    "like".equals(reaction), () -> toggleReaction(book, "like")), new LinearLayout.LayoutParams(dp(40), dp(38)));
+            reactions.addView(plainIconButton("dislike", "dislike".equals(reaction) ? RED : PURPLE,
+                    "dislike".equals(reaction), () -> toggleReaction(book, "dislike")), new LinearLayout.LayoutParams(dp(40), dp(38)));
+            footer.addView(reactions, new LinearLayout.LayoutParams(-2, dp(38)));
             JSONArray tags = book.optJSONArray("tags"); if (tags != null && tags.length() > 0) {
                 StringBuilder label = new StringBuilder(); for (int i = 0; i < Math.min(4, tags.length()); i++) { if (i > 0) label.append("  ·  "); label.append(tags.optString(i)); }
                 TextView tagText = text(label.toString(), 10, PURPLE); tagText.setSingleLine(true); tagText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                card.addView(tagText, new LinearLayout.LayoutParams(-1, dp(17)));
+                tagText.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                footer.addView(tagText, new LinearLayout.LayoutParams(0, dp(30), 1));
             }
+            card.addView(footer, new LinearLayout.LayoutParams(-1, dp(38)));
+            card.setClickable(true);
+            card.setOnClickListener(v -> openChapters(book));
             card.setOnLongClickListener(v -> { showBookContext(book); return true; });
             return card;
         }
