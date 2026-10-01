@@ -2,7 +2,7 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.7';
+const APP_VERSION = '0.2.8';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
@@ -155,7 +155,7 @@ function renderDashboard() {
   $('activeTagCount').textContent = activeTags.size ? `(${fa(activeTags.size)})` : '';
   const query = $('bookSearch').value.trim().toLocaleLowerCase('fa');
   const books = state.books.filter(book => [...activeTags].every(tag => book.tags.includes(tag)) &&
-    (`${book.title} ${book.author} ${book.tags.join(' ')}`).toLocaleLowerCase('fa').includes(query));
+    (`${book.title} ${book.author} `).toLocaleLowerCase('fa').includes(query));
   const list = $('worksList');
   if (!books.length) {
     list.innerHTML = `<div class="empty">${state.books.length ? 'نتیجه‌ای پیدا نشد.' : 'هنوز کتابی ندارید.'}</div>`;
