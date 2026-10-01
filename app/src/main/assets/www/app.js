@@ -2,7 +2,7 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.6';
+const APP_VERSION = '0.2.7';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
@@ -164,8 +164,8 @@ function renderDashboard() {
   list.innerHTML = books.map(book => `<article class="work-card" data-open-book="${esc(book.id)}">
     <button type="button" class="book-open"><strong>${esc(book.title)}</strong><small>${esc(book.author || '—')} · ${book.chapters.length} Ch</small></button>
     <div class="book-row"><div class="book-tags">${book.tags.map(tag => `<span class="book-tag">${esc(tag)}</span>`).join('')}</div>
-    <div class="book-actions"><button type="button" class="reaction ${book.reaction === 'like' ? 'selected' : ''}" data-react="like" data-book="${esc(book.id)}" aria-label="${book.reaction === 'like' ? 'Remove like' : 'Like book'}"><img src="./icons/like-${book.reaction === 'like' ? 'filled' : 'empty'}.svg" alt=""></button>
-    <button type="button" class="reaction ${book.reaction === 'dislike' ? 'selected' : ''}" data-react="dislike" data-book="${esc(book.id)}" aria-label="${book.reaction === 'dislike' ? 'Remove dislike' : 'Dislike book'}"><img src="./icons/dislike-${book.reaction === 'dislike' ? 'filled' : 'empty'}.svg" alt=""></button></div></div></article>`).join('');
+    <div class="book-actions"><button type="button" class="reaction ${book.reaction === 'dislike' ? 'selected' : ''}" data-react="dislike" data-book="${esc(book.id)}" aria-label="${book.reaction === 'dislike' ? 'Remove dislike' : 'Dislike book'}"><img src="./icons/dislike-${book.reaction === 'dislike' ? 'filled' : 'empty'}.svg" alt=""></button>
+    <button type="button" class="reaction ${book.reaction === 'like' ? 'selected' : ''}" data-react="like" data-book="${esc(book.id)}" aria-label="${book.reaction === 'like' ? 'Remove like' : 'Like book'}"><img src="./icons/like-${book.reaction === 'like' ? 'filled' : 'empty'}.svg" alt=""></button></div></div></article>`).join('');
 }
 $('bookSearch').oninput = renderDashboard;
 $('openTagFilter').onclick = openTagFilterDialog;
