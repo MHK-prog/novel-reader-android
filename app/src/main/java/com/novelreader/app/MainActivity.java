@@ -62,7 +62,7 @@ public final class MainActivity extends Activity {
     private static final int RED = Color.rgb(255, 76, 76);
     private static final int TEXT = Color.rgb(241, 241, 241);
     private static final int MUTED = Color.rgb(165, 165, 165);
-    private static final String VERSION = "1.0.2";
+    private static final String VERSION = "1.0.3";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Set<String> activeTagFilter = new HashSet<>();
@@ -484,7 +484,6 @@ public final class MainActivity extends Activity {
         String loadedText;
         try {
             loadedText = storage.read(base + ".md");
-            if (loadedText == null) loadedText = storage.read(base + ".txt");
         } catch (Exception error) {
             toast("خواندن Chapter ناموفق بود: " + storage.lastError());
             return;

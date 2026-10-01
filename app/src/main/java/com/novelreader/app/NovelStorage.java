@@ -14,8 +14,6 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** SAF storage for the existing Documents/NovelReader library format. */
 final class NovelStorage {
@@ -79,9 +77,9 @@ final class NovelStorage {
     String read(String fileName) throws Exception {
         Uri dir = directoryUri();
         if (dir == null) { lastError = "No NovelReader folder is selected."; throw new IOException(lastError); }
-        if (!safeName(fileName)) { lastError = "Invalid file name."; throw new IOException(lastError); }
+        if (!supportedName(fileName)) { lastError = "Only .md and .json files are supported."; throw new IOException(lastError); }
         try {
-            Uri file = fileName.endsWith(".md") ? findChapterDocument(dir, fileName) : findChild(dir, fileName);
+            Uri file = findChild(dir, fileName);
             if (file == null) { lastError = ""; return null; }
             try (InputStream in = activity.getContentResolver().openInputStream(file);
                  ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -103,11 +101,11 @@ final class NovelStorage {
         Uri dir = directoryUri();
         lastError = "";
         if (dir == null) { lastError = "No NovelReader folder is selected."; return false; }
-        if (!safeName(fileName)) { lastError = "Invalid file name."; return false; }
+        if (!supportedName(fileName)) { lastError = "Only .md and .json files are supported."; return false; }
         try {
-            Uri file = fileName.endsWith(".md") ? findChapterDocument(dir, fileName) : findChild(dir, fileName);
             String mime = fileName.endsWith(".json") ? "application/json"
-                    : fileName.endsWith(".md") ? "text/markdown" : "text/plain";
+                    : "text/markdown";
+            Uri file = findChild(dir, fileName);
             if (file == null) file = DocumentsContract.createDocument(
                     activity.getContentResolver(), dir, mime, fileName);
             if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
@@ -163,55 +161,6 @@ final class NovelStorage {
         return null;
     }
 
-    /** Finds files Samsung's DocumentsProvider previously saved as .md.txt or .md (n).txt. */
-    private Uri findChapterDocument(Uri parent, String name) throws Exception {
-        String legacyTxtName = name.substring(0, name.length() - 2) + "txt";
-        String mislabeledTxtName = name + ".txt";
-        String suffixedNamePattern = Pattern.quote(name) + " \\((\\d+)\\)\\.txt";
-        Pattern pattern = Pattern.compile(suffixedNamePattern);
-        Uri exact = null;
-        Uri bestSuffixed = null;
-        Uri mislabeledTxt = null;
-        Uri legacyTxt = null;
-        int bestSuffix = -1;
-
-        String parentId = DocumentsContract.getDocumentId(parent);
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(parent, parentId);
-        String[] cols = { DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME };
-        try (Cursor cursor = activity.getContentResolver().query(children, cols, null, null, null)) {
-            if (cursor == null) throw new IOException("The storage provider could not list the selected folder.");
-            int idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
-            int nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
-            while (cursor.moveToNext()) {
-                String displayName = cursor.getString(nameCol);
-                String documentId = cursor.getString(idCol);
-                Uri candidate = DocumentsContract.buildDocumentUriUsingTree(parent, documentId);
-                if (name.equals(displayName)) {
-                    exact = candidate;
-                    break;
-                } else if (mislabeledTxtName.equals(displayName)) {
-                    mislabeledTxt = candidate;
-                } else if (legacyTxtName.equals(displayName)) {
-                    legacyTxt = candidate;
-                } else {
-                    Matcher matcher = pattern.matcher(displayName);
-                    if (!matcher.matches()) continue;
-                    int suffix;
-                    try { suffix = Integer.parseInt(matcher.group(1)); }
-                    catch (NumberFormatException ignored) { suffix = 0; }
-                    if (suffix > bestSuffix) {
-                        bestSuffix = suffix;
-                        bestSuffixed = candidate;
-                    }
-                }
-            }
-        }
-        if (exact != null) return exact;
-        if (bestSuffixed != null) return bestSuffixed;
-        if (mislabeledTxt != null) return mislabeledTxt;
-        return legacyTxt;
-    }
-
     private String queryName(Uri document) throws Exception {
         String[] cols = { DocumentsContract.Document.COLUMN_DISPLAY_NAME };
         try (Cursor cursor = activity.getContentResolver().query(document, cols, null, null, null)) {
@@ -223,5 +172,9 @@ final class NovelStorage {
     private static boolean safeName(String name) {
         return name != null && name.length() <= 180 && !name.contains("..")
                 && name.matches("[A-Za-z0-9][A-Za-z0-9._-]*");
+    }
+
+    private static boolean supportedName(String name) {
+        return safeName(name) && (name.endsWith(".md") || name.endsWith(".json"));
     }
 }
