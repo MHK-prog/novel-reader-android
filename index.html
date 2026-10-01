@@ -30,6 +30,15 @@ button{-webkit-tap-highlight-color:transparent;transition:transform .12s ease,ba
 .sidebar{width:min(50vw,320px);min-width:170px}.work-card{direction:ltr}.book-open{text-align:left}.book-open strong,.book-open small{text-align:left;direction:auto}.book-row,.book-tags,.book-actions{direction:ltr}.book-tag{direction:auto}
 .reader-head{justify-content:center}.reader-titles{max-width:none;flex:1;text-align:center}.reader-toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}.reader-toolbar #readerBack{justify-self:center}
 @keyframes app-enter{from{opacity:.92;transform:translateY(2px) scale(.998)}to{opacity:1;transform:none}}body{animation:app-enter 150ms cubic-bezier(.2,.8,.2,1) both}@media(prefers-reduced-motion:reduce){body{animation:none}}
+</style><style>
+:root{--reader-viewport-height:100dvh;--reader-toolbar-height:48px}
+.reader-toolbar{margin-top:4px;padding:2px 10px max(2px,env(safe-area-inset-bottom))}
+.reader-toolbar .chapter-nav,.reader-toolbar .icon-action,.reader-toolbar .toolbar-import{width:40px;height:40px;min-width:40px;min-height:40px}
+.quick-scroll{left:auto;right:14px;bottom:calc(var(--reader-toolbar-height) + env(safe-area-inset-bottom) + 10px)}
+#chapterEditor{height:calc(var(--reader-viewport-height) - 150px);min-height:0;scroll-padding-block:16px}
+#chapterEditor::selection{background:#bb86fc;color:#000}
+#chapterEditor::-moz-selection{background:#bb86fc;color:#000}
+@media(max-width:560px){.reader-toolbar{padding-top:2px;padding-bottom:max(2px,env(safe-area-inset-bottom));gap:2px}}
 </style></head>
 <body>
 <header class="topbar"><button class="menu-button" id="menuButton" type="button" aria-label="باز کردن فهرست" aria-expanded="false"><img src="./icons/menu.svg" alt=""></button><div class="topbar-copy"><h1 id="topTitle">کتابخانه‌ی کتاب‌ها</h1><small id="topSubtitle" class="top-subtitle hidden"></small></div></header><div class="sidebar-scrim" id="sidebarScrim"></div><aside class="sidebar" id="sidebar" aria-label="منوی برنامه"><div class="sidebar-head"><strong>فهرست</strong></div><nav class="sidebar-actions"><button type="button" id="sideAddBook"><img src="./icons/add-book.svg" alt=""><span>افزودن کتاب</span></button><button type="button" id="sideAddTag"><img src="./icons/tag.svg" alt=""><span>افزودن تگ</span></button></nav></aside>

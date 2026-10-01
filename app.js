@@ -2,7 +2,7 @@
 const META_KEY = 'novel-library-meta-v1';
 const DB_NAME = 'novel-library-files-v1';
 const DB_STORE = 'texts';
-const APP_VERSION = '0.2.8';
+const APP_VERSION = '0.2.10';
 let state = { books: [], tags: [] };
 let activeBookId = null;
 let activeChapterIndex = 0;
@@ -382,7 +382,7 @@ $('chapterEditor').addEventListener('scroll', () => {
   if (restoringScroll || $('page-reader').classList.contains('hidden')) return;
   const now = performance.now(), y = $('chapterEditor').scrollTop;
   const elapsed = Math.max(1, now - lastReaderScrollAt);
-  if (Math.abs(y - lastEditorScrollTop) >= 20 && Math.abs(y - lastEditorScrollTop) / elapsed >= 0.85) showQuickScroll();
+  if (Math.abs(y - lastEditorScrollTop) >= 45 && Math.abs(y - lastEditorScrollTop) / elapsed >= 1.25) showQuickScroll();
   lastEditorScrollTop = y;
   lastReaderScrollAt = now;
   updateReadProgress();
@@ -392,6 +392,23 @@ $('chapterEditor').addEventListener('scroll', () => {
   clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => persist(), 450);
 }, { passive: true });
+function syncReaderViewport() {
+  const editor = $('chapterEditor');
+  const height = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty('--reader-viewport-height', `${height}px`);
+  if (document.activeElement === editor) requestAnimationFrame(() => editor.scrollIntoView({ block: 'nearest' }));
+}
+window.visualViewport?.addEventListener('resize', syncReaderViewport);
+$('chapterEditor').addEventListener('focus', () => {
+  document.body.classList.add('keyboard-open');
+  setTimeout(() => {
+    const editor = $('chapterEditor');
+    editor.setSelectionRange(editor.selectionStart, editor.selectionEnd);
+    syncReaderViewport();
+  }, 180);
+});
+$('chapterEditor').addEventListener('blur', () => document.body.classList.remove('keyboard-open'));
+syncReaderViewport();
 $('quickScroll').onclick = () => {
   const editor = $('chapterEditor');
   const top = $('quickScroll').dataset.target === 'top';
