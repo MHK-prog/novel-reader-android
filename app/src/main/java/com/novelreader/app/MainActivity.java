@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -268,7 +269,9 @@ public final class MainActivity extends Activity {
         content.addView(progress, progressParams);
         splashOverlay.addView(content, new FrameLayout.LayoutParams(-1, -1));
         systemRoot.addView(splashOverlay, new FrameLayout.LayoutParams(-1, -1));
-        comet.animate().rotationBy(360f).setDuration(1100).start();
+        comet.setScaleX(.9f); comet.setScaleY(.9f); comet.setAlpha(0f);
+        comet.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(260)
+                .setInterpolator(new DecelerateInterpolator()).start();
         ObjectAnimator progressAnimator = ObjectAnimator.ofInt(progress, "progress", 0, 92);
         progressAnimator.setDuration(850);
         progressAnimator.start();
@@ -549,15 +552,11 @@ public final class MainActivity extends Activity {
         TextView version = text(VERSION, 10, MUTED); version.setGravity(Gravity.CENTER);
         appColumn.addView(version, new LinearLayout.LayoutParams(-1, dp(22)));
         searchField.addTextChangedListener(watcher(() -> { if (bookAdapter != null) bookAdapter.notifyDataSetChanged(); }));
-        booksGrid.setOnItemClickListener((parent, view, position, id) -> {
-            JSONObject book = bookAdapter.getBook(position);
-            if (!selectedBookIds.isEmpty()) toggleBookSelection(book);
-            else openChapters(book);
-        });
-        booksGrid.setOnItemLongClickListener((parent, view, position, id) -> {
-            toggleBookSelection(bookAdapter.getBook(position));
-            return true;
-        });
+    }
+
+    private void onBookCardTap(JSONObject book) {
+        if (!selectedBookIds.isEmpty()) toggleBookSelection(book);
+        else openChapters(book);
     }
 
     private void addDashboardHeader() {
@@ -1482,6 +1481,9 @@ public final class MainActivity extends Activity {
             card.setPadding(dp(7), dp(7), dp(7), dp(4));
             card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF29242F, 13));
+            card.setClickable(true); card.setFocusable(true);
+            card.setOnClickListener(v -> onBookCardTap(book));
+            card.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
             int gridWidth = parent.getWidth() > 0 ? parent.getWidth() : getResources().getDisplayMetrics().widthPixels;
             int cellWidth = Math.max(dp(120), (gridWidth - dp(24 + 10)) / 2);
             int artworkHeight = Math.max(dp(150), Math.round((cellWidth - dp(14)) * 4f / 3f));
@@ -1517,10 +1519,14 @@ public final class MainActivity extends Activity {
             LinearLayout footer = new LinearLayout(MainActivity.this); footer.setGravity(Gravity.CENTER);
             LinearLayout reactions = new LinearLayout(MainActivity.this); reactions.setGravity(Gravity.CENTER_VERTICAL);
             reactions.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            reactions.addView(plainIconButton("dislike", "dislike".equals(reaction) ? RED : PURPLE,
-                    "dislike".equals(reaction), () -> toggleReaction(book, "dislike")), new LinearLayout.LayoutParams(dp(40), dp(38)));
-            reactions.addView(plainIconButton("like", "like".equals(reaction) ? GREEN : PURPLE,
-                    "like".equals(reaction), () -> toggleReaction(book, "like")), new LinearLayout.LayoutParams(dp(40), dp(38)));
+            FrameLayout dislike = plainIconButton("dislike", "dislike".equals(reaction) ? RED : PURPLE,
+                    "dislike".equals(reaction), () -> toggleReaction(book, "dislike"));
+            dislike.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
+            reactions.addView(dislike, new LinearLayout.LayoutParams(dp(40), dp(38)));
+            FrameLayout like = plainIconButton("like", "like".equals(reaction) ? GREEN : PURPLE,
+                    "like".equals(reaction), () -> toggleReaction(book, "like"));
+            like.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
+            reactions.addView(like, new LinearLayout.LayoutParams(dp(40), dp(38)));
             footer.addView(reactions, new LinearLayout.LayoutParams(-2, dp(38)));
             card.addView(footer, new LinearLayout.LayoutParams(-1, dp(38)));
             return card;
@@ -1629,17 +1635,14 @@ public final class MainActivity extends Activity {
             super.onDraw(canvas);
             float scale = Math.min(getWidth(), getHeight()) / 100f;
             canvas.save(); canvas.scale(scale, scale);
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeWidth(5); paint.setColor(PURPLE); paint.setAlpha(75);
-            android.graphics.Path tail = new android.graphics.Path();
-            tail.moveTo(19, 76); tail.cubicTo(34, 63, 42, 44, 60, 31);
-            canvas.drawPath(tail, paint);
-            paint.setStrokeWidth(2); paint.setAlpha(220); canvas.drawPath(tail, paint);
-            paint.setStyle(Paint.Style.FILL); paint.setAlpha(255);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new LinearGradient(18, 18, 82, 82,
+                    0xFF6A00F5, 0xFFE2C4FF, android.graphics.Shader.TileMode.CLAMP));
             android.graphics.Path star = new android.graphics.Path();
-            star.moveTo(62, 9); star.lineTo(68, 35); star.lineTo(92, 42); star.lineTo(68, 49);
-            star.lineTo(62, 75); star.lineTo(56, 49); star.lineTo(32, 42); star.lineTo(56, 35); star.close();
+            star.moveTo(50, 5); star.lineTo(59, 41); star.lineTo(95, 50); star.lineTo(59, 59);
+            star.lineTo(50, 95); star.lineTo(41, 59); star.lineTo(5, 50); star.lineTo(41, 41); star.close();
             canvas.drawPath(star, paint);
+            paint.setShader(null);
             canvas.restore();
         }
     }
