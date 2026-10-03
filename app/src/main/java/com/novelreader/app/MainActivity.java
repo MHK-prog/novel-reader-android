@@ -18,6 +18,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
@@ -80,7 +81,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.0";
+    private static final String VERSION = "1.1.1";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -1007,11 +1008,23 @@ public final class MainActivity extends Activity {
 
     private void chooseBookCover() {
         try {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("image/*");
-            startActivityForResult(intent, REQUEST_COVER);
-        } catch (Exception error) { toast("انتخاب تصویر در دسترس نیست."); }
+            if (Build.VERSION.SDK_INT >= 33) {
+                Intent photoPicker = new Intent(MediaStore.ACTION_PICK_IMAGES);
+                photoPicker.setType("image/*");
+                startActivityForResult(photoPicker, REQUEST_COVER);
+            } else {
+                openGalleryIntent();
+            }
+        } catch (android.content.ActivityNotFoundException error) {
+            try { openGalleryIntent(); }
+            catch (Exception fallbackError) { toast("گالری تصویر در دسترس نیست."); }
+        } catch (Exception error) { toast("گالری تصویر در دسترس نیست."); }
+    }
+
+    private void openGalleryIntent() {
+        Intent gallery = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        gallery.setType("image/*");
+        startActivityForResult(gallery, REQUEST_COVER);
     }
 
     private void loadImageForCropping(Uri uri) {
