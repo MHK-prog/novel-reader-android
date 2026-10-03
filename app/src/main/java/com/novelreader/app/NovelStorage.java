@@ -122,6 +122,53 @@ final class NovelStorage {
         }
     }
 
+    byte[] readImage(String fileName) throws Exception {
+        Uri dir = directoryUri();
+        if (dir == null || !supportedImageName(fileName)) throw new IOException("No valid NovelReader image is selected.");
+        Uri file = findChild(dir, fileName);
+        if (file == null) return null;
+        try (InputStream in = activity.getContentResolver().openInputStream(file);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            if (in == null) throw new IOException("The storage provider returned no image stream.");
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = in.read(buffer)) >= 0) out.write(buffer, 0, count);
+            return out.toByteArray();
+        }
+    }
+
+    boolean writeImage(String fileName, byte[] contents) {
+        Uri dir = directoryUri();
+        if (dir == null || !supportedImageName(fileName)) return false;
+        try {
+            Uri file = findChild(dir, fileName);
+            if (file == null) file = DocumentsContract.createDocument(
+                    activity.getContentResolver(), dir, "image/jpeg", fileName);
+            if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
+            try (OutputStream out = activity.getContentResolver().openOutputStream(file, "rwt")) {
+                if (out == null) throw new IOException("The storage provider returned no image output stream.");
+                out.write(contents);
+                out.flush();
+            }
+            return true;
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not write " + fileName, error);
+            return false;
+        }
+    }
+
+    void deleteImage(String fileName) {
+        Uri dir = directoryUri();
+        if (dir == null || !supportedImageName(fileName)) return;
+        try {
+            Uri file = findChild(dir, fileName);
+            if (file != null) DocumentsContract.deleteDocument(activity.getContentResolver(), file);
+        } catch (Exception error) {
+            android.util.Log.w("NovelReader", "Could not delete " + fileName, error);
+        }
+    }
+
     String lastError() { return lastError; }
 
     List<String> listNames() {
@@ -176,5 +223,9 @@ final class NovelStorage {
 
     private static boolean supportedName(String name) {
         return safeName(name) && (name.endsWith(".md") || name.endsWith(".json"));
+    }
+
+    private static boolean supportedImageName(String name) {
+        return safeName(name) && name.startsWith("cover-") && name.endsWith(".jpg");
     }
 }

@@ -39,6 +39,20 @@ final class NativeIconView extends View {
         switch (name) {
             case "menu": line(canvas, 4, 6, 20, 6); line(canvas, 4, 12, 20, 12); line(canvas, 4, 18, 20, 18); break;
             case "add": line(canvas, 12, 5, 12, 19); line(canvas, 5, 12, 19, 12); break;
+            case "delete":
+                line(canvas, 4, 7, 20, 7); line(canvas, 9, 4, 15, 4); line(canvas, 10, 4, 10, 7); line(canvas, 14, 4, 14, 7);
+                line(canvas, 6.5f, 7, 7.5f, 20); line(canvas, 17.5f, 7, 16.5f, 20);
+                line(canvas, 7.5f, 20, 16.5f, 20); line(canvas, 10, 10, 10, 17); line(canvas, 14, 10, 14, 17); break;
+            case "image":
+                canvas.drawRect(4, 5, 20, 19, paint); canvas.drawCircle(9, 9, 1.2f, paint);
+                line(canvas, 5, 17, 10, 12); line(canvas, 10, 12, 13, 15); line(canvas, 13, 15, 16, 12); line(canvas, 16, 12, 19, 16); break;
+            case "settings":
+                canvas.drawCircle(12, 12, 3.1f, paint); canvas.drawCircle(12, 12, 7.2f, paint);
+                line(canvas, 12, 2.5f, 12, 5); line(canvas, 12, 19, 12, 21.5f);
+                line(canvas, 2.5f, 12, 5, 12); line(canvas, 19, 12, 21.5f, 12);
+                line(canvas, 5.3f, 5.3f, 7, 7); line(canvas, 17, 17, 18.7f, 18.7f);
+                line(canvas, 18.7f, 5.3f, 17, 7); line(canvas, 7, 17, 5.3f, 18.7f); break;
+            case "select": canvas.drawCircle(12, 12, 8, paint); break;
             case "search":
                 canvas.drawCircle(10.5f, 10.5f, 6.5f, paint); line(canvas, 15.5f, 15.5f, 21, 21); break;
             case "filter":
