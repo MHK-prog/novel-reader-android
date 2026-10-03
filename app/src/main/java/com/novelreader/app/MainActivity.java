@@ -606,7 +606,7 @@ public final class MainActivity extends Activity {
         int count = selectedBookIds.size();
         String message = count == 1 ? "این کتاب حذف شود؟" : count + " کتاب حذف شوند؟";
         AlertDialog dialog = new AlertDialog.Builder(this).setMessage(message).setNegativeButton("لغو", null)
-                .setPositiveButton("حذف", (dialog, which) -> {
+                .setPositiveButton("حذف", (clickedDialog, which) -> {
                     JSONArray books = library.optJSONArray("books");
                     if (books == null) return;
                     String beforeDelete = library.toString();
@@ -1335,7 +1335,8 @@ public final class MainActivity extends Activity {
         Window window = dialog.getWindow();
         if (window != null) window.setBackgroundDrawable(roundDrawable(SURFACE,
                 lightTheme ? 0xFFD8D2E0 : 0xFF352D3F, 20));
-        TextView title = dialog.findViewById(android.R.id.alertTitle);
+        int titleId = dialog.getContext().getResources().getIdentifier("alertTitle", "id", "android");
+        TextView title = titleId == 0 ? null : dialog.findViewById(titleId);
         if (title != null) title.setTextColor(TEXT);
         TextView message = dialog.findViewById(android.R.id.message);
         if (message != null) message.setTextColor(TEXT);
