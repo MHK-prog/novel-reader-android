@@ -1,0 +1,16 @@
+name: Generate Keystore
+
+on:
+  workflow_dispatch:
+
+jobs:
+  keygen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Keystore
+        run: |
+          keytool -genkeypair -v -keystore release.jks -alias novelreader -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Novel Reader" -storepass Mohammad123456 -keypass Mohammad123456
+          echo "==================== کپی از خط زیر ===================="
+          base64 -w 0 release.jks
+          echo ""
+          echo "==================== تا خط بالا ===================="
