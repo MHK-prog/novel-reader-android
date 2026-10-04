@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.2";
+    private static final String VERSION = "1.1.3";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -369,7 +369,6 @@ public final class MainActivity extends Activity {
                     if (book != null) {
                         if (book.optString("author").isEmpty()) book.put("author", work.optString("author"));
                         if (book.optJSONArray("tags") == null) book.put("tags", new JSONArray());
-                        if (book.optString("reaction").isEmpty()) book.put("reaction", "none");
                         books.put(book);
                     }
                 }
@@ -388,7 +387,6 @@ public final class MainActivity extends Activity {
             if (book.optJSONArray("tags") == null) book.put("tags", new JSONArray());
             JSONArray bookTags = book.getJSONArray("tags");
             for (int j = 0; j < bookTags.length(); j++) if (!bookTags.optString(j).trim().isEmpty()) all.add(bookTags.optString(j).trim());
-            if (!"like".equals(book.optString("reaction")) && !"dislike".equals(book.optString("reaction"))) book.put("reaction", "none");
             JSONArray chapters = book.optJSONArray("chapters");
             if (chapters == null) { chapters = new JSONArray(); book.put("chapters", chapters); }
             for (int j = 0; j < chapters.length(); j++) {
@@ -698,7 +696,7 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams markerParams = new FrameLayout.LayoutParams(-1, dp(28), Gravity.TOP);
         readerFrame.addView(markerView, markerParams);
         markerView.setOnClickListener(v -> clearMarker());
-        quickScrollIcon = new NativeIconView(this, "scrollbottom", PURPLE, false);
+        quickScrollIcon = new NativeIconView(this, "scrollbottom", PURPLE);
         quickScrollButton = new FrameLayout(this); styleIconButton(quickScrollButton, false);
         quickScrollButton.addView(quickScrollIcon, new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER));
         FrameLayout.LayoutParams quickParams = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.RIGHT | Gravity.BOTTOM);
@@ -885,7 +883,7 @@ public final class MainActivity extends Activity {
         quickScrollButton.setTag(toTop ? "top" : "bottom");
         quickScrollIcon = (NativeIconView) quickScrollButton.getChildAt(0);
         quickScrollIcon.setName(toTop ? "scrolltop" : "scrollbottom");
-        quickScrollIcon.setStyle(PURPLE, false);
+        quickScrollIcon.setTint(PURPLE);
         quickScrollIcon.invalidate();
         quickScrollButton.setVisibility(View.VISIBLE); quickScrollButton.setAlpha(0); quickScrollButton.animate().alpha(1).setDuration(100).start();
         if (quickHideRunnable != null) handler.removeCallbacks(quickHideRunnable);
@@ -905,7 +903,7 @@ public final class MainActivity extends Activity {
         bookCoverPreview = new ImageView(this); bookCoverPreview.setScaleType(ImageView.ScaleType.CENTER_CROP);
         bookCoverPreview.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
         previewFrame.addView(bookCoverPreview, new FrameLayout.LayoutParams(-1, -1));
-        NativeIconView placeholder = new NativeIconView(this, "book", PURPLE, false);
+        NativeIconView placeholder = new NativeIconView(this, "book", PURPLE);
         previewFrame.addView(placeholder, new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER));
         previewFrame.setTag(placeholder);
         LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(dp(92), dp(124));
@@ -974,7 +972,7 @@ public final class MainActivity extends Activity {
                 JSONObject book = new JSONObject();
                 try { book.put("id", UUID.randomUUID().toString()).put("title", bookTitle).put("author", author.getText().toString().trim())
                             .put("tags", new JSONArray(selected)).put("cover", pendingCoverName == null ? "" : pendingCoverName)
-                            .put("reaction", "none").put("chapters", chapters); library.getJSONArray("books").put(book); }
+                            .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
                 if (!saveLibrary()) {
                     try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
@@ -1153,11 +1151,6 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private void toggleReaction(JSONObject book, String value) {
-        putJson(book, "reaction", book.optString("reaction").equals(value) ? "none" : value);
-        saveLibrary(); bookAdapter.notifyDataSetChanged();
-    }
-
     private JSONObject newChapter() {
         JSONObject chapter = new JSONObject();
         try {
@@ -1234,15 +1227,15 @@ public final class MainActivity extends Activity {
         return makeIconButton(icon, color, selected, action, true);
     }
 
-    private FrameLayout plainIconButton(String icon, int color, boolean filled, Runnable action) {
-        return makeIconButton(icon, color, filled, action, false);
+    private FrameLayout plainIconButton(String icon, int color, Runnable action) {
+        return makeIconButton(icon, color, false, action, false);
     }
 
     private FrameLayout makeIconButton(String icon, int color, boolean selected, Runnable action, boolean circular) {
         FrameLayout button = new FrameLayout(this);
         if (circular) styleIconButton(button, selected);
         else button.setBackgroundColor(Color.TRANSPARENT);
-        NativeIconView glyph = new NativeIconView(this, icon, color, selected && ("like".equals(icon) || "dislike".equals(icon)));
+        NativeIconView glyph = new NativeIconView(this, icon, color);
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER); button.addView(glyph, p);
         button.setContentDescription(iconDescription(icon)); button.setClickable(true); button.setFocusable(true);
         button.setOnTouchListener((v, event) -> {
@@ -1268,7 +1261,7 @@ public final class MainActivity extends Activity {
 
     private View textButton(String label, String icon, int color, Runnable action) {
         LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setOrientation(LinearLayout.HORIZONTAL);
-        NativeIconView glyph = new NativeIconView(this, icon, color, false);
+        NativeIconView glyph = new NativeIconView(this, icon, color);
         row.addView(glyph, new LinearLayout.LayoutParams(dp(22), dp(22)));
         TextView text = text(label, 15, TEXT); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1); tp.leftMargin = dp(12); text.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); row.addView(text, tp);
         row.setPadding(dp(14), 0, dp(14), 0); row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 14)); row.setOnClickListener(v -> action.run());
@@ -1279,7 +1272,7 @@ public final class MainActivity extends Activity {
         switch (icon) {
             case "menu": return "منو"; case "add": return "افزودن"; case "filter": return "فیلتر";
             case "back": return "بازگشت"; case "next": return "بعدی"; case "tag": return "نشان مطالعه";
-            case "edit": return "ویرایش"; case "like": return "پسندیدن"; case "dislike": return "نپسندیدن";
+            case "edit": return "ویرایش";
             case "delete": return "حذف"; case "image": return "تصویر جلد"; case "settings": return "تنظیمات";
             case "select": return "انتخاب کتاب";
             default: return icon;
@@ -1321,7 +1314,7 @@ public final class MainActivity extends Activity {
         clear.setContentDescription("پاک کردن متن");
         clear.setClickable(true);
         clear.setFocusable(true);
-        NativeIconView close = new NativeIconView(this, "close", MUTED, false);
+        NativeIconView close = new NativeIconView(this, "close", MUTED);
         clear.addView(close, new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER));
         clear.setOnClickListener(v -> { input.setText(""); input.requestFocus(); });
         clear.setOnTouchListener((v, event) -> {
@@ -1502,8 +1495,8 @@ public final class MainActivity extends Activity {
             card.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
             int gridWidth = parent.getWidth() > 0 ? parent.getWidth() : getResources().getDisplayMetrics().widthPixels;
             int cellWidth = Math.max(dp(120), (gridWidth - dp(24 + 10)) / 2);
-            int artworkHeight = Math.max(dp(150), Math.round((cellWidth - dp(14)) * 4f / 3f));
-            card.setLayoutParams(new AbsListView.LayoutParams(-1, artworkHeight + dp(42 + 38 + 11)));
+            int artworkHeight = Math.max(dp(160), Math.round((cellWidth - dp(14)) * 1.42f));
+            card.setLayoutParams(new AbsListView.LayoutParams(-1, artworkHeight + dp(42 + 11)));
 
             FrameLayout artwork = new FrameLayout(MainActivity.this);
             artwork.setClipToOutline(true);
@@ -1511,14 +1504,14 @@ public final class MainActivity extends Activity {
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
             cover.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 9));
             artwork.addView(cover, new FrameLayout.LayoutParams(-1, -1));
-            NativeIconView placeholder = new NativeIconView(MainActivity.this, "book", PURPLE, false);
+            NativeIconView placeholder = new NativeIconView(MainActivity.this, "book", PURPLE);
             artwork.addView(placeholder, new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER));
             artwork.setTag(placeholder);
             bindCover(cover, placeholder, book.optString("cover", ""));
             FrameLayout selectionBadge = new FrameLayout(MainActivity.this);
             selectionBadge.setBackground(roundDrawable(selected ? PURPLE : 0x99000000,
                     selected ? PURPLE : Color.TRANSPARENT, 20));
-            NativeIconView check = new NativeIconView(MainActivity.this, selected ? "check" : "select", Color.WHITE, false);
+            NativeIconView check = new NativeIconView(MainActivity.this, selected ? "check" : "select", Color.WHITE);
             selectionBadge.addView(check, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
             FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.RIGHT);
             badgeParams.topMargin = dp(6); badgeParams.rightMargin = dp(6);
@@ -1531,20 +1524,6 @@ public final class MainActivity extends Activity {
             title.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
             card.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
 
-            String reaction = book.optString("reaction", "none");
-            LinearLayout footer = new LinearLayout(MainActivity.this); footer.setGravity(Gravity.CENTER);
-            LinearLayout reactions = new LinearLayout(MainActivity.this); reactions.setGravity(Gravity.CENTER_VERTICAL);
-            reactions.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            FrameLayout dislike = plainIconButton("dislike", "dislike".equals(reaction) ? RED : PURPLE,
-                    "dislike".equals(reaction), () -> toggleReaction(book, "dislike"));
-            dislike.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
-            reactions.addView(dislike, new LinearLayout.LayoutParams(dp(40), dp(38)));
-            FrameLayout like = plainIconButton("like", "like".equals(reaction) ? GREEN : PURPLE,
-                    "like".equals(reaction), () -> toggleReaction(book, "like"));
-            like.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
-            reactions.addView(like, new LinearLayout.LayoutParams(dp(40), dp(38)));
-            footer.addView(reactions, new LinearLayout.LayoutParams(-2, dp(38)));
-            card.addView(footer, new LinearLayout.LayoutParams(-1, dp(38)));
             return card;
         }
     }
@@ -1570,7 +1549,7 @@ public final class MainActivity extends Activity {
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
             detail.addView(name); LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
-            FrameLayout status = plainIconButton(done ? "check" : hasText ? "edit" : "book", color, done,
+            FrameLayout status = plainIconButton(done ? "check" : hasText ? "edit" : "book", color,
                     () -> toggleChapterDone(position));
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
             row.setClickable(true);

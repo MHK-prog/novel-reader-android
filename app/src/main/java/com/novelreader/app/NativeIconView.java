@@ -9,21 +9,18 @@ import android.view.View;
 final class NativeIconView extends View {
     private String name;
     private int tint;
-    private boolean filled;
     private Drawable icon;
 
-    NativeIconView(Context context, String name, int tint, boolean filled) {
+    NativeIconView(Context context, String name, int tint) {
         super(context);
         this.name = name;
         this.tint = tint;
-        this.filled = filled;
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         loadIcon();
     }
 
-    void setStyle(int color, boolean isFilled) {
+    void setTint(int color) {
         tint = color;
-        filled = isFilled;
         loadIcon();
     }
 
@@ -47,8 +44,6 @@ final class NativeIconView extends View {
             case "edit": resourceName = "pencil"; break;
             case "book": resourceName = "open_book"; break;
             case "tag": resourceName = "tag"; break;
-            case "like": resourceName = filled ? "like_filled" : "like_empty"; break;
-            case "dislike": resourceName = filled ? "dislike_filled" : "dislike_empty"; break;
             case "check": resourceName = "check"; break;
             case "close": resourceName = "close"; break;
             case "scrolltop": resourceName = "scroll_top"; break;
