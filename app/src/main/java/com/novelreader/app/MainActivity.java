@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.3";
+    private static final String VERSION = "1.1.4";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -159,9 +159,15 @@ public final class MainActivity extends Activity {
         showStorageGate();
         showStartupSplash();
         handler.postDelayed(() -> {
-            if (storage.isReady()) loadLibraryAndDashboard();
-            else showStorageGate();
-            finishStartupSplash();
+            if (storage.isReady()) {
+                migrateCoversThen(() -> {
+                    loadLibraryAndDashboard();
+                    finishStartupSplash();
+                });
+            } else {
+                showStorageGate();
+                finishStartupSplash();
+            }
         }, 900);
         getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
     }
@@ -318,9 +324,12 @@ public final class MainActivity extends Activity {
         if (resultCode == RESULT_OK && data != null && data.getData() != null) {
             try {
                 storage.acceptFolder(data.getData(), data.getFlags());
-                loadLibraryAndDashboard();
-                if (returnToSettingsAfterPicker) showSettings();
-                returnToSettingsAfterPicker = false;
+                migrateCoversThen(() -> {
+                    loadLibraryAndDashboard();
+                    if (returnToSettingsAfterPicker) showSettings();
+                    returnToSettingsAfterPicker = false;
+                });
+                return;
             } catch (Exception error) {
                 returnToSettingsAfterPicker = false;
                 toast("ساخت پوشهٔ NovelReader ناموفق بود.");
@@ -329,6 +338,17 @@ public final class MainActivity extends Activity {
         } else {
             returnToSettingsAfterPicker = false;
             if (!storage.isReady()) showStorageGate();
+        }
+    }
+
+    private void migrateCoversThen(Runnable completion) {
+        try {
+            imageExecutor.execute(() -> {
+                storage.migrateLegacyImages();
+                runOnUiThread(() -> { if (!isFinishing()) completion.run(); });
+            });
+        } catch (java.util.concurrent.RejectedExecutionException error) {
+            completion.run();
         }
     }
 

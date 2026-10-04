@@ -8,6 +8,9 @@ import android.net.Uri;
 import android.provider.DocumentsContract;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -25,11 +28,13 @@ final class NovelStorage {
 
     private final MainActivity activity;
     private final SharedPreferences preferences;
+    private final File privateCoverDirectory;
     private String lastError = "";
 
     NovelStorage(MainActivity activity) {
         this.activity = activity;
         preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        privateCoverDirectory = new File(activity.getFilesDir(), "covers");
     }
 
     boolean isReady() {
@@ -123,34 +128,25 @@ final class NovelStorage {
     }
 
     byte[] readImage(String fileName) throws Exception {
-        Uri dir = directoryUri();
-        if (dir == null || !supportedImageName(fileName)) throw new IOException("No valid NovelReader image is selected.");
-        Uri file = findChild(dir, fileName);
-        if (file == null) return null;
-        try (InputStream in = activity.getContentResolver().openInputStream(file);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            if (in == null) throw new IOException("The storage provider returned no image stream.");
-            byte[] buffer = new byte[8192];
-            int count;
-            while ((count = in.read(buffer)) >= 0) out.write(buffer, 0, count);
-            return out.toByteArray();
+        if (!supportedImageName(fileName)) throw new IOException("Invalid cover image name.");
+        File privateFile = privateCoverFile(fileName);
+        if (privateFile.isFile()) {
+            try (InputStream in = new FileInputStream(privateFile);
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                copy(in, out);
+                return out.toByteArray();
+            }
         }
+        // Import a cover from the old shared folder when encountered, then remove its public copy.
+        byte[] legacy = readLegacyImage(fileName);
+        if (legacy != null && writePrivateImage(fileName, legacy)) deleteLegacyImage(fileName);
+        return legacy;
     }
 
     boolean writeImage(String fileName, byte[] contents) {
-        Uri dir = directoryUri();
-        if (dir == null || !supportedImageName(fileName)) return false;
+        if (!supportedImageName(fileName) || contents == null) return false;
         try {
-            Uri file = findChild(dir, fileName);
-            if (file == null) file = DocumentsContract.createDocument(
-                    activity.getContentResolver(), dir, "image/jpeg", fileName);
-            if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
-            try (OutputStream out = activity.getContentResolver().openOutputStream(file, "rwt")) {
-                if (out == null) throw new IOException("The storage provider returned no image output stream.");
-                out.write(contents);
-                out.flush();
-            }
-            return true;
+            return writePrivateImage(fileName, contents);
         } catch (Exception error) {
             lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             android.util.Log.e("NovelReader", "Could not write " + fileName, error);
@@ -159,14 +155,87 @@ final class NovelStorage {
     }
 
     void deleteImage(String fileName) {
+        if (!supportedImageName(fileName)) return;
+        try {
+            File privateFile = privateCoverFile(fileName);
+            if (privateFile.exists() && !privateFile.delete()) {
+                android.util.Log.w("NovelReader", "Could not delete private cover " + fileName);
+            }
+            deleteLegacyImage(fileName);
+        } catch (Exception error) {
+            android.util.Log.w("NovelReader", "Could not delete " + fileName, error);
+        }
+    }
+
+    /** Copies legacy public covers into app-private storage and removes gallery-visible originals. */
+    void migrateLegacyImages() {
+        for (String fileName : listNames()) {
+            if (!supportedImageName(fileName)) continue;
+            try {
+                File privateFile = privateCoverFile(fileName);
+                if (!privateFile.isFile()) {
+                    byte[] contents = readLegacyImage(fileName);
+                    if (contents == null || !writePrivateImage(fileName, contents)) continue;
+                }
+                deleteLegacyImage(fileName);
+            } catch (Exception error) {
+                android.util.Log.w("NovelReader", "Could not migrate cover " + fileName, error);
+            }
+        }
+    }
+
+    private byte[] readLegacyImage(String fileName) throws Exception {
         Uri dir = directoryUri();
-        if (dir == null || !supportedImageName(fileName)) return;
+        if (dir == null) return null;
+        Uri file = findChild(dir, fileName);
+        if (file == null) return null;
+        try (InputStream in = activity.getContentResolver().openInputStream(file);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            if (in == null) throw new IOException("The storage provider returned no image stream.");
+            copy(in, out);
+            return out.toByteArray();
+        }
+    }
+
+    private boolean writePrivateImage(String fileName, byte[] contents) throws IOException {
+        File target = privateCoverFile(fileName);
+        if (!privateCoverDirectory.isDirectory() && !privateCoverDirectory.mkdirs()) {
+            throw new IOException("Could not create private cover storage.");
+        }
+        File temporary = new File(privateCoverDirectory, fileName + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(temporary)) {
+            out.write(contents);
+            out.flush();
+            out.getFD().sync();
+        }
+        if (!temporary.renameTo(target)) {
+            temporary.delete();
+            throw new IOException("Could not finalize private cover storage.");
+        }
+        lastError = "";
+        return true;
+    }
+
+    private File privateCoverFile(String fileName) throws IOException {
+        if (!supportedImageName(fileName)) throw new IOException("Invalid cover image name.");
+        return new File(privateCoverDirectory, fileName);
+    }
+
+    private void deleteLegacyImage(String fileName) {
+        Uri dir = directoryUri();
+        if (dir == null) return;
         try {
             Uri file = findChild(dir, fileName);
             if (file != null) DocumentsContract.deleteDocument(activity.getContentResolver(), file);
         } catch (Exception error) {
-            android.util.Log.w("NovelReader", "Could not delete " + fileName, error);
+            android.util.Log.w("NovelReader", "Could not remove old public cover " + fileName, error);
         }
+    }
+
+    private static void copy(InputStream in, OutputStream out) throws IOException {
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = in.read(buffer)) >= 0) out.write(buffer, 0, count);
     }
 
     String lastError() { return lastError; }
