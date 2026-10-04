@@ -6,12 +6,18 @@ android {
     namespace 'com.novelreader.app'
     compileSdk 36
 
+    sourceSets {
+        main {
+            res.srcDir rootProject.file('icons')
+        }
+    }
+
     defaultConfig {
         applicationId 'com.novelreader.app'
         minSdk 23
         targetSdk 36
-        versionCode 105
-        versionName '1.1.1'
+        versionCode 106
+        versionName '1.1.2'
     }
 
     compileOptions {

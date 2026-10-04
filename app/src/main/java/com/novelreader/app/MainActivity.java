@@ -11,7 +11,10 @@ import android.graphics.Matrix;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -81,7 +84,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.1";
+    private static final String VERSION = "1.1.2";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -1642,21 +1645,31 @@ public final class MainActivity extends Activity {
     }
 
     private final class CometStar extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        CometStar(Context context) { super(context); }
+        private final Paint gradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Drawable star;
+
+        CometStar(Context context) {
+            super(context);
+            int resourceId = getResources().getIdentifier("startup_star", "drawable", getPackageName());
+            star = resourceId == 0 ? null : getDrawable(resourceId).mutate();
+        }
+
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            float scale = Math.min(getWidth(), getHeight()) / 100f;
-            canvas.save(); canvas.scale(scale, scale);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(new LinearGradient(18, 18, 82, 82,
+            if (star == null) return;
+            float size = Math.min(getWidth(), getHeight());
+            float left = (getWidth() - size) / 2f;
+            float top = (getHeight() - size) / 2f;
+            int layer = canvas.saveLayer(left, top, left + size, top + size, null);
+            star.setBounds(Math.round(left), Math.round(top), Math.round(left + size), Math.round(top + size));
+            star.draw(canvas);
+            gradientPaint.setShader(new LinearGradient(left, top, left + size, top + size,
                     0xFF6A00F5, 0xFFE2C4FF, android.graphics.Shader.TileMode.CLAMP));
-            android.graphics.Path star = new android.graphics.Path();
-            star.moveTo(50, 5); star.lineTo(59, 41); star.lineTo(95, 50); star.lineTo(59, 59);
-            star.lineTo(50, 95); star.lineTo(41, 59); star.lineTo(5, 50); star.lineTo(41, 41); star.close();
-            canvas.drawPath(star, paint);
-            paint.setShader(null);
-            canvas.restore();
+            gradientPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+            canvas.drawRect(left, top, left + size, top + size, gradientPaint);
+            gradientPaint.setXfermode(null);
+            gradientPaint.setShader(null);
+            canvas.restoreToCount(layer);
         }
     }
 
