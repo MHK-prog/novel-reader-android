@@ -31,6 +31,7 @@ final class NativeIconView extends View {
 
     private void loadIcon() {
         String resourceName;
+        float rotation = 0f;
         switch (name) {
             case "menu": resourceName = "menu"; break;
             case "add": resourceName = "add"; break;
@@ -39,15 +40,15 @@ final class NativeIconView extends View {
             case "settings": resourceName = "settings"; break;
             case "select": resourceName = "read_empty"; break;
             case "filter": resourceName = "filter"; break;
-            case "back": resourceName = "arrow_prev"; break;
-            case "next": resourceName = "arrow_next"; break;
+            case "back": resourceName = "direction"; rotation = 180f; break;
+            case "next": resourceName = "direction"; break;
             case "edit": resourceName = "pencil"; break;
             case "book": resourceName = "open_book"; break;
             case "tag": resourceName = "tag"; break;
             case "check": resourceName = "check"; break;
             case "close": resourceName = "close"; break;
-            case "scrolltop": resourceName = "scroll_top"; break;
-            case "scrollbottom": resourceName = "scroll_bottom"; break;
+            case "scrolltop": resourceName = "direction"; rotation = 270f; break;
+            case "scrollbottom": resourceName = "direction"; rotation = 90f; break;
             case "folder": resourceName = "folder"; break;
             default: resourceName = name;
         }
@@ -56,6 +57,7 @@ final class NativeIconView extends View {
         Drawable loaded = resourceId == 0 ? null : getContext().getDrawable(resourceId);
         icon = loaded == null ? null : loaded.mutate();
         if (icon != null) icon.setTint(tint);
+        setRotation(rotation);
         invalidate();
     }
 

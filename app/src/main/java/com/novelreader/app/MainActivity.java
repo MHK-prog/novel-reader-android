@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.4";
+    private static final String VERSION = "1.1.5";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -121,6 +121,7 @@ public final class MainActivity extends Activity {
     private Runnable quickHideRunnable;
     private boolean drawerOpen;
     private boolean returnToSettingsAfterPicker;
+    private boolean readerImeVisible;
 
     private FrameLayout systemRoot;
     private LinearLayout appColumn;
@@ -658,7 +659,7 @@ public final class MainActivity extends Activity {
         appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), null, null, null, null));
         JSONArray bookTags = book.optJSONArray("tags");
         if (bookTags != null && bookTags.length() > 0) {
-            StringBuilder labels = new StringBuilder("Tags  ·  ");
+            StringBuilder labels = new StringBuilder();
             for (int i = 0; i < bookTags.length(); i++) {
                 if (i > 0) labels.append("  ·  ");
                 labels.append(bookTags.optString(i));
@@ -698,7 +699,9 @@ public final class MainActivity extends Activity {
         progressTrack.addView(readerProgress, progressParams);
         appColumn.addView(progressTrack, new LinearLayout.LayoutParams(-1, dp(3)));
 
+        readerImeVisible = false;
         readerFrame = new FrameLayout(this); readerFrame.setBackgroundColor(BG);
+        readerFrame.setFocusableInTouchMode(true);
         readerScroll = new ReaderScrollView(this);
         readerScroll.setFillViewport(true);
         readerScroll.setSmoothScrollingEnabled(true);
@@ -709,6 +712,7 @@ public final class MainActivity extends Activity {
         chapterEditor.setGravity(Gravity.TOP | Gravity.RIGHT);
         chapterEditor.setPadding(dp(22), dp(26), dp(22), dp(40));
         chapterEditor.setBackgroundColor(Color.TRANSPARENT);
+        chapterEditor.setCursorVisible(false);
         chapterEditor.setText(chapterText); applyRuleSpans(chapterEditor.getText());
         readerScroll.addView(chapterEditor, new ScrollView.LayoutParams(-1, -2));
         readerFrame.addView(readerScroll, new FrameLayout.LayoutParams(-1, -1));
@@ -732,6 +736,22 @@ public final class MainActivity extends Activity {
             updateMarker();
         });
         appColumn.addView(readerFrame, new LinearLayout.LayoutParams(-1, 0, 1));
+        readerFrame.requestFocus();
+        if (Build.VERSION.SDK_INT >= 30) {
+            readerFrame.setOnApplyWindowInsetsListener((view, insets) -> {
+                setReaderImeVisible(insets.isVisible(WindowInsets.Type.ime()));
+                return insets;
+            });
+            readerFrame.requestApplyInsets();
+        } else {
+            readerFrame.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+                if (readerFrame == null || !"reader".equals(page)) return;
+                android.graphics.Rect visible = new android.graphics.Rect();
+                readerFrame.getRootView().getWindowVisibleDisplayFrame(visible);
+                int obscured = readerFrame.getRootView().getHeight() - visible.bottom;
+                setReaderImeVisible(obscured > dp(140));
+            });
+        }
 
         LinearLayout bottom = new LinearLayout(this); bottom.setGravity(Gravity.CENTER); bottom.setPadding(dp(18), dp(7), dp(18), dp(7));
         bottom.setLayoutDirection(View.LAYOUT_DIRECTION_LTR); bottom.setBackgroundColor(BG);
@@ -772,6 +792,7 @@ public final class MainActivity extends Activity {
             if (bottomEdge - top != oldBottom - oldTop) { updateProgress(); updateMarker(); }
         });
         chapterEditor.setOnFocusChangeListener((v, focused) -> {
+            chapterEditor.setCursorVisible(focused && readerImeVisible);
             if (focused) chapterEditor.postDelayed(() -> {
                 if (chapterEditor == null || readerScroll == null) return;
                 android.text.Layout layout = chapterEditor.getLayout();
@@ -782,6 +803,24 @@ public final class MainActivity extends Activity {
             }, 170);
         });
         updateMarker();
+    }
+
+    private void setReaderImeVisible(boolean visible) {
+        if (readerImeVisible == visible) return;
+        readerImeVisible = visible;
+        EditText editor = chapterEditor;
+        FrameLayout frame = readerFrame;
+        if (editor == null || frame == null || !"reader".equals(page)) return;
+        if (visible) {
+            if (editor.hasFocus()) editor.setCursorVisible(true);
+            return;
+        }
+        editor.setCursorVisible(false);
+        if (editor.hasFocus()) {
+            editor.clearFocus();
+            frame.requestFocus();
+        }
+        saveCurrentChapter(true);
     }
 
     private void openChapters(JSONObject book) {
@@ -1541,7 +1580,7 @@ public final class MainActivity extends Activity {
 
             TextView title = text(book.optString("title"), 14, TEXT);
             title.setMaxLines(2); title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            title.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            title.setGravity(Gravity.CENTER);
             card.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
 
             return card;
