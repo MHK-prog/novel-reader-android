@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.5";
+    private static final String VERSION = "1.1.6";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -145,6 +145,7 @@ public final class MainActivity extends Activity {
     private FrameLayout markerToggleButton;
     private TextView toastView;
     private FrameLayout splashOverlay;
+    private ProgressBar splashProgress;
     private ImageView bookCoverPreview;
     private String pendingCoverName;
 
@@ -245,7 +246,7 @@ public final class MainActivity extends Activity {
         drawerPanel.setPadding(dp(18), dp(22), dp(18), dp(18));
         drawerPanel.setBackgroundColor(SURFACE);
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(-1, -1, Gravity.RIGHT);
-        panelParams.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.55f);
+        panelParams.width = (int) (getResources().getDisplayMetrics().widthPixels * (2f / 3f));
         drawerPanel.setTranslationX(panelParams.width);
         drawerLayer.addView(drawerPanel, panelParams);
         drawerPanel.setOnClickListener(v -> { });
@@ -269,31 +270,28 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-1, dp(48));
         titleParams.topMargin = dp(15);
         content.addView(title, titleParams);
-        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(100); progress.setProgress(0);
+        splashProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        splashProgress.setMax(100); splashProgress.setProgress(0);
         if (Build.VERSION.SDK_INT >= 21) {
-            progress.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE));
-            progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(lightTheme ? 0xFFDCD6E5 : 0xFF302A38));
+            splashProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+            splashProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(lightTheme ? 0xFFDCD6E5 : 0xFF302A38));
         }
         LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(4));
         progressParams.topMargin = dp(13);
-        content.addView(progress, progressParams);
+        content.addView(splashProgress, progressParams);
         splashOverlay.addView(content, new FrameLayout.LayoutParams(-1, -1));
         systemRoot.addView(splashOverlay, new FrameLayout.LayoutParams(-1, -1));
-        comet.setScaleX(.9f); comet.setScaleY(.9f); comet.setAlpha(0f);
-        comet.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(260)
-                .setInterpolator(new DecelerateInterpolator()).start();
-        ObjectAnimator progressAnimator = ObjectAnimator.ofInt(progress, "progress", 0, 92);
+        ObjectAnimator progressAnimator = ObjectAnimator.ofInt(splashProgress, "progress", 0, 92);
         progressAnimator.setDuration(850);
         progressAnimator.start();
     }
 
     private void finishStartupSplash() {
         if (splashOverlay == null) return;
-        splashOverlay.animate().alpha(0f).setDuration(180).withEndAction(() -> {
-            if (splashOverlay != null) systemRoot.removeView(splashOverlay);
-            splashOverlay = null;
-        }).start();
+        if (splashProgress != null) splashProgress.setProgress(100);
+        systemRoot.removeView(splashOverlay);
+        splashOverlay = null;
+        splashProgress = null;
     }
 
     private void showStorageGate() {
