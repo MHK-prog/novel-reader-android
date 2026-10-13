@@ -38,6 +38,8 @@ final class NativeIconView extends View {
             case "delete": resourceName = "delete"; break;
             case "image": resourceName = "image"; break;
             case "settings": resourceName = "settings"; break;
+            case "hide": resourceName = "visibility_off"; break;
+            case "show": resourceName = "visibility"; break;
             case "select": resourceName = "read_empty"; break;
             case "filter": resourceName = "filter"; break;
             case "back": resourceName = "direction"; rotation = 180f; break;

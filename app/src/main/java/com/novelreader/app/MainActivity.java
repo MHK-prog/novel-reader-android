@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.6";
+    private static final String VERSION = "1.1.7";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -404,6 +404,7 @@ public final class MainActivity extends Activity {
             if (book.optString("id").isEmpty()) book.put("id", UUID.randomUUID().toString());
             if (book.optString("title").isEmpty()) book.put("title", "بدون عنوان");
             if (book.optJSONArray("tags") == null) book.put("tags", new JSONArray());
+            book.put("hidden", book.optBoolean("hidden", false));
             JSONArray bookTags = book.getJSONArray("tags");
             for (int j = 0; j < bookTags.length(); j++) if (!bookTags.optString(j).trim().isEmpty()) all.add(bookTags.optString(j).trim());
             JSONArray chapters = book.optJSONArray("chapters");
@@ -438,6 +439,12 @@ public final class MainActivity extends Activity {
         drawerPanel.addView(text("فهرست", 20, TEXT), new LinearLayout.LayoutParams(-1, dp(56)));
         drawerPanel.addView(textButton("تنظیمات", "settings", PURPLE, () -> { closeDrawer(); showSettings(); }),
                 new LinearLayout.LayoutParams(-1, dp(52)));
+        drawerPanel.addView(textButton("کتاب‌های مخفی", "hide", PURPLE, () -> {
+            selectedBookIds.clear();
+            activeTagFilter.clear();
+            closeDrawer();
+            showHiddenBooks();
+        }), new LinearLayout.LayoutParams(-1, dp(52)));
         View spacer = new View(this);
         drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
         drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
@@ -519,6 +526,7 @@ public final class MainActivity extends Activity {
         if ("chapters".equals(page)) showChapters();
         else if ("reader".equals(page)) showReader();
         else if ("settings".equals(page)) showSettings();
+        else if ("hiddenBooks".equals(page)) showHiddenBooks();
         else showDashboard();
     }
 
@@ -544,8 +552,14 @@ public final class MainActivity extends Activity {
                 .withEndAction(() -> { if (!drawerOpen) drawerLayer.setVisibility(View.GONE); }).start();
     }
 
-    private void showDashboard() {
-        page = "dashboard";
+    private void showDashboard() { showBookShelf(false); }
+
+    private void showHiddenBooks() { showBookShelf(true); }
+
+    private boolean showingHiddenBooks() { return "hiddenBooks".equals(page); }
+
+    private void showBookShelf(boolean hidden) {
+        page = hidden ? "hiddenBooks" : "dashboard";
         appColumn.removeAllViews();
         addDashboardHeader();
         LinearLayout filters = new LinearLayout(this);
@@ -567,7 +581,7 @@ public final class MainActivity extends Activity {
         bookAdapter = new BookAdapter(); booksGrid.setAdapter(bookAdapter);
         FrameLayout listFrame = new FrameLayout(this);
         listFrame.addView(booksGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel("کتابی اضافه نشده");
+        TextView empty = emptyLabel(hidden ? "کتاب مخفی‌ای وجود ندارد" : "کتابی اضافه نشده");
         listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1)); booksGrid.setEmptyView(empty);
         appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         TextView version = text(VERSION, 10, MUTED); version.setGravity(Gravity.CENTER);
@@ -582,14 +596,26 @@ public final class MainActivity extends Activity {
 
     private void addDashboardHeader() {
         View header;
+        boolean hiddenShelf = showingHiddenBooks();
         if (selectedBookIds.isEmpty()) {
-            header = makeHeader("کتابخانه", "", "menu", "add", this::openDrawer, () -> showBookDialog(null), 10);
+            header = makeHeader(hiddenShelf ? "کتاب‌های مخفی" : "کتابخانه", "", "menu",
+                    hiddenShelf ? null : "add", this::openDrawer,
+                    hiddenShelf ? null : () -> showBookDialog(null), 10);
         } else {
             String label = selectedBookIds.size() + " انتخاب‌شده";
             if (selectedBookIds.size() == 1) {
                 JSONObject selected = findBookById(selectedBookIds.iterator().next());
-                header = makeHeader(label, "", "delete", "edit", this::confirmDeleteSelected,
-                        () -> { if (selected != null) showBookDialog(selected); }, 10);
+                header = makeHeader(label, "", "delete", hiddenShelf ? "show" : "edit",
+                        this::confirmDeleteSelected,
+                        hiddenShelf ? () -> setSelectedBooksHidden(false)
+                                : () -> { if (selected != null) showBookDialog(selected); }, 10, 118);
+                FrameLayout extraAction = iconButton(hiddenShelf ? "edit" : "hide", PURPLE, false,
+                        hiddenShelf ? () -> { if (selected != null) showBookDialog(selected); }
+                                : () -> setSelectedBooksHidden(true));
+                FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(dp(50), dp(50),
+                        Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                actionParams.leftMargin = dp(64);
+                ((FrameLayout) header).addView(extraAction, actionParams);
             } else {
                 header = makeHeader(label, "", "delete", null, this::confirmDeleteSelected, null, 10);
             }
@@ -598,7 +624,7 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshDashboardSelection() {
-        if (!"dashboard".equals(page) || appColumn == null) return;
+        if ((!"dashboard".equals(page) && !"hiddenBooks".equals(page)) || appColumn == null) return;
         if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
         addDashboardHeader();
         if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
@@ -619,6 +645,21 @@ public final class MainActivity extends Activity {
         String id = book.optString("id");
         if (!selectedBookIds.add(id)) selectedBookIds.remove(id);
         refreshDashboardSelection();
+    }
+
+    private void setSelectedBooksHidden(boolean hidden) {
+        if (selectedBookIds.size() != 1) return;
+        JSONObject selected = findBookById(selectedBookIds.iterator().next());
+        if (selected == null) return;
+        String beforeChange = library.toString();
+        putJson(selected, "hidden", hidden);
+        if (saveLibrary()) {
+            selectedBookIds.clear();
+            if (showingHiddenBooks()) showHiddenBooks(); else showDashboard();
+        } else {
+            try { library = new JSONObject(beforeChange); } catch (JSONException ignored) { }
+            refreshDashboardSelection();
+        }
     }
 
     private void confirmDeleteSelected() {
@@ -1238,6 +1279,7 @@ public final class MainActivity extends Activity {
         if (drawerOpen) { closeDrawer(); return; }
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) showDashboard();
+        else if ("hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
         else if ("settings".equals(page)) showDashboard();
         else super.onBackPressed();
     }
@@ -1259,6 +1301,11 @@ public final class MainActivity extends Activity {
 
     private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon,
                             Runnable left, Runnable right, int sideInsetDp) {
+        return makeHeader(title, subtitle, leftIcon, rightIcon, left, right, sideInsetDp, 68);
+    }
+
+    private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon,
+                            Runnable left, Runnable right, int sideInsetDp, int titleInsetDp) {
         FrameLayout header = new FrameLayout(this); header.setBackgroundColor(BG);
         LinearLayout textBlock = new LinearLayout(this); textBlock.setGravity(Gravity.CENTER); textBlock.setOrientation(LinearLayout.VERTICAL);
         titleView = text(title, 18, TEXT); titleView.setGravity(Gravity.CENTER); titleView.setMaxLines(1); titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -1266,7 +1313,7 @@ public final class MainActivity extends Activity {
         subtitleView = text(subtitle, 12, MUTED); subtitleView.setGravity(Gravity.CENTER); subtitleView.setMaxLines(1);
         if (!subtitle.isEmpty()) textBlock.addView(subtitleView, new LinearLayout.LayoutParams(-1, -2));
         FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(-1, -1);
-        titleParams.leftMargin = dp(68); titleParams.rightMargin = dp(68); header.addView(textBlock, titleParams);
+        titleParams.leftMargin = dp(titleInsetDp); titleParams.rightMargin = dp(titleInsetDp); header.addView(textBlock, titleParams);
         if (leftIcon != null) {
             FrameLayout.LayoutParams button = new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
             button.rightMargin = dp(sideInsetDp);
@@ -1330,6 +1377,7 @@ public final class MainActivity extends Activity {
             case "menu": return "منو"; case "add": return "افزودن"; case "filter": return "فیلتر";
             case "back": return "بازگشت"; case "next": return "بعدی"; case "tag": return "نشان مطالعه";
             case "edit": return "ویرایش";
+            case "hide": return "مخفی کردن کتاب"; case "show": return "نمایش کتاب";
             case "delete": return "حذف"; case "image": return "تصویر جلد"; case "settings": return "تنظیمات";
             case "select": return "انتخاب کتاب";
             default: return icon;
@@ -1526,6 +1574,7 @@ public final class MainActivity extends Activity {
             query = searchField == null ? "" : searchField.getText().toString().trim().toLowerCase(Locale.ROOT);
             for (int i = 0; i < books.length(); i++) {
                 JSONObject book = books.optJSONObject(i); if (book == null) continue;
+                if (book.optBoolean("hidden", false) != showingHiddenBooks()) continue;
                 if (!(book.optString("title").toLowerCase(Locale.ROOT).contains(query)
                         || book.optString("author").toLowerCase(Locale.ROOT).contains(query))) continue;
                 JSONArray tags = book.optJSONArray("tags"); boolean match = true;
