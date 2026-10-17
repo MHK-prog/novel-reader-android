@@ -26,7 +26,9 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.AlignmentSpan;
 import android.text.style.LineBackgroundSpan;
+import android.text.Layout;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -84,7 +86,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.7";
+    private static final String VERSION = "1.1.8";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -139,10 +141,8 @@ public final class MainActivity extends Activity {
     private ScrollView readerScroll;
     private View readerProgress;
     private FrameLayout readerFrame;
-    private MarkerView markerView;
     private FrameLayout quickScrollButton;
     private NativeIconView quickScrollIcon;
-    private FrameLayout markerToggleButton;
     private TextView toastView;
     private FrameLayout splashOverlay;
     private ProgressBar splashProgress;
@@ -416,7 +416,6 @@ public final class MainActivity extends Activity {
                 chapter.put("percent", Math.max(0, Math.min(100, chapter.optInt("percent", 0))));
                 chapter.put("done", chapter.optBoolean("done", false));
                 chapter.put("scroll", Math.max(0, chapter.optInt("scroll", 0)));
-                if (!chapter.has("markerOffset")) chapter.put("markerOffset", JSONObject.NULL);
             }
         }
         JSONArray cleanTags = new JSONArray();
@@ -749,16 +748,13 @@ public final class MainActivity extends Activity {
         chapterEditor = edit("متن Chapter را اینجا بنویس...", true);
         chapterEditor.setTextSize(20); chapterEditor.setLineSpacing(dp(2), 1.52f);
         chapterEditor.setGravity(Gravity.TOP | Gravity.RIGHT);
+        chapterEditor.setTextDirection(View.TEXT_DIRECTION_RTL);
         chapterEditor.setPadding(dp(22), dp(26), dp(22), dp(40));
         chapterEditor.setBackgroundColor(Color.TRANSPARENT);
         chapterEditor.setCursorVisible(false);
         chapterEditor.setText(chapterText); applyRuleSpans(chapterEditor.getText());
         readerScroll.addView(chapterEditor, new ScrollView.LayoutParams(-1, -2));
         readerFrame.addView(readerScroll, new FrameLayout.LayoutParams(-1, -1));
-        markerView = new MarkerView(this);
-        FrameLayout.LayoutParams markerParams = new FrameLayout.LayoutParams(-1, dp(28), Gravity.TOP);
-        readerFrame.addView(markerView, markerParams);
-        markerView.setOnClickListener(v -> clearMarker());
         quickScrollIcon = new NativeIconView(this, "scrollbottom", PURPLE);
         quickScrollButton = new FrameLayout(this); styleIconButton(quickScrollButton, false);
         quickScrollButton.addView(quickScrollIcon, new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER));
@@ -772,7 +768,6 @@ public final class MainActivity extends Activity {
                     chapterEditor.getHeight() - readerScroll.getHeight());
             readerScroll.smoothScrollTo(0, targetY);
             updateProgress();
-            updateMarker();
         });
         appColumn.addView(readerFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         readerFrame.requestFocus();
@@ -798,8 +793,8 @@ public final class MainActivity extends Activity {
         previousChapterButton.setTranslationX(-dp(8));
         bottom.addView(previousChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         LinearLayout centerControls = new LinearLayout(this); centerControls.setGravity(Gravity.CENTER); centerControls.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        markerToggleButton = iconButton("tag", PURPLE, !chapter.isNull("markerOffset"), this::toggleMarker);
-        centerControls.addView(markerToggleButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        centerControls.addView(iconButton("help", PURPLE, false, this::showSpecialTokenHelp),
+                new LinearLayout.LayoutParams(dp(52), dp(52)));
         centerControls.addView(iconButton("book", PURPLE, false, () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); }),
                 new LinearLayout.LayoutParams(dp(52), dp(52)));
         bottom.addView(centerControls, new LinearLayout.LayoutParams(dp(104), dp(54)));
@@ -811,7 +806,7 @@ public final class MainActivity extends Activity {
         lastFastFlickDirection = 0; fastFlickCount = 0; lastFastFlickAt = 0;
         int restore = Math.max(0, chapter.optInt("scroll", 0));
         restoringScroll = true;
-        readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; updateMarker(); });
+        readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; });
         chapterEditor.addTextChangedListener(watcher(() -> {
             chapterText = chapterEditor.getText().toString();
             chapterDirty = true;
@@ -824,11 +819,11 @@ public final class MainActivity extends Activity {
             if (restoringScroll) return;
             JSONObject current = activeChapterObject();
             if (current != null) putJson(current, "scroll", y);
-            updateProgress(); updateMarker();
+            updateProgress();
             scheduleProgressSave();
         });
         readerScroll.addOnLayoutChangeListener((v, left, top, right, bottomEdge, oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (bottomEdge - top != oldBottom - oldTop) { updateProgress(); updateMarker(); }
+            if (bottomEdge - top != oldBottom - oldTop) updateProgress();
         });
         chapterEditor.setOnFocusChangeListener((v, focused) -> {
             chapterEditor.setCursorVisible(focused && readerImeVisible);
@@ -841,7 +836,6 @@ public final class MainActivity extends Activity {
                         chapterEditor.getWidth(), caretY + dp(60)), true);
             }, 170);
         });
-        updateMarker();
     }
 
     private void setReaderImeVisible(boolean visible) {
@@ -945,35 +939,6 @@ public final class MainActivity extends Activity {
         if (chapterAdapter != null && "chapters".equals(page)) chapterAdapter.notifyDataSetChanged();
     }
 
-    private void toggleMarker() {
-        JSONObject chapter = activeChapterObject(); if (chapter == null || chapterEditor == null) return;
-        if (chapter.isNull("markerOffset") || !chapter.has("markerOffset")) {
-            double offset = (readerScroll.getScrollY() + readerScroll.getHeight() * 0.45) / getResources().getDisplayMetrics().density;
-            putJson(chapter, "markerOffset", offset);
-        } else putJson(chapter, "markerOffset", JSONObject.NULL);
-        updateMarker(); updateMarkerButton(); saveCurrentChapter(true);
-    }
-
-    private void clearMarker() {
-        JSONObject chapter = activeChapterObject(); if (chapter == null) return;
-        putJson(chapter, "markerOffset", JSONObject.NULL); updateMarker(); updateMarkerButton(); saveCurrentChapter(true);
-    }
-
-    private void updateMarkerButton() {
-        if (markerToggleButton == null) return;
-        JSONObject chapter = activeChapterObject();
-        styleIconButton(markerToggleButton, chapter != null && !chapter.isNull("markerOffset"));
-    }
-
-    private void updateMarker() {
-        if (markerView == null || chapterEditor == null) return;
-        JSONObject chapter = activeChapterObject();
-        if (chapter == null || chapter.isNull("markerOffset")) { markerView.setVisibility(View.GONE); return; }
-        markerView.setVisibility(View.VISIBLE);
-        float offset = (float) (chapter.optDouble("markerOffset", 0) * getResources().getDisplayMetrics().density);
-        markerView.setTranslationY(offset - readerScroll.getScrollY() - dp(14));
-    }
-
     private void showQuickScroll(boolean toTop) {
         if (quickScrollButton == null || chapterEditor == null || readerScroll == null) return;
         int range = chapterEditor.getHeight() - readerScroll.getHeight();
@@ -1036,7 +1001,7 @@ public final class MainActivity extends Activity {
         Runnable renderTags = () -> cloud.showTags(tagArray(availableTags), selected, tagSearch.getText().toString());
         renderTags.run(); tagSearch.addTextChangedListener(watcher(renderTags));
         addTag.setOnClickListener(v -> {
-            String value = tagSearch.getText().toString().trim();
+            String value = titleCaseWords(tagSearch.getText().toString());
             if (value.isEmpty()) { tagSearch.setError("نام تگ را بنویس"); return; }
             boolean found = false;
             for (String tag : availableTags) if (tag.equalsIgnoreCase(value)) { selected.add(tag); found = true; break; }
@@ -1052,11 +1017,19 @@ public final class MainActivity extends Activity {
                     && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
         });
         dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
-            String bookTitle = title.getText().toString().trim();
+            String bookTitle = titleCaseWords(title.getText().toString());
             if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
+            String bookAuthor = titleCaseWords(author.getText().toString());
+            LinkedHashSet<String> normalizedSelected = new LinkedHashSet<>();
+            for (String selectedTag : selected) {
+                String normalized = titleCaseWords(selectedTag);
+                if (!normalized.isEmpty()) normalizedSelected.add(normalized);
+            }
+            JSONArray savedTags = new JSONArray();
+            for (String selectedTag : normalizedSelected) savedTags.put(selectedTag);
             JSONArray globalTags = library.optJSONArray("tags");
             if (globalTags == null) globalTags = new JSONArray();
-            for (String selectedTag : selected) {
+            for (String selectedTag : normalizedSelected) {
                 boolean found = false;
                 for (int i = 0; i < globalTags.length(); i++) if (selectedTag.equalsIgnoreCase(globalTags.optString(i))) { found = true; break; }
                 if (!found) globalTags.put(selectedTag);
@@ -1068,8 +1041,8 @@ public final class MainActivity extends Activity {
                 JSONArray chapters = new JSONArray();
                 for (int i = 0; i < total; i++) chapters.put(newChapter());
                 JSONObject book = new JSONObject();
-                try { book.put("id", UUID.randomUUID().toString()).put("title", bookTitle).put("author", author.getText().toString().trim())
-                            .put("tags", new JSONArray(selected)).put("cover", pendingCoverName == null ? "" : pendingCoverName)
+                try { book.put("id", UUID.randomUUID().toString()).put("title", bookTitle).put("author", bookAuthor)
+                            .put("tags", savedTags).put("cover", pendingCoverName == null ? "" : pendingCoverName)
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
                 if (!saveLibrary()) {
@@ -1079,8 +1052,8 @@ public final class MainActivity extends Activity {
                 coverCommitted[0] = true;
                 dialog.dismiss(); activeBookId = book.optString("id"); showChapters();
             } else {
-                putJson(existing, "title", bookTitle); putJson(existing, "author", author.getText().toString().trim());
-                putJson(existing, "tags", new JSONArray(selected)); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
+                putJson(existing, "title", bookTitle); putJson(existing, "author", bookAuthor);
+                putJson(existing, "tags", savedTags); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
                 if (!saveLibrary()) {
                     try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
                     dialog.dismiss();
@@ -1103,6 +1076,40 @@ public final class MainActivity extends Activity {
         Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
         for (String value : sorted) result.put(value);
         return result;
+    }
+
+    private String titleCaseWords(String value) {
+        String[] words = value == null ? new String[0] : value.trim().toLowerCase(Locale.ROOT).split("\\s+");
+        StringBuilder result = new StringBuilder();
+        for (String word : words) {
+            if (word.isEmpty()) continue;
+            if (result.length() > 0) result.append(' ');
+            int index = 0;
+            while (index < word.length()) {
+                int codePoint = word.codePointAt(index);
+                if (Character.isLetter(codePoint)) {
+                    result.append(word.substring(0, index));
+                    result.append(new String(Character.toChars(codePoint)).toUpperCase(Locale.ROOT));
+                    result.append(word.substring(index + Character.charCount(codePoint)));
+                    break;
+                }
+                index += Character.charCount(codePoint);
+            }
+            if (index >= word.length()) result.append(word);
+        }
+        return result.toString();
+    }
+
+    private void showSpecialTokenHelp() {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("توالی‌های ویژه")
+                .setMessage("%end%\nخط بنفش با عنوان END: در Chapter می‌سازد.\n\n"
+                        + "%continue%\nخط قرمز نشان‌دار می‌سازد.\n\n"
+                        + "---\nیک خط افقی ساده می‌سازد.")
+                .setPositiveButton("فهمیدم", null)
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void chooseBookCover() {
@@ -1253,7 +1260,7 @@ public final class MainActivity extends Activity {
         JSONObject chapter = new JSONObject();
         try {
             chapter.put("hasText", false); chapter.put("percent", 0); chapter.put("done", false);
-            chapter.put("scroll", 0); chapter.put("markerOffset", JSONObject.NULL); chapter.put("manualDone", false);
+            chapter.put("scroll", 0); chapter.put("manualDone", false);
         } catch (JSONException ignored) { }
         return chapter;
     }
@@ -1375,7 +1382,8 @@ public final class MainActivity extends Activity {
     private String iconDescription(String icon) {
         switch (icon) {
             case "menu": return "منو"; case "add": return "افزودن"; case "filter": return "فیلتر";
-            case "back": return "بازگشت"; case "next": return "بعدی"; case "tag": return "نشان مطالعه";
+            case "back": return "بازگشت"; case "next": return "بعدی";
+            case "help": return "راهنمای توالی‌های ویژه";
             case "edit": return "ویرایش";
             case "hide": return "مخفی کردن کتاب"; case "show": return "نمایش کتاب";
             case "delete": return "حذف"; case "image": return "تصویر جلد"; case "settings": return "تنظیمات";
@@ -1404,8 +1412,10 @@ public final class MainActivity extends Activity {
         view.setHighlightColor(0x88BB86FC);
         if (Build.VERSION.SDK_INT >= 29) {
             GradientDrawable handle = new GradientDrawable(); handle.setShape(GradientDrawable.OVAL);
-            handle.setColor(PURPLE); handle.setSize(dp(14), dp(14));
-            view.setTextSelectHandle(handle); view.setTextSelectHandleLeft(handle); view.setTextSelectHandleRight(handle);
+            handle.setColor(PURPLE); handle.setSize(dp(multiline ? 26 : 20), dp(multiline ? 26 : 20));
+            view.setTextSelectHandle(handle.getConstantState().newDrawable().mutate());
+            view.setTextSelectHandleLeft(handle.getConstantState().newDrawable().mutate());
+            view.setTextSelectHandleRight(handle.getConstantState().newDrawable().mutate());
         }
         return view;
     }
@@ -1535,6 +1545,11 @@ public final class MainActivity extends Activity {
     private final class ReaderEditText extends EditText {
         private float startX;
         private float startY;
+        private float lastTapX;
+        private float lastTapY;
+        private long lastTapTime;
+        private int tapCount;
+        private boolean tapMoved;
 
         ReaderEditText(Context context) { super(context); }
 
@@ -1544,13 +1559,45 @@ public final class MainActivity extends Activity {
             if (action == MotionEvent.ACTION_DOWN) {
                 startX = event.getX();
                 startY = event.getY();
+                tapMoved = false;
                 allowParentScroll();
             } else if (action == MotionEvent.ACTION_MOVE
                     && Math.abs(event.getY() - startY) > dp(8)
                     && Math.abs(event.getY() - startY) > Math.abs(event.getX() - startX) * 1.2f) {
                 allowParentScroll();
+                if (Math.hypot(event.getX() - startX, event.getY() - startY) > dp(24)) tapMoved = true;
+            } else if (action == MotionEvent.ACTION_UP) {
+                long now = event.getEventTime();
+                boolean shortTap = !tapMoved && now - event.getDownTime() < 500
+                        && Math.hypot(event.getX() - startX, event.getY() - startY) < dp(24);
+                if (shortTap && now - lastTapTime < 650
+                        && Math.hypot(event.getX() - lastTapX, event.getY() - lastTapY) < dp(36)) {
+                    tapCount++;
+                } else {
+                    tapCount = shortTap ? 1 : 0;
+                }
+                lastTapTime = now;
+                lastTapX = event.getX();
+                lastTapY = event.getY();
+                if (tapCount >= 3) {
+                    int offset = getOffsetForPosition(event.getX(), event.getY());
+                    tapCount = 0;
+                    post(() -> selectLogicalLine(offset));
+                }
             }
             return handled;
+        }
+
+        private void selectLogicalLine(int offset) {
+            Editable text = getText();
+            if (text == null || text.length() == 0) return;
+            int safeOffset = Math.max(0, Math.min(offset, text.length()));
+            int previousNewline = safeOffset == 0 ? -1 : text.toString().lastIndexOf('\n', safeOffset - 1);
+            int lineStart = previousNewline + 1;
+            int lineEnd = text.toString().indexOf('\n', safeOffset);
+            if (lineEnd < 0) lineEnd = text.length();
+            if (lineEnd == lineStart && lineEnd < text.length()) lineEnd++;
+            setSelection(lineStart, lineEnd);
         }
 
         private void allowParentScroll() {
@@ -1700,33 +1747,97 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private static final class MarkdownRule implements LineBackgroundSpan {
+    private final class ReaderRuleSpan implements LineBackgroundSpan {
         private final int color;
-        MarkdownRule(int color) { this.color = color; }
+        private final String label;
+        ReaderRuleSpan(int color, String label) { this.color = color; this.label = label; }
         @Override public void drawBackground(Canvas canvas, Paint paint, int left, int right, int top, int baseline,
                                              int bottom, CharSequence text, int start, int end, int lineNum) {
-            int previous = paint.getColor(); Paint.Style style = paint.getStyle(); float width = paint.getStrokeWidth();
-            paint.setColor(color); paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1.2f);
-            canvas.drawLine(left, (top + bottom) / 2f, right, (top + bottom) / 2f, paint);
-            paint.setColor(previous); paint.setStyle(style); paint.setStrokeWidth(width);
+            android.text.Layout layout = chapterEditor == null ? null : chapterEditor.getLayout();
+            if (layout != null && lineNum != layout.getLineForOffset(start)) return;
+            int previousColor = paint.getColor();
+            Paint.Style previousStyle = paint.getStyle();
+            Paint.Align previousAlign = paint.getTextAlign();
+            Paint.Cap previousCap = paint.getStrokeCap();
+            float previousWidth = paint.getStrokeWidth();
+            float previousSize = paint.getTextSize();
+            float ruleLeft = 0;
+            float ruleRight = layout == null ? right - left : layout.getWidth();
+            float mid = (top + bottom) / 2f;
+            float inset = dp(10);
+            paint.setColor(color); paint.setStyle(Paint.Style.STROKE); paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeWidth(dp(1.5f));
+            if (label == null) {
+                canvas.drawLine(ruleLeft + inset, mid, ruleRight - inset, mid, paint);
+            } else {
+                paint.setStyle(Paint.Style.FILL); paint.setTextAlign(Paint.Align.CENTER);
+                paint.setTextSize(Math.max(dp(12), previousSize * 0.72f));
+                Paint.FontMetrics metrics = paint.getFontMetrics();
+                float labelBaseline = (top + bottom - metrics.ascent - metrics.descent) / 2f;
+                float labelHalfWidth = paint.measureText(label) / 2f + dp(9);
+                float center = (ruleLeft + ruleRight) / 2f;
+                paint.setStyle(Paint.Style.STROKE);
+                canvas.drawLine(ruleLeft + inset, mid, center - labelHalfWidth, mid, paint);
+                canvas.drawLine(center + labelHalfWidth, mid, ruleRight - inset, mid, paint);
+                paint.setStyle(Paint.Style.FILL);
+                canvas.drawText(label, center, labelBaseline, paint);
+            }
+            paint.setColor(previousColor); paint.setStyle(previousStyle); paint.setTextAlign(previousAlign);
+            paint.setStrokeCap(previousCap); paint.setStrokeWidth(previousWidth); paint.setTextSize(previousSize);
         }
     }
 
     private void applyRuleSpans(Editable editable) {
         if (editable == null) return;
-        for (MarkdownRule span : editable.getSpans(0, editable.length(), MarkdownRule.class)) editable.removeSpan(span);
+        for (ReaderRuleSpan span : editable.getSpans(0, editable.length(), ReaderRuleSpan.class)) editable.removeSpan(span);
+        for (AlignmentSpan span : editable.getSpans(0, editable.length(), AlignmentSpan.class)) editable.removeSpan(span);
         for (ForegroundColorSpan span : editable.getSpans(0, editable.length(), ForegroundColorSpan.class)) {
             if (span.getForegroundColor() == Color.TRANSPARENT) editable.removeSpan(span);
         }
+        String source = editable.toString();
         int start = 0;
-        while (start <= editable.length()) {
-            int end = editable.toString().indexOf('\n', start); if (end < 0) end = editable.length();
-            if (editable.subSequence(start, end).toString().trim().equals("---") && end > start) {
-                editable.setSpan(new MarkdownRule(0xFF77717D), start, end, Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        while (start <= source.length()) {
+            int newline = source.indexOf('\n', start);
+            int end = newline < 0 ? source.length() : newline;
+            int paragraphEnd = newline < 0 ? end : newline + 1;
+            String line = source.substring(start, end);
+            boolean hasPersian = hasPersianLetter(line);
+            if (paragraphEnd > start) {
+                Layout.Alignment alignment = hasPersian ? Layout.Alignment.ALIGN_NORMAL : Layout.Alignment.ALIGN_OPPOSITE;
+                editable.setSpan(new AlignmentSpan.Standard(alignment), start, paragraphEnd, Editable.SPAN_PARAGRAPH);
+            }
+            String trimmed = line.trim();
+            int ruleColor = 0;
+            String ruleLabel = null;
+            if (line.contains("%end%")) {
+                ruleColor = PURPLE;
+                ruleLabel = "END:";
+            } else if (line.contains("%continue%")) {
+                ruleColor = RED;
+            } else if (trimmed.equals("---")) {
+                ruleColor = 0xFF77717D;
+            }
+            if (ruleColor != 0 && end > start) {
+                editable.setSpan(new ReaderRuleSpan(ruleColor, ruleLabel), start, paragraphEnd, Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
                 editable.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), start, end, Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
-            if (end == editable.length()) break; start = end + 1;
+            if (newline < 0) break;
+            start = newline + 1;
         }
+    }
+
+    private boolean hasPersianLetter(String line) {
+        for (int index = 0; index < line.length();) {
+            int codePoint = line.codePointAt(index);
+            boolean arabicScript = (codePoint >= 0x0600 && codePoint <= 0x06FF)
+                    || (codePoint >= 0x0750 && codePoint <= 0x077F)
+                    || (codePoint >= 0x08A0 && codePoint <= 0x08FF)
+                    || (codePoint >= 0xFB50 && codePoint <= 0xFDFF)
+                    || (codePoint >= 0xFE70 && codePoint <= 0xFEFF);
+            if (arabicScript && Character.isLetter(codePoint)) return true;
+            index += Character.charCount(codePoint);
+        }
+        return false;
     }
 
     private final class CometStar extends View {
@@ -1856,17 +1967,4 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private final class MarkerView extends View {
-        private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
-        MarkerView(Context context) { super(context); setBackgroundColor(Color.TRANSPARENT); setClickable(true); }
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas); float mid = getHeight() / 2f;
-            line.setColor(RED); line.setStrokeWidth(dp(2)); canvas.drawLine(dp(8), mid, getWidth() - dp(8), mid, line);
-            float centerX = getWidth() - dp(16);
-            line.setStyle(Paint.Style.FILL); canvas.drawCircle(centerX, mid, dp(11), line);
-            line.setColor(Color.WHITE); line.setStrokeWidth(dp(1.7f)); line.setStyle(Paint.Style.STROKE);
-            canvas.drawLine(centerX - dp(4), mid - dp(4), centerX + dp(4), mid + dp(4), line);
-            canvas.drawLine(centerX + dp(4), mid - dp(4), centerX - dp(4), mid + dp(4), line);
-        }
-    }
 }
