@@ -9,8 +9,11 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Typeface;
@@ -86,7 +89,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.8";
+    private static final String VERSION = "1.1.9";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -802,7 +805,7 @@ public final class MainActivity extends Activity {
         nextChapterButton.setTranslationX(dp(8));
         bottom.addView(nextChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         appColumn.addView(bottom, new LinearLayout.LayoutParams(-1, dp(68)));
-        chapterEditor.setHighlightColor(0x88BB86FC);
+        chapterEditor.setHighlightColor(selectionHighlightColor());
         lastFastFlickDirection = 0; fastFlickCount = 0; lastFastFlickAt = 0;
         int restore = Math.max(0, chapter.optInt("scroll", 0));
         restoringScroll = true;
@@ -1409,15 +1412,17 @@ public final class MainActivity extends Activity {
         view.setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE); view.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
         view.setPadding(dp(13), dp(9), dp(13), dp(9)); view.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 12));
         view.setSingleLine(!multiline); view.setGravity(multiline ? Gravity.TOP | Gravity.RIGHT : Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        view.setHighlightColor(0x88BB86FC);
+        view.setHighlightColor(selectionHighlightColor());
         if (Build.VERSION.SDK_INT >= 29) {
-            GradientDrawable handle = new GradientDrawable(); handle.setShape(GradientDrawable.OVAL);
-            handle.setColor(PURPLE); handle.setSize(dp(multiline ? 26 : 20), dp(multiline ? 26 : 20));
-            view.setTextSelectHandle(handle.getConstantState().newDrawable().mutate());
-            view.setTextSelectHandleLeft(handle.getConstantState().newDrawable().mutate());
-            view.setTextSelectHandleRight(handle.getConstantState().newDrawable().mutate());
+            view.setTextSelectHandle(new SelectionHandleDrawable(PURPLE, 0));
+            view.setTextSelectHandleLeft(new SelectionHandleDrawable(PURPLE, 1));
+            view.setTextSelectHandleRight(new SelectionHandleDrawable(PURPLE, -1));
         }
         return view;
+    }
+
+    private int selectionHighlightColor() {
+        return Color.argb(0x88, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE));
     }
 
     private View clearableInput(EditText input) {
@@ -1478,6 +1483,44 @@ public final class MainActivity extends Activity {
     }
 
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private final class SelectionHandleDrawable extends Drawable {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int pointDirection;
+
+        SelectionHandleDrawable(int color, int pointDirection) {
+            paint.setColor(color);
+            this.pointDirection = pointDirection;
+        }
+
+        @Override public void draw(Canvas canvas) {
+            android.graphics.Rect bounds = getBounds();
+            if (bounds.isEmpty()) return;
+            canvas.save();
+            canvas.translate(bounds.left, bounds.top);
+            canvas.scale(bounds.width() / 100f, bounds.height() / 112f);
+            if (pointDirection < 0) canvas.scale(-1f, 1f, 50f, 0f);
+
+            Path shape = new Path();
+            shape.moveTo(50f, 3f);
+            shape.cubicTo(76f, 3f, 95f, 22f, 92f, 47f);
+            shape.cubicTo(90f, 66f, 73f, 79f, 62f, 88f);
+            float pointX = pointDirection == 0 ? 50f : 58f;
+            shape.cubicTo(61f, 95f, pointX + 6f, 103f, pointX, 108f);
+            shape.cubicTo(pointX - 4f, 112f, 49f, 102f, 43f, 96f);
+            shape.cubicTo(31f, 85f, 10f, 72f, 8f, 47f);
+            shape.cubicTo(5f, 22f, 24f, 3f, 50f, 3f);
+            shape.close();
+            canvas.drawPath(shape, paint);
+            canvas.restore();
+        }
+
+        @Override public int getIntrinsicWidth() { return dp(30); }
+        @Override public int getIntrinsicHeight() { return dp(34); }
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
+        @Override public void setColorFilter(ColorFilter colorFilter) { paint.setColorFilter(colorFilter); invalidateSelf(); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
 
     private void putJson(JSONObject object, String key, Object value) {
