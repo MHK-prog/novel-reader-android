@@ -40,6 +40,8 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
@@ -158,9 +160,15 @@ public final class MainActivity extends Activity {
     private String pendingCoverName;
     private LinearLayout tokenSuggestions;
     private boolean pairingPercent;
+    private OnBackInvokedCallback systemBackCallback;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= 33) {
+            systemBackCallback = this::handleBack;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, systemBackCallback);
+        }
         vazir = Typeface.createFromAsset(getAssets(), "fonts/Vazirmatn-Regular.ttf");
         storage = new NovelStorage(this);
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
@@ -1645,6 +1653,10 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy() {
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
+        if (Build.VERSION.SDK_INT >= 33 && systemBackCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);
+            systemBackCallback = null;
+        }
         imageExecutor.shutdown();
         super.onDestroy();
     }
