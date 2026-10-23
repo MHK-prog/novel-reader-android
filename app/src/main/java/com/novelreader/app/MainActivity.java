@@ -89,7 +89,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.2.1";
+    private static final String VERSION = "1.2.2";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -903,7 +903,8 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
-        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), null, null, null, null));
+        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), "add", null,
+                this::addChapter, null));
         JSONArray bookTags = book.optJSONArray("tags");
         if (bookTags != null && bookTags.length() > 0) {
             StringBuilder labels = new StringBuilder();
@@ -928,6 +929,41 @@ public final class MainActivity extends Activity {
         chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
     }
 
+    private void addChapter() {
+        JSONObject book = activeBook();
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (chapters == null) return;
+        if (chapters.length() >= 5000) { toast("حداکثر ۵۰۰۰ Chapter پشتیبانی می‌شود."); return; }
+        int newIndex = chapters.length();
+        EditText chapterName = edit("Chapter name or number", false);
+        chapterName.setText("Chapter " + (newIndex + 1));
+        chapterName.setSelection(chapterName.length());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Add Chapter")
+                .setView(dialogPadding(chapterName)).setNegativeButton("Cancel", null)
+                .setPositiveButton("Add", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String label = chapterName.getText().toString().trim();
+            if (label.isEmpty()) { chapterName.setError("Enter a Chapter name or number"); return; }
+            JSONObject chapter = newChapter();
+            putJson(chapter, "title", label);
+            chapters.put(chapter);
+            if (!saveLibrary()) {
+                chapters.remove(newIndex);
+                return;
+            }
+            dialog.dismiss();
+            openReader(newIndex);
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private String chapterLabel(JSONObject chapter, int index) {
+        String savedTitle = chapter == null ? "" : chapter.optString("title").trim();
+        return savedTitle.isEmpty() ? "Chapter " + (index + 1) : savedTitle;
+    }
+
     private int firstUnread(JSONObject book) {
         JSONArray chapters = book.optJSONArray("chapters");
         if (chapters == null || chapters.length() == 0) return 0;
@@ -939,7 +975,9 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
-        appColumn.addView(makeHeader(book.optString("title"), "Chapter " + (activeChapter + 1) + " of " + book.optJSONArray("chapters").length(), null, null, null, null));
+        appColumn.addView(makeHeader(book.optString("title"), chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length(),
+                "next", "help", () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); },
+                this::showSpecialTokenHelp, 0, 68, true));
         FrameLayout progressTrack = new FrameLayout(this); progressTrack.setBackgroundColor(0xFF241C2E);
         readerProgress = new View(this); readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
@@ -1011,12 +1049,6 @@ public final class MainActivity extends Activity {
         FrameLayout previousChapterButton = weightedIconButton("back", () -> moveChapter(-1));
         previousChapterButton.setTranslationX(-dp(8));
         bottom.addView(previousChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
-        LinearLayout centerControls = new LinearLayout(this); centerControls.setGravity(Gravity.CENTER); centerControls.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        centerControls.addView(iconButton("help", PURPLE, false, this::showSpecialTokenHelp),
-                new LinearLayout.LayoutParams(dp(52), dp(52)));
-        centerControls.addView(iconButton("book", PURPLE, false, () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); }),
-                new LinearLayout.LayoutParams(dp(52), dp(52)));
-        bottom.addView(centerControls, new LinearLayout.LayoutParams(dp(104), dp(54)));
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
         nextChapterButton.setTranslationX(dp(8));
         bottom.addView(nextChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
@@ -1628,6 +1660,11 @@ public final class MainActivity extends Activity {
 
     private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon,
                             Runnable left, Runnable right, int sideInsetDp, int titleInsetDp) {
+        return makeHeader(title, subtitle, leftIcon, rightIcon, left, right, sideInsetDp, titleInsetDp, false);
+    }
+
+    private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon,
+                            Runnable left, Runnable right, int sideInsetDp, int titleInsetDp, boolean plainIcons) {
         FrameLayout header = new FrameLayout(this); header.setBackgroundColor(BG);
         LinearLayout textBlock = new LinearLayout(this); textBlock.setGravity(Gravity.CENTER); textBlock.setOrientation(LinearLayout.VERTICAL);
         titleView = text(title, 18, TEXT); titleView.setGravity(Gravity.CENTER); titleView.setMaxLines(1); titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -1639,12 +1676,14 @@ public final class MainActivity extends Activity {
         if (leftIcon != null) {
             FrameLayout.LayoutParams button = new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
             button.rightMargin = dp(sideInsetDp);
-            header.addView(iconButton(leftIcon, PURPLE, false, left), button);
+            header.addView(plainIcons ? plainIconButton(leftIcon, PURPLE, left)
+                    : iconButton(leftIcon, PURPLE, false, left), button);
         }
         if (rightIcon != null) {
             FrameLayout.LayoutParams button = new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.LEFT | Gravity.CENTER_VERTICAL);
             button.leftMargin = dp(sideInsetDp);
-            header.addView(iconButton(rightIcon, PURPLE, false, right), button);
+            header.addView(plainIcons ? plainIconButton(rightIcon, PURPLE, right)
+                    : iconButton(rightIcon, PURPLE, false, right), button);
         }
         return header;
     }
@@ -1841,7 +1880,7 @@ public final class MainActivity extends Activity {
 
     private final class SwipeRoot extends FrameLayout {
         private float startX, startY, startProgress, lastProgress;
-        private boolean gestureCandidate, trackingDrawer, openingGesture;
+        private boolean gestureCandidate, trackingDrawer;
 
         SwipeRoot(Context context) { super(context); }
 
@@ -1850,12 +1889,14 @@ public final class MainActivity extends Activity {
             if (action == MotionEvent.ACTION_DOWN) {
                 startX = event.getX();
                 startY = event.getY();
-                openingGesture = !drawerOpen;
-                gestureCandidate = drawerOpen
-                        ? startX >= getWidth() - drawerWidth()
-                        : drawerSwipeAvailable() && startX >= getWidth() - dp(28);
+                float width = Math.max(1f, drawerWidth());
+                boolean drawerVisible = drawerLayer.getVisibility() == View.VISIBLE;
+                startProgress = drawerVisible
+                        ? Math.max(0f, Math.min(1f, 1f - drawerPanel.getTranslationX() / width))
+                        : drawerOpen ? 1f : 0f;
+                gestureCandidate = drawerVisible && startProgress > 0f
+                        || drawerSwipeAvailable() && startX >= getWidth() - dp(28);
                 trackingDrawer = false;
-                startProgress = drawerOpen ? 1f : 0f;
                 lastProgress = startProgress;
                 return super.dispatchTouchEvent(event);
             }
@@ -1863,8 +1904,10 @@ public final class MainActivity extends Activity {
             if (!trackingDrawer && action == MotionEvent.ACTION_MOVE && gestureCandidate) {
                 float dx = event.getX() - startX;
                 float dy = event.getY() - startY;
+                boolean opening = dx < 0f && startProgress < 1f;
+                boolean closing = dx > 0f && startProgress > 0f;
                 if (Math.abs(dx) > dp(8) && Math.abs(dx) > Math.abs(dy) * 1.15f
-                        && (openingGesture ? dx < 0 : dx > 0)) {
+                        && (opening || closing)) {
                     trackingDrawer = true;
                     beginDrawerGesture(startProgress);
                     MotionEvent cancel = MotionEvent.obtain(event);
@@ -2164,7 +2207,7 @@ public final class MainActivity extends Activity {
             LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
             row.setBackground(roundDrawable(SURFACE, 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
             LinearLayout detail = new LinearLayout(MainActivity.this); detail.setOrientation(LinearLayout.VERTICAL);
-            TextView name = text("Chapter " + (position + 1), 15, TEXT);
+            TextView name = text(chapterLabel(chapter, position), 15, TEXT);
             FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(0xFF302A38, Color.TRANSPARENT, 4));
             View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(color, Color.TRANSPARENT, 4));
             final int fillPercent = done ? 100 : chapter.optInt("percent");
