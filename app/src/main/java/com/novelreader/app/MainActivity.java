@@ -4,10 +4,11 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.animation.ObjectAnimator;
 import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.graphics.Canvas;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Matrix;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.LinearGradient;
@@ -89,7 +90,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.1.9";
+    private static final String VERSION = "1.2.0";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -112,6 +113,8 @@ public final class MainActivity extends Activity {
     private JSONObject library = new JSONObject();
     private String page = "dashboard";
     private String activeBookId;
+    private String activeCollectionId = "other";
+    private boolean returnedFromHiddenBooks;
     private int activeChapter;
     private String chapterText = "";
     private boolean chapterDirty;
@@ -131,14 +134,17 @@ public final class MainActivity extends Activity {
     private FrameLayout systemRoot;
     private LinearLayout appColumn;
     private FrameLayout drawerLayer;
+    private View drawerScrim;
     private LinearLayout drawerPanel;
     private TextView titleView;
     private TextView subtitleView;
     private EditText searchField;
     private FrameLayout tagFilterButton;
     private GridView booksGrid;
+    private GridView collectionsGrid;
     private ListView chaptersList;
     private BookAdapter bookAdapter;
+    private CollectionAdapter collectionAdapter;
     private ChapterAdapter chapterAdapter;
     private EditText chapterEditor;
     private ScrollView readerScroll;
@@ -151,6 +157,8 @@ public final class MainActivity extends Activity {
     private ProgressBar splashProgress;
     private ImageView bookCoverPreview;
     private String pendingCoverName;
+    private LinearLayout tokenSuggestions;
+    private boolean pairingPercent;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -242,10 +250,15 @@ public final class MainActivity extends Activity {
         systemRoot.addView(appColumn, new FrameLayout.LayoutParams(-1, -1));
         drawerLayer = new FrameLayout(this);
         drawerLayer.setVisibility(View.GONE);
-        drawerLayer.setBackgroundColor(0x99000000);
-        drawerLayer.setOnClickListener(v -> closeDrawer());
+        drawerLayer.setBackgroundColor(Color.TRANSPARENT);
+        drawerScrim = new View(this);
+        drawerScrim.setBackgroundColor(0x99000000);
+        drawerScrim.setAlpha(0f);
+        drawerScrim.setOnClickListener(v -> closeDrawer());
+        drawerLayer.addView(drawerScrim, new FrameLayout.LayoutParams(-1, -1));
         drawerPanel = new LinearLayout(this);
         drawerPanel.setOrientation(LinearLayout.VERTICAL);
+        drawerPanel.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         drawerPanel.setPadding(dp(18), dp(22), dp(18), dp(18));
         drawerPanel.setBackgroundColor(SURFACE);
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(-1, -1, Gravity.RIGHT);
@@ -319,7 +332,7 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_COVER) {
-            if (resultCode == RESULT_OK && data != null && data.getData() != null) loadImageForCropping(data.getData());
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) loadImageForCover(data.getData());
             return;
         }
         if (requestCode != REQUEST_FOLDER) return;
@@ -398,7 +411,22 @@ public final class MainActivity extends Activity {
         }
         JSONArray tags = library.optJSONArray("tags");
         if (tags == null) tags = new JSONArray();
-        library.put("books", books).put("tags", tags);
+        JSONArray collections = library.optJSONArray("collections");
+        if (collections == null) collections = new JSONArray();
+        JSONObject otherCollection = null;
+        for (int i = 0; i < collections.length(); i++) {
+            JSONObject collection = collections.optJSONObject(i);
+            if (collection == null) continue;
+            if (collection.optString("id").isEmpty()) collection.put("id", UUID.randomUUID().toString());
+            if (collection.optString("title").trim().isEmpty()) collection.put("title", "بدون نام");
+            if ("other".equals(collection.optString("id"))) otherCollection = collection;
+        }
+        if (otherCollection == null) {
+            otherCollection = new JSONObject().put("id", "other").put("title", "سایر");
+            collections.put(otherCollection);
+        }
+        library.put("books", books).put("tags", tags).put("collections", collections);
+        activeCollectionId = "other";
         Set<String> all = new HashSet<>();
         for (int i = 0; i < tags.length(); i++) { String tag = tags.optString(i).trim(); if (!tag.isEmpty()) all.add(tag); }
         for (int i = 0; i < books.length(); i++) {
@@ -406,6 +434,9 @@ public final class MainActivity extends Activity {
             if (book == null) continue;
             if (book.optString("id").isEmpty()) book.put("id", UUID.randomUUID().toString());
             if (book.optString("title").isEmpty()) book.put("title", "بدون عنوان");
+            String collectionId = book.optString("collectionId", "other");
+            if (findCollectionById(collectionId) == null) collectionId = "other";
+            book.put("collectionId", collectionId);
             if (book.optJSONArray("tags") == null) book.put("tags", new JSONArray());
             book.put("hidden", book.optBoolean("hidden", false));
             JSONArray bookTags = book.getJSONArray("tags");
@@ -439,9 +470,15 @@ public final class MainActivity extends Activity {
     private void buildDrawer() {
         drawerPanel.removeAllViews();
         drawerPanel.addView(text("فهرست", 20, TEXT), new LinearLayout.LayoutParams(-1, dp(56)));
+        drawerPanel.addView(textButton("کتابخانه مجموعه‌ها", "folder", PURPLE, () -> {
+            selectedBookIds.clear();
+            activeTagFilter.clear();
+            closeDrawer();
+            showDashboard();
+        }), new LinearLayout.LayoutParams(-1, dp(52)));
         drawerPanel.addView(textButton("تنظیمات", "settings", PURPLE, () -> { closeDrawer(); showSettings(); }),
                 new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("کتاب‌های مخفی", "hide", PURPLE, () -> {
+        drawerPanel.addView(textButton("کتابخانه مخفی", "hide", PURPLE, () -> {
             selectedBookIds.clear();
             activeTagFilter.clear();
             closeDrawer();
@@ -529,39 +566,205 @@ public final class MainActivity extends Activity {
         else if ("reader".equals(page)) showReader();
         else if ("settings".equals(page)) showSettings();
         else if ("hiddenBooks".equals(page)) showHiddenBooks();
+        else if ("collectionBooks".equals(page)) showBookShelf(false);
+        else if ("collections".equals(page)) showCollections();
         else showDashboard();
     }
 
     private void openDrawer() {
-        if (drawerOpen) return;
-        drawerOpen = true;
-        drawerLayer.animate().cancel();
-        drawerPanel.animate().cancel();
-        drawerLayer.setVisibility(View.VISIBLE);
-        drawerLayer.setAlpha(0f);
-        drawerLayer.animate().alpha(1f).setDuration(190).setInterpolator(new DecelerateInterpolator()).start();
-        drawerPanel.animate().translationX(0f).setDuration(190).setInterpolator(new DecelerateInterpolator()).start();
+        if (drawerOpen && drawerLayer.getVisibility() == View.VISIBLE) return;
+        settleDrawer(true);
     }
 
     private void closeDrawer() {
-        if (!drawerOpen) return;
-        drawerOpen = false;
-        drawerLayer.animate().cancel();
+        if (!drawerOpen && drawerLayer.getVisibility() != View.VISIBLE) return;
+        settleDrawer(false);
+    }
+
+    private int drawerWidth() {
+        if (drawerPanel != null && drawerPanel.getWidth() > 0) return drawerPanel.getWidth();
+        return Math.round(getResources().getDisplayMetrics().widthPixels * (2f / 3f));
+    }
+
+    private void setDrawerProgress(float progress) {
+        float bounded = Math.max(0f, Math.min(1f, progress));
+        drawerLayer.setVisibility(View.VISIBLE);
+        drawerPanel.setTranslationX(drawerWidth() * (1f - bounded));
+        drawerScrim.setAlpha(bounded);
+    }
+
+    private void settleDrawer(boolean open) {
+        drawerOpen = open;
+        drawerLayer.setVisibility(View.VISIBLE);
+        drawerScrim.animate().cancel();
         drawerPanel.animate().cancel();
-        drawerLayer.animate().alpha(0f).setDuration(170).setInterpolator(new DecelerateInterpolator()).start();
-        drawerPanel.animate().translationX(drawerPanel.getWidth()).setDuration(170)
-                .setInterpolator(new DecelerateInterpolator())
+        float targetX = open ? 0f : drawerWidth();
+        float distance = Math.abs(drawerPanel.getTranslationX() - targetX);
+        long duration = Math.max(90, Math.min(210, Math.round(210f * distance / Math.max(1, drawerWidth()))));
+        DecelerateInterpolator easing = new DecelerateInterpolator();
+        drawerScrim.animate().alpha(open ? 1f : 0f).setDuration(duration).setInterpolator(easing).start();
+        drawerPanel.animate().translationX(targetX).setDuration(duration).setInterpolator(easing)
                 .withEndAction(() -> { if (!drawerOpen) drawerLayer.setVisibility(View.GONE); }).start();
     }
 
-    private void showDashboard() { showBookShelf(false); }
+    private boolean drawerSwipeAvailable() {
+        return "collections".equals(page) || "collectionBooks".equals(page) || "hiddenBooks".equals(page);
+    }
+
+    private void beginDrawerGesture(float progress) {
+        drawerScrim.animate().cancel();
+        drawerPanel.animate().cancel();
+        setDrawerProgress(progress);
+    }
+
+    private void updateDrawerGesture(float progress) {
+        drawerPanel.setTranslationX(drawerWidth() * (1f - Math.max(0f, Math.min(1f, progress))));
+        drawerScrim.setAlpha(Math.max(0f, Math.min(1f, progress)));
+    }
+
+    private void settleDrawerGesture(boolean open) {
+        settleDrawer(open);
+    }
+
+    private void showDashboard() { showCollections(); }
 
     private void showHiddenBooks() { showBookShelf(true); }
 
     private boolean showingHiddenBooks() { return "hiddenBooks".equals(page); }
 
+    private JSONArray collectionArray() {
+        JSONArray result = library.optJSONArray("collections");
+        if (result == null) {
+            result = new JSONArray();
+            try { library.put("collections", result); } catch (JSONException ignored) { }
+        }
+        return result;
+    }
+
+    private JSONObject findCollectionById(String id) {
+        JSONArray collections = library.optJSONArray("collections");
+        if (collections == null) return null;
+        for (int i = 0; i < collections.length(); i++) {
+            JSONObject collection = collections.optJSONObject(i);
+            if (collection != null && id != null && id.equals(collection.optString("id"))) return collection;
+        }
+        return null;
+    }
+
+    private void showCreateCollectionDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        EditText name = edit("نام مجموعه", false);
+        content.addView(clearableInput(name), fieldParams());
+        TextView chooseLabel = text("کتاب‌های این مجموعه را انتخاب کن", 13, MUTED);
+        chooseLabel.setPadding(0, dp(10), 0, dp(6));
+        content.addView(chooseLabel);
+        ScrollView bookScroll = new ScrollView(this);
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.VERTICAL);
+        bookScroll.addView(choices);
+        Set<String> selected = new HashSet<>();
+        JSONArray books = library.optJSONArray("books");
+        List<JSONObject> available = new ArrayList<>();
+        if (books != null) for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book != null && !book.optBoolean("hidden", false)) available.add(book);
+        }
+        Runnable[] renderChoices = new Runnable[1];
+        renderChoices[0] = () -> {
+            choices.removeAllViews();
+            for (JSONObject book : available) {
+                String id = book.optString("id");
+                boolean isSelected = selected.contains(id);
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(12), 0, dp(12), 0);
+                row.setBackground(roundDrawable(isSelected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
+                        isSelected ? PURPLE : 0xFF29242F, 10));
+                TextView title = text(book.optString("title"), 14, TEXT);
+                title.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+                row.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
+                TextView mark = text(isSelected ? "✓" : "+", 19, isSelected ? PURPLE : MUTED);
+                mark.setGravity(Gravity.CENTER);
+                row.addView(mark, new LinearLayout.LayoutParams(dp(36), -1));
+                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(48));
+                rowParams.bottomMargin = dp(6);
+                choices.addView(row, rowParams);
+                row.setOnClickListener(v -> {
+                    if (!selected.add(id)) selected.remove(id);
+                    renderChoices[0].run();
+                });
+            }
+        };
+        renderChoices[0].run();
+        content.addView(bookScroll, new LinearLayout.LayoutParams(-1, dp(230)));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("مجموعهٔ جدید")
+                .setView(dialogPadding(content)).setNegativeButton("لغو", null)
+                .setPositiveButton("ساخت", null).create();
+        String before = library.toString();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            String title = titleCaseWords(name.getText().toString());
+            if (title.isEmpty()) { name.setError("نام مجموعه را وارد کن"); return; }
+            JSONObject collection = new JSONObject();
+            String id = UUID.randomUUID().toString();
+            try {
+                collection.put("id", id).put("title", title);
+                collectionArray().put(collection);
+                for (String bookId : selected) {
+                    JSONObject book = findBookById(bookId);
+                    if (book != null) book.put("collectionId", id);
+                }
+            } catch (JSONException ignored) { }
+            if (!saveLibrary()) {
+                try { library = new JSONObject(before); } catch (JSONException ignored) { }
+                dialog.dismiss();
+                showDashboard();
+                return;
+            }
+            activeCollectionId = id;
+            dialog.dismiss();
+            showBookShelf(false);
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void showCollections() {
+        page = "collections";
+        appColumn.removeAllViews();
+        appColumn.addView(makeHeader("کتابخانه مجموعه‌ها", "", "menu", "add",
+                this::openDrawer, this::showCreateCollectionDialog));
+        collectionsGrid = new GridView(this);
+        collectionsGrid.setNumColumns(2);
+        collectionsGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        collectionsGrid.setHorizontalSpacing(dp(10));
+        collectionsGrid.setVerticalSpacing(dp(10));
+        collectionsGrid.setSelector(android.R.color.transparent);
+        collectionsGrid.setCacheColorHint(Color.TRANSPARENT);
+        collectionsGrid.setBackgroundColor(BG);
+        collectionsGrid.setPadding(dp(12), dp(8), dp(12), dp(8));
+        collectionsGrid.setClipToPadding(false);
+        collectionAdapter = new CollectionAdapter();
+        collectionsGrid.setAdapter(collectionAdapter);
+        collectionsGrid.setOnItemClickListener((parent, view, position, id) -> {
+            JSONObject collection = collectionAdapter.getCollection(position);
+            if (collection != null) {
+                activeCollectionId = collection.optString("id", "other");
+                activeTagFilter.clear();
+                showBookShelf(false);
+            }
+        });
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(collectionsGrid, new FrameLayout.LayoutParams(-1, -1));
+        TextView empty = emptyLabel("هنوز مجموعه‌ای ساخته نشده");
+        frame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
+        collectionsGrid.setEmptyView(empty);
+        appColumn.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
     private void showBookShelf(boolean hidden) {
-        page = hidden ? "hiddenBooks" : "dashboard";
+        page = hidden ? "hiddenBooks" : "collectionBooks";
         appColumn.removeAllViews();
         addDashboardHeader();
         LinearLayout filters = new LinearLayout(this);
@@ -583,7 +786,7 @@ public final class MainActivity extends Activity {
         bookAdapter = new BookAdapter(); booksGrid.setAdapter(bookAdapter);
         FrameLayout listFrame = new FrameLayout(this);
         listFrame.addView(booksGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel(hidden ? "کتاب مخفی‌ای وجود ندارد" : "کتابی اضافه نشده");
+        TextView empty = emptyLabel(hidden ? "کتابی در کتابخانه مخفی نیست" : "کتابی در این مجموعه نیست");
         listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1)); booksGrid.setEmptyView(empty);
         appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         TextView version = text(VERSION, 10, MUTED); version.setGravity(Gravity.CENTER);
@@ -599,8 +802,10 @@ public final class MainActivity extends Activity {
     private void addDashboardHeader() {
         View header;
         boolean hiddenShelf = showingHiddenBooks();
+        JSONObject collection = findCollectionById(activeCollectionId);
+        String shelfTitle = collection == null ? "سایر" : collection.optString("title", "سایر");
         if (selectedBookIds.isEmpty()) {
-            header = makeHeader(hiddenShelf ? "کتاب‌های مخفی" : "کتابخانه", "", "menu",
+            header = makeHeader(hiddenShelf ? "کتابخانه مخفی" : shelfTitle, "", "menu",
                     hiddenShelf ? null : "add", this::openDrawer,
                     hiddenShelf ? null : () -> showBookDialog(null), 10);
         } else {
@@ -619,14 +824,15 @@ public final class MainActivity extends Activity {
                 actionParams.leftMargin = dp(64);
                 ((FrameLayout) header).addView(extraAction, actionParams);
             } else {
-                header = makeHeader(label, "", "delete", null, this::confirmDeleteSelected, null, 10);
+                header = makeHeader(label, "", "delete", hiddenShelf ? "show" : "hide",
+                        this::confirmDeleteSelected, () -> setSelectedBooksHidden(!hiddenShelf), 10);
             }
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
     }
 
     private void refreshDashboardSelection() {
-        if ((!"dashboard".equals(page) && !"hiddenBooks".equals(page)) || appColumn == null) return;
+        if ((!"collectionBooks".equals(page) && !"hiddenBooks".equals(page)) || appColumn == null) return;
         if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
         addDashboardHeader();
         if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
@@ -650,14 +856,15 @@ public final class MainActivity extends Activity {
     }
 
     private void setSelectedBooksHidden(boolean hidden) {
-        if (selectedBookIds.size() != 1) return;
-        JSONObject selected = findBookById(selectedBookIds.iterator().next());
-        if (selected == null) return;
+        if (selectedBookIds.isEmpty()) return;
         String beforeChange = library.toString();
-        putJson(selected, "hidden", hidden);
+        for (String selectedId : selectedBookIds) {
+            JSONObject selected = findBookById(selectedId);
+            if (selected != null) putJson(selected, "hidden", hidden);
+        }
         if (saveLibrary()) {
             selectedBookIds.clear();
-            if (showingHiddenBooks()) showHiddenBooks(); else showDashboard();
+            if (showingHiddenBooks()) showHiddenBooks(); else showBookShelf(false);
         } else {
             try { library = new JSONObject(beforeChange); } catch (JSONException ignored) { }
             refreshDashboardSelection();
@@ -750,14 +957,23 @@ public final class MainActivity extends Activity {
         readerScroll.setBackgroundColor(BG);
         chapterEditor = edit("متن Chapter را اینجا بنویس...", true);
         chapterEditor.setTextSize(20); chapterEditor.setLineSpacing(dp(2), 1.52f);
-        chapterEditor.setGravity(Gravity.TOP | Gravity.RIGHT);
-        chapterEditor.setTextDirection(View.TEXT_DIRECTION_RTL);
+        chapterEditor.setGravity(Gravity.TOP | Gravity.LEFT);
+        chapterEditor.setTextDirection(View.TEXT_DIRECTION_LTR);
         chapterEditor.setPadding(dp(22), dp(26), dp(22), dp(40));
         chapterEditor.setBackgroundColor(Color.TRANSPARENT);
         chapterEditor.setCursorVisible(false);
         chapterEditor.setText(chapterText); applyRuleSpans(chapterEditor.getText());
         readerScroll.addView(chapterEditor, new ScrollView.LayoutParams(-1, -2));
         readerFrame.addView(readerScroll, new FrameLayout.LayoutParams(-1, -1));
+        tokenSuggestions = new LinearLayout(this);
+        tokenSuggestions.setGravity(Gravity.CENTER);
+        tokenSuggestions.setPadding(dp(4), dp(4), dp(4), dp(4));
+        tokenSuggestions.setOrientation(LinearLayout.HORIZONTAL);
+        tokenSuggestions.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        tokenSuggestions.setBackground(roundDrawable(SURFACE, 0xFF554667, 12));
+        tokenSuggestions.setElevation(dp(8));
+        tokenSuggestions.setVisibility(View.GONE);
+        readerFrame.addView(tokenSuggestions, new FrameLayout.LayoutParams(dp(172), dp(46), Gravity.TOP | Gravity.LEFT));
         quickScrollIcon = new NativeIconView(this, "scrollbottom", PURPLE);
         quickScrollButton = new FrameLayout(this); styleIconButton(quickScrollButton, false);
         quickScrollButton.addView(quickScrollIcon, new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER));
@@ -806,6 +1022,20 @@ public final class MainActivity extends Activity {
         bottom.addView(nextChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         appColumn.addView(bottom, new LinearLayout.LayoutParams(-1, dp(68)));
         chapterEditor.setHighlightColor(selectionHighlightColor());
+        chapterEditor.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                if (pairingPercent || before != 0 || count != 1 || start >= text.length() || text.charAt(start) != '%') return;
+                int cursor = start + 1;
+                if (cursor < text.length() && text.charAt(cursor) == '%') return;
+                pairingPercent = true;
+                chapterEditor.getText().insert(cursor, "%");
+                chapterEditor.setSelection(cursor);
+                pairingPercent = false;
+                chapterEditor.post(MainActivity.this::updateTokenSuggestions);
+            }
+            @Override public void afterTextChanged(Editable text) { }
+        });
         lastFastFlickDirection = 0; fastFlickCount = 0; lastFastFlickAt = 0;
         int restore = Math.max(0, chapter.optInt("scroll", 0));
         restoringScroll = true;
@@ -814,6 +1044,7 @@ public final class MainActivity extends Activity {
             chapterText = chapterEditor.getText().toString();
             chapterDirty = true;
             applyRuleSpans(chapterEditor.getText());
+            updateTokenSuggestions();
             putJson(chapter, "hasText", !chapterText.trim().isEmpty());
             scheduleSave();
             updateProgress();
@@ -823,10 +1054,14 @@ public final class MainActivity extends Activity {
             JSONObject current = activeChapterObject();
             if (current != null) putJson(current, "scroll", y);
             updateProgress();
+            updateTokenSuggestions();
             scheduleProgressSave();
         });
         readerScroll.addOnLayoutChangeListener((v, left, top, right, bottomEdge, oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (bottomEdge - top != oldBottom - oldTop) updateProgress();
+            if (bottomEdge - top != oldBottom - oldTop) {
+                updateProgress();
+                updateTokenSuggestions();
+            }
         });
         chapterEditor.setOnFocusChangeListener((v, focused) -> {
             chapterEditor.setCursorVisible(focused && readerImeVisible);
@@ -861,6 +1096,8 @@ public final class MainActivity extends Activity {
 
     private void openChapters(JSONObject book) {
         activeBookId = book.optString("id");
+        activeCollectionId = book.optString("collectionId", "other");
+        returnedFromHiddenBooks = showingHiddenBooks();
         showChapters();
     }
 
@@ -966,7 +1203,7 @@ public final class MainActivity extends Activity {
         LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(dp(8), dp(4), dp(8), dp(4));
         LinearLayout coverRow = new LinearLayout(this); coverRow.setGravity(Gravity.CENTER_VERTICAL);
         FrameLayout previewFrame = new FrameLayout(this);
-        bookCoverPreview = new ImageView(this); bookCoverPreview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        bookCoverPreview = new ImageView(this); bookCoverPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         bookCoverPreview.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
         previewFrame.addView(bookCoverPreview, new FrameLayout.LayoutParams(-1, -1));
         NativeIconView placeholder = new NativeIconView(this, "book", PURPLE);
@@ -975,7 +1212,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(dp(92), dp(124));
         previewParams.rightMargin = dp(12); coverRow.addView(previewFrame, previewParams);
         LinearLayout coverActions = new LinearLayout(this); coverActions.setOrientation(LinearLayout.VERTICAL);
-        coverActions.addView(textButton("انتخاب و برش جلد", "image", PURPLE, this::chooseBookCover), fieldParams());
+        coverActions.addView(textButton("انتخاب جلد", "image", PURPLE, this::chooseBookCover), fieldParams());
         coverActions.addView(textButton("حذف تصویر جلد", "close", MUTED, () -> {
             pendingCoverName = ""; renderCoverPreview(bookCoverPreview, pendingCoverName);
         }), fieldParams());
@@ -1046,14 +1283,15 @@ public final class MainActivity extends Activity {
                 JSONObject book = new JSONObject();
                 try { book.put("id", UUID.randomUUID().toString()).put("title", bookTitle).put("author", bookAuthor)
                             .put("tags", savedTags).put("cover", pendingCoverName == null ? "" : pendingCoverName)
+                            .put("collectionId", activeCollectionId).put("hidden", false)
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
                 if (!saveLibrary()) {
                     try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
-                    dialog.dismiss(); showDashboard(); return;
+                    dialog.dismiss(); showBookShelf(false); return;
                 }
                 coverCommitted[0] = true;
-                dialog.dismiss(); activeBookId = book.optString("id"); showChapters();
+                dialog.dismiss(); activeBookId = book.optString("id"); returnedFromHiddenBooks = false; showChapters();
             } else {
                 putJson(existing, "title", bookTitle); putJson(existing, "author", bookAuthor);
                 putJson(existing, "tags", savedTags); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
@@ -1104,15 +1342,102 @@ public final class MainActivity extends Activity {
     }
 
     private void showSpecialTokenHelp() {
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("توالی‌های ویژه")
-                .setMessage("%end%\nخط بنفش با عنوان END: در Chapter می‌سازد.\n\n"
-                        + "%continue%\nخط قرمز نشان‌دار می‌سازد.\n\n"
-                        + "---\nیک خط افقی ساده می‌سازد.")
-                .setPositiveButton("فهمیدم", null)
-                .create();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(4), dp(4), dp(4), dp(4));
+        content.addView(tokenHelpRow("پایان Chapter  ·  %end%", "یک خط بنفش با برچسب END می‌سازد.", "%end%"), fieldParams());
+        content.addView(tokenHelpRow("ادامه  ·  %continue%", "یک نشانگر خط قرمز در متن می‌سازد.", "%continue%"), fieldParams());
+        content.addView(tokenHelpRow("خط جداکننده  ·  ---", "یک خط افقی ساده می‌سازد.", "---"), fieldParams());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("عبارت‌های ویژه")
+                .setView(dialogPadding(content)).setPositiveButton("بستن", null).create();
         dialog.show();
         styleDialogWindow(dialog);
+    }
+
+    private View tokenHelpRow(String label, String description, String token) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        TextView button = text(label, 14, TEXT);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(10), dp(9), dp(10), dp(9));
+        button.setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
+        button.setClickable(true);
+        button.setOnClickListener(v -> {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("novel-token", token));
+            button.setTextColor(Color.WHITE);
+            button.setBackground(roundDrawable(GREEN, GREEN, 12));
+        });
+        row.addView(button, new LinearLayout.LayoutParams(-1, dp(44)));
+        TextView detail = text(description, 12, MUTED);
+        detail.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        detail.setPadding(dp(4), dp(4), dp(4), dp(2));
+        row.addView(detail);
+        return row;
+    }
+
+    private void updateTokenSuggestions() {
+        if (tokenSuggestions == null || chapterEditor == null || readerFrame == null || !"reader".equals(page)) return;
+        Editable editable = chapterEditor.getText();
+        int selection = chapterEditor.getSelectionStart();
+        if (selection < 0 || selection != chapterEditor.getSelectionEnd() || selection > editable.length()) {
+            tokenSuggestions.setVisibility(View.GONE);
+            return;
+        }
+        String text = editable.toString();
+        int lineStart = text.lastIndexOf('\n', Math.max(0, selection - 1)) + 1;
+        int open = text.lastIndexOf('%', Math.max(0, selection - 1));
+        int close = text.indexOf('%', selection);
+        if (open < lineStart || close < selection || text.indexOf('%', open + 1) >= 0 && text.indexOf('%', open + 1) < selection) {
+            tokenSuggestions.setVisibility(View.GONE);
+            return;
+        }
+        String prefix = text.substring(open + 1, selection).toLowerCase(Locale.ROOT);
+        List<String> matches = new ArrayList<>();
+        for (String option : new String[]{"end", "continue"}) if (option.startsWith(prefix)) matches.add(option);
+        if (matches.isEmpty()) {
+            tokenSuggestions.setVisibility(View.GONE);
+            return;
+        }
+        tokenSuggestions.removeAllViews();
+        for (String option : matches) {
+            TextView choice = text(option, 14, TEXT);
+            choice.setGravity(Gravity.CENTER);
+            choice.setBackground(roundDrawable(SURFACE_ALT, 0xFF4A4055, 9));
+            choice.setFocusable(false);
+            LinearLayout.LayoutParams choiceParams = new LinearLayout.LayoutParams(0, -1, 1);
+            choiceParams.leftMargin = dp(3);
+            choiceParams.rightMargin = dp(3);
+            tokenSuggestions.addView(choice, choiceParams);
+            choice.setOnClickListener(v -> {
+                if (chapterEditor == null) return;
+                Editable current = chapterEditor.getText();
+                int currentCaret = chapterEditor.getSelectionStart();
+                int opening = currentCaret <= 0 ? -1 : current.toString().lastIndexOf('%', currentCaret - 1);
+                int closing = opening < 0 ? -1 : current.toString().indexOf('%', currentCaret);
+                if (opening < 0 || closing < currentCaret) return;
+                current.replace(opening + 1, closing, option);
+                chapterEditor.setSelection(opening + 1 + option.length());
+                chapterEditor.requestFocus();
+                updateTokenSuggestions();
+            });
+        }
+        tokenSuggestions.setVisibility(View.VISIBLE);
+        tokenSuggestions.post(() -> {
+            if (chapterEditor == null || chapterEditor.getLayout() == null || tokenSuggestions.getVisibility() != View.VISIBLE) return;
+            android.text.Layout layout = chapterEditor.getLayout();
+            int safeCaret = Math.max(0, Math.min(chapterEditor.getSelectionStart(), chapterEditor.length()));
+            int line = layout.getLineForOffset(safeCaret);
+            float caretX = chapterEditor.getLeft() + chapterEditor.getCompoundPaddingLeft() + layout.getPrimaryHorizontal(safeCaret);
+            int x = Math.max(dp(8), Math.min(Math.round(caretX), readerFrame.getWidth() - dp(180)));
+            int caretY = readerScroll.getTop() + chapterEditor.getTop() + chapterEditor.getTotalPaddingTop()
+                    + layout.getLineBottom(line) - readerScroll.getScrollY() + dp(8);
+            int y = caretY + dp(46) > readerFrame.getHeight() ? caretY - dp(54) : caretY;
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) tokenSuggestions.getLayoutParams();
+            params.leftMargin = x;
+            params.topMargin = Math.max(dp(4), Math.min(y, readerFrame.getHeight() - dp(50)));
+            tokenSuggestions.setLayoutParams(params);
+        });
     }
 
     private void chooseBookCover() {
@@ -1136,7 +1461,7 @@ public final class MainActivity extends Activity {
         startActivityForResult(gallery, REQUEST_COVER);
     }
 
-    private void loadImageForCropping(Uri uri) {
+    private void loadImageForCover(Uri uri) {
         imageExecutor.execute(() -> {
             Bitmap bitmap = null;
             try {
@@ -1148,37 +1473,19 @@ public final class MainActivity extends Activity {
                 try (java.io.InputStream input = getContentResolver().openInputStream(uri)) { bitmap = BitmapFactory.decodeStream(input, null, options); }
             } catch (Exception error) { android.util.Log.e("NovelReader", "Could not open cover image", error); }
             Bitmap loaded = bitmap;
-            runOnUiThread(() -> { if (loaded == null) toast("خواندن تصویر ناموفق بود."); else showCoverCropDialog(loaded); });
-        });
-    }
-
-    private void showCoverCropDialog(Bitmap bitmap) {
-        BookCoverCropView crop = new BookCoverCropView(this, bitmap);
-        LinearLayout wrap = new LinearLayout(this); wrap.setOrientation(LinearLayout.VERTICAL); wrap.setGravity(Gravity.CENTER);
-        wrap.setPadding(dp(20), dp(12), dp(20), dp(12));
-        TextView help = text("کادر جلد ۳:۴ است؛ تصویر را جابه‌جا یا بزرگ‌نمایی کن", 12, MUTED);
-        help.setGravity(Gravity.CENTER);
-        wrap.addView(help, new LinearLayout.LayoutParams(-1, dp(42)));
-        wrap.addView(crop, new LinearLayout.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("برش تصویر جلد")
-                .setView(wrap).setNegativeButton("لغو", null).setPositiveButton("استفاده از تصویر", null).create();
-        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
-            Bitmap cropped = crop.exportBitmap();
-            dialog.dismiss();
-            imageExecutor.execute(() -> {
-                String fileName = saveCoverBitmap(cropped);
-                runOnUiThread(() -> {
-                    if (fileName == null) toast("ذخیرهٔ جلد ناموفق بود.");
-                    else {
-                        pendingCoverName = fileName;
-                        if (bookCoverPreview != null) renderCoverPreview(bookCoverPreview, pendingCoverName);
-                    }
-                    if (!bitmap.isRecycled()) bitmap.recycle();
-                });
+            if (loaded == null) {
+                runOnUiThread(() -> toast("خواندن تصویر ناموفق بود."));
+                return;
+            }
+            String fileName = saveCoverBitmap(loaded);
+            runOnUiThread(() -> {
+                if (fileName == null) toast("ذخیرهٔ جلد ناموفق بود.");
+                else {
+                    pendingCoverName = fileName;
+                    if (bookCoverPreview != null) renderCoverPreview(bookCoverPreview, pendingCoverName);
+                }
             });
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
+        });
     }
 
     private String saveCoverBitmap(Bitmap bitmap) {
@@ -1287,9 +1594,14 @@ public final class MainActivity extends Activity {
 
     private void handleBack() {
         if (drawerOpen) { closeDrawer(); return; }
+        if (!selectedBookIds.isEmpty() && ("collectionBooks".equals(page) || "hiddenBooks".equals(page))) {
+            selectedBookIds.clear();
+            refreshDashboardSelection();
+            return;
+        }
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
-        else if ("chapters".equals(page)) showDashboard();
-        else if ("hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
+        else if ("chapters".equals(page)) { if (returnedFromHiddenBooks) showHiddenBooks(); else showBookShelf(false); }
+        else if ("collectionBooks".equals(page) || "hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
         else if ("settings".equals(page)) showDashboard();
         else super.onBackPressed();
     }
@@ -1531,19 +1843,59 @@ public final class MainActivity extends Activity {
     private static final class WindowManagerFlags { static final int ADJUST_RESIZE = android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE; }
 
     private final class SwipeRoot extends FrameLayout {
-        private float startX, startY;
+        private float startX, startY, startProgress, lastProgress;
+        private boolean gestureCandidate, trackingDrawer, openingGesture;
         SwipeRoot(Context context) { super(context); }
-        @Override public boolean dispatchTouchEvent(MotionEvent event) {
-            boolean handled = super.dispatchTouchEvent(event);
-            if (event.getAction() == MotionEvent.ACTION_DOWN) { startX = event.getX(); startY = event.getY(); }
-            else if (event.getAction() == MotionEvent.ACTION_UP) {
-                float dx = event.getX() - startX, dy = event.getY() - startY;
-                if (Math.abs(dx) > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.25f) {
-                    if (drawerOpen && dx > 0) closeDrawer();
-                    else if (!drawerOpen && dx < 0 && "dashboard".equals(page)) openDrawer();
+        @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                startX = event.getX();
+                startY = event.getY();
+                openingGesture = !drawerOpen;
+                gestureCandidate = drawerOpen
+                        ? startX >= getWidth() - drawerWidth()
+                        : drawerSwipeAvailable() && startX >= getWidth() - dp(28);
+                trackingDrawer = false;
+                startProgress = drawerOpen ? 1f : 0f;
+                lastProgress = startProgress;
+                return false;
+            }
+            if (action == MotionEvent.ACTION_MOVE && gestureCandidate && !trackingDrawer) {
+                float dx = event.getX() - startX;
+                float dy = event.getY() - startY;
+                if (Math.abs(dx) > dp(8) && Math.abs(dx) > Math.abs(dy) * 1.15f
+                        && (openingGesture ? dx < 0 : dx > 0)) {
+                    trackingDrawer = true;
+                    beginDrawerGesture(startProgress);
+                    return true;
                 }
             }
-            return handled;
+            return trackingDrawer || super.onInterceptTouchEvent(event);
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            if (!trackingDrawer) return super.onTouchEvent(event);
+            int action = event.getActionMasked();
+            float width = Math.max(1, drawerWidth());
+            if (action == MotionEvent.ACTION_MOVE) {
+                lastProgress = startProgress - (event.getX() - startX) / width;
+                updateDrawerGesture(lastProgress);
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP) {
+                boolean open = lastProgress >= 0.5f;
+                trackingDrawer = false;
+                gestureCandidate = false;
+                settleDrawerGesture(open);
+                return true;
+            }
+            if (action == MotionEvent.ACTION_CANCEL) {
+                trackingDrawer = false;
+                gestureCandidate = false;
+                settleDrawerGesture(startProgress >= 0.5f);
+                return true;
+            }
+            return true;
         }
     }
 
@@ -1595,6 +1947,11 @@ public final class MainActivity extends Activity {
         private boolean tapMoved;
 
         ReaderEditText(Context context) { super(context); }
+
+        @Override protected void onSelectionChanged(int selectionStart, int selectionEnd) {
+            super.onSelectionChanged(selectionStart, selectionEnd);
+            post(MainActivity.this::updateTokenSuggestions);
+        }
 
         @Override public boolean onTouchEvent(MotionEvent event) {
             boolean handled = super.onTouchEvent(event);
@@ -1649,6 +2006,69 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private final class CollectionAdapter extends BaseAdapter {
+        private List<JSONObject> cachedCollections;
+
+        @Override public void notifyDataSetChanged() {
+            cachedCollections = null;
+            super.notifyDataSetChanged();
+        }
+
+        private List<JSONObject> visible() {
+            if (cachedCollections != null) return cachedCollections;
+            List<JSONObject> result = new ArrayList<>();
+            JSONArray collections = collectionArray();
+            for (int i = 0; i < collections.length(); i++) {
+                JSONObject item = collections.optJSONObject(i);
+                if (item != null) result.add(item);
+            }
+            return cachedCollections = result;
+        }
+
+        JSONObject getCollection(int position) { return visible().get(position); }
+        @Override public int getCount() { return visible().size(); }
+        @Override public Object getItem(int position) { return getCollection(position); }
+        @Override public long getItemId(int position) { return position; }
+
+        @Override public View getView(int position, View convertView, ViewGroup parent) {
+            JSONObject collection = getCollection(position);
+            LinearLayout card = new LinearLayout(MainActivity.this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setGravity(Gravity.CENTER);
+            card.setPadding(dp(12), dp(12), dp(12), dp(10));
+            card.setBackground(roundDrawable(SURFACE, 0xFF503C68, 20));
+            card.setLayoutParams(new AbsListView.LayoutParams(-1, dp(154)));
+            FrameLayout iconFrame = new FrameLayout(MainActivity.this);
+            iconFrame.setBackground(roundDrawable(lightTheme ? 0xFFEDE3FA : 0xFF2A2034, Color.TRANSPARENT, 18));
+            NativeIconView icon = new NativeIconView(MainActivity.this, "folder", PURPLE);
+            iconFrame.addView(icon, new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER));
+            card.addView(iconFrame, new LinearLayout.LayoutParams(dp(62), dp(62)));
+            TextView title = text(collection.optString("title"), 15, TEXT);
+            title.setGravity(Gravity.CENTER);
+            title.setMaxLines(2);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-1, dp(42));
+            titleParams.topMargin = dp(4);
+            card.addView(title, titleParams);
+            TextView count = text(collectionBookCount(collection.optString("id")) + " کتاب", 12, MUTED);
+            count.setGravity(Gravity.CENTER);
+            card.addView(count, new LinearLayout.LayoutParams(-1, dp(22)));
+            return card;
+        }
+    }
+
+    private int collectionBookCount(String collectionId) {
+        JSONArray books = library.optJSONArray("books");
+        if (books == null) return 0;
+        int count = 0;
+        for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book != null && !book.optBoolean("hidden", false)
+                    && collectionId.equals(book.optString("collectionId", "other"))) count++;
+        }
+        return count;
+    }
+
     private final class BookAdapter extends BaseAdapter {
         private String query = "";
         private List<JSONObject> cachedBooks;
@@ -1665,6 +2085,7 @@ public final class MainActivity extends Activity {
             for (int i = 0; i < books.length(); i++) {
                 JSONObject book = books.optJSONObject(i); if (book == null) continue;
                 if (book.optBoolean("hidden", false) != showingHiddenBooks()) continue;
+                if (!showingHiddenBooks() && !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
                 if (!(book.optString("title").toLowerCase(Locale.ROOT).contains(query)
                         || book.optString("author").toLowerCase(Locale.ROOT).contains(query))) continue;
                 JSONArray tags = book.optJSONArray("tags"); boolean match = true;
@@ -1695,9 +2116,10 @@ public final class MainActivity extends Activity {
             card.setLayoutParams(new AbsListView.LayoutParams(-1, artworkHeight + dp(42 + 11)));
 
             FrameLayout artwork = new FrameLayout(MainActivity.this);
+            artwork.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 9));
             artwork.setClipToOutline(true);
             ImageView cover = new ImageView(MainActivity.this);
-            cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
             cover.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 9));
             artwork.addView(cover, new FrameLayout.LayoutParams(-1, -1));
             NativeIconView placeholder = new NativeIconView(MainActivity.this, "book", PURPLE);
@@ -1846,7 +2268,7 @@ public final class MainActivity extends Activity {
             String line = source.substring(start, end);
             boolean hasPersian = hasPersianLetter(line);
             if (paragraphEnd > start) {
-                Layout.Alignment alignment = hasPersian ? Layout.Alignment.ALIGN_NORMAL : Layout.Alignment.ALIGN_OPPOSITE;
+                Layout.Alignment alignment = hasPersian ? Layout.Alignment.ALIGN_OPPOSITE : Layout.Alignment.ALIGN_NORMAL;
                 editable.setSpan(new AlignmentSpan.Standard(alignment), start, paragraphEnd, Editable.SPAN_PARAGRAPH);
             }
             String trimmed = line.trim();
@@ -1854,7 +2276,7 @@ public final class MainActivity extends Activity {
             String ruleLabel = null;
             if (line.contains("%end%")) {
                 ruleColor = PURPLE;
-                ruleLabel = "END:";
+                ruleLabel = "END";
             } else if (line.contains("%continue%")) {
                 ruleColor = RED;
             } else if (trimmed.equals("---")) {
@@ -1909,104 +2331,6 @@ public final class MainActivity extends Activity {
             gradientPaint.setXfermode(null);
             gradientPaint.setShader(null);
             canvas.restoreToCount(layer);
-        }
-    }
-
-    private final class BookCoverCropView extends View {
-        private final Bitmap source;
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        private final Matrix matrix = new Matrix();
-        private final android.view.ScaleGestureDetector scaleDetector;
-        private float minScale = 1f;
-        private float lastX, lastY;
-
-        BookCoverCropView(Context context, Bitmap bitmap) {
-            super(context);
-            source = bitmap;
-            scaleDetector = new android.view.ScaleGestureDetector(context,
-                    new android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                        @Override public boolean onScale(android.view.ScaleGestureDetector detector) {
-                            float[] values = new float[9]; matrix.getValues(values);
-                            float current = values[Matrix.MSCALE_X];
-                            float next = Math.max(minScale, Math.min(minScale * 5f,
-                                    current * detector.getScaleFactor()));
-                            matrix.postScale(next / current, next / current, detector.getFocusX(), detector.getFocusY());
-                            constrainMatrix();
-                            invalidate(); return true;
-                        }
-                    });
-            setBackground(roundDrawable(Color.rgb(5, 5, 5), 0xFF40384A, 10));
-        }
-
-        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            int width = MeasureSpec.getSize(widthMeasureSpec);
-            int desiredHeight = Math.round(width * 4f / 3f);
-            int height = resolveSize(desiredHeight, heightMeasureSpec);
-            setMeasuredDimension(width, height);
-        }
-
-        @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            minScale = Math.max(w / (float) source.getWidth(), h / (float) source.getHeight());
-            matrix.reset(); matrix.setScale(minScale, minScale);
-            matrix.postTranslate((w - source.getWidth() * minScale) / 2f,
-                    (h - source.getHeight() * minScale) / 2f);
-        }
-
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            canvas.save(); canvas.clipRect(0, 0, getWidth(), getHeight());
-            canvas.drawBitmap(source, matrix, paint);
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(dp(2)); paint.setColor(Color.WHITE);
-            canvas.drawRect(dp(2), dp(2), getWidth() - dp(2), getHeight() - dp(2), paint);
-            paint.setStyle(Paint.Style.FILL); canvas.restore();
-        }
-
-        @Override public boolean onTouchEvent(MotionEvent event) {
-            scaleDetector.onTouchEvent(event);
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN: lastX = event.getX(); lastY = event.getY(); return true;
-                case MotionEvent.ACTION_MOVE:
-                    if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
-                        matrix.postTranslate(event.getX() - lastX, event.getY() - lastY);
-                        constrainMatrix();
-                        invalidate();
-                    }
-                    lastX = event.getX(); lastY = event.getY(); return true;
-                case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL: return true;
-                default: return true;
-            }
-        }
-
-        Bitmap exportBitmap() {
-            Matrix inverse = new Matrix(); matrix.invert(inverse);
-            float[] bounds = {0, 0, getWidth(), getHeight()}; inverse.mapPoints(bounds);
-            float scale = Math.max(minScale, matrixScale());
-            int height = Math.min(source.getHeight(), Math.max(1, Math.round(getHeight() / scale)));
-            int width = Math.min(source.getWidth(), Math.max(1, Math.round(height * 3f / 4f)));
-            height = Math.min(source.getHeight(), Math.round(width * 4f / 3f));
-            int centerX = Math.round((bounds[0] + bounds[2]) / 2f);
-            int centerY = Math.round((bounds[1] + bounds[3]) / 2f);
-            int left = Math.max(0, Math.min(source.getWidth() - width, centerX - width / 2));
-            int top = Math.max(0, Math.min(source.getHeight() - height, centerY - height / 2));
-            Bitmap crop = Bitmap.createBitmap(source, left, top, width, height);
-            Bitmap output = Bitmap.createScaledBitmap(crop, 600, 800, true);
-            if (crop != source && crop != output) crop.recycle();
-            return output;
-        }
-
-        private float matrixScale() {
-            float[] values = new float[9]; matrix.getValues(values); return values[Matrix.MSCALE_X];
-        }
-
-        private void constrainMatrix() {
-            float[] values = new float[9]; matrix.getValues(values);
-            float scale = values[Matrix.MSCALE_X];
-            float imageWidth = source.getWidth() * scale;
-            float imageHeight = source.getHeight() * scale;
-            values[Matrix.MTRANS_X] = Math.min(0, Math.max(getWidth() - imageWidth, values[Matrix.MTRANS_X]));
-            values[Matrix.MTRANS_Y] = Math.min(0, Math.max(getHeight() - imageHeight, values[Matrix.MTRANS_Y]));
-            matrix.setValues(values);
         }
     }
 
