@@ -30,7 +30,6 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
-import android.text.style.AlignmentSpan;
 import android.text.style.LineBackgroundSpan;
 import android.text.Layout;
 import android.view.Gravity;
@@ -90,7 +89,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.2.0";
+    private static final String VERSION = "1.2.1";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -957,8 +956,9 @@ public final class MainActivity extends Activity {
         readerScroll.setBackgroundColor(BG);
         chapterEditor = edit("متن Chapter را اینجا بنویس...", true);
         chapterEditor.setTextSize(20); chapterEditor.setLineSpacing(dp(2), 1.52f);
-        chapterEditor.setGravity(Gravity.TOP | Gravity.LEFT);
-        chapterEditor.setTextDirection(View.TEXT_DIRECTION_LTR);
+        chapterEditor.setGravity(Gravity.TOP | Gravity.START);
+        chapterEditor.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
+        chapterEditor.setTextAlignment(View.TEXT_ALIGNMENT_TEXT_START);
         chapterEditor.setPadding(dp(22), dp(26), dp(22), dp(40));
         chapterEditor.setBackgroundColor(Color.TRANSPARENT);
         chapterEditor.setCursorVisible(false);
@@ -1810,25 +1810,22 @@ public final class MainActivity extends Activity {
             if (bounds.isEmpty()) return;
             canvas.save();
             canvas.translate(bounds.left, bounds.top);
-            canvas.scale(bounds.width() / 100f, bounds.height() / 112f);
-            if (pointDirection < 0) canvas.scale(-1f, 1f, 50f, 0f);
-
+            canvas.scale(bounds.width() / 48f, bounds.height() / 24f);
+            float pathOffsetX = pointDirection > 0 ? 24f : pointDirection < 0 ? 0f : 12f;
+            canvas.translate(pathOffsetX, -2f);
             Path shape = new Path();
-            shape.moveTo(50f, 3f);
-            shape.cubicTo(76f, 3f, 95f, 22f, 92f, 47f);
-            shape.cubicTo(90f, 66f, 73f, 79f, 62f, 88f);
-            float pointX = pointDirection == 0 ? 50f : 58f;
-            shape.cubicTo(61f, 95f, pointX + 6f, 103f, pointX, 108f);
-            shape.cubicTo(pointX - 4f, 112f, 49f, 102f, 43f, 96f);
-            shape.cubicTo(31f, 85f, 10f, 72f, 8f, 47f);
-            shape.cubicTo(5f, 22f, 24f, 3f, 50f, 3f);
+            shape.moveTo(12f, 22f);
+            shape.cubicTo(16.4183f, 22f, 20f, 18.4183f, 20f, 14f);
+            shape.cubicTo(20f, 9.58172f, 12f, 2f, 12f, 2f);
+            shape.cubicTo(12f, 2f, 4f, 9.58172f, 4f, 14f);
+            shape.cubicTo(4f, 18.4183f, 7.58172f, 22f, 12f, 22f);
             shape.close();
             canvas.drawPath(shape, paint);
             canvas.restore();
         }
 
-        @Override public int getIntrinsicWidth() { return dp(30); }
-        @Override public int getIntrinsicHeight() { return dp(34); }
+        @Override public int getIntrinsicWidth() { return dp(48); }
+        @Override public int getIntrinsicHeight() { return dp(24); }
         @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
         @Override public void setColorFilter(ColorFilter colorFilter) { paint.setColorFilter(colorFilter); invalidateSelf(); }
         @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
@@ -1845,8 +1842,10 @@ public final class MainActivity extends Activity {
     private final class SwipeRoot extends FrameLayout {
         private float startX, startY, startProgress, lastProgress;
         private boolean gestureCandidate, trackingDrawer, openingGesture;
+
         SwipeRoot(Context context) { super(context); }
-        @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
                 startX = event.getX();
@@ -1858,47 +1857,54 @@ public final class MainActivity extends Activity {
                 trackingDrawer = false;
                 startProgress = drawerOpen ? 1f : 0f;
                 lastProgress = startProgress;
-                return false;
+                return super.dispatchTouchEvent(event);
             }
-            if (action == MotionEvent.ACTION_MOVE && gestureCandidate && !trackingDrawer) {
+
+            if (!trackingDrawer && action == MotionEvent.ACTION_MOVE && gestureCandidate) {
                 float dx = event.getX() - startX;
                 float dy = event.getY() - startY;
                 if (Math.abs(dx) > dp(8) && Math.abs(dx) > Math.abs(dy) * 1.15f
                         && (openingGesture ? dx < 0 : dx > 0)) {
                     trackingDrawer = true;
                     beginDrawerGesture(startProgress);
+                    MotionEvent cancel = MotionEvent.obtain(event);
+                    cancel.setAction(MotionEvent.ACTION_CANCEL);
+                    super.dispatchTouchEvent(cancel);
+                    cancel.recycle();
+                    lastProgress = startProgress - dx / Math.max(1f, drawerWidth());
+                    updateDrawerGesture(lastProgress);
                     return true;
                 }
             }
-            return trackingDrawer || super.onInterceptTouchEvent(event);
-        }
 
-        @Override public boolean onTouchEvent(MotionEvent event) {
-            if (!trackingDrawer) return super.onTouchEvent(event);
-            int action = event.getActionMasked();
-            float width = Math.max(1, drawerWidth());
-            if (action == MotionEvent.ACTION_MOVE) {
-                lastProgress = startProgress - (event.getX() - startX) / width;
-                updateDrawerGesture(lastProgress);
+            if (trackingDrawer) {
+                if (action == MotionEvent.ACTION_MOVE) {
+                    lastProgress = startProgress - (event.getX() - startX) / Math.max(1f, drawerWidth());
+                    updateDrawerGesture(lastProgress);
+                    return true;
+                }
+                if (action == MotionEvent.ACTION_UP) {
+                    boolean open = lastProgress >= 0.5f;
+                    trackingDrawer = false;
+                    gestureCandidate = false;
+                    settleDrawerGesture(open);
+                    return true;
+                }
+                if (action == MotionEvent.ACTION_CANCEL) {
+                    trackingDrawer = false;
+                    gestureCandidate = false;
+                    settleDrawerGesture(startProgress >= 0.5f);
+                    return true;
+                }
                 return true;
             }
-            if (action == MotionEvent.ACTION_UP) {
-                boolean open = lastProgress >= 0.5f;
-                trackingDrawer = false;
+
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 gestureCandidate = false;
-                settleDrawerGesture(open);
-                return true;
             }
-            if (action == MotionEvent.ACTION_CANCEL) {
-                trackingDrawer = false;
-                gestureCandidate = false;
-                settleDrawerGesture(startProgress >= 0.5f);
-                return true;
-            }
-            return true;
+            return super.dispatchTouchEvent(event);
         }
     }
-
     private void recordFastFlick(MotionEvent event) {
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
@@ -2255,7 +2261,6 @@ public final class MainActivity extends Activity {
     private void applyRuleSpans(Editable editable) {
         if (editable == null) return;
         for (ReaderRuleSpan span : editable.getSpans(0, editable.length(), ReaderRuleSpan.class)) editable.removeSpan(span);
-        for (AlignmentSpan span : editable.getSpans(0, editable.length(), AlignmentSpan.class)) editable.removeSpan(span);
         for (ForegroundColorSpan span : editable.getSpans(0, editable.length(), ForegroundColorSpan.class)) {
             if (span.getForegroundColor() == Color.TRANSPARENT) editable.removeSpan(span);
         }
@@ -2266,11 +2271,6 @@ public final class MainActivity extends Activity {
             int end = newline < 0 ? source.length() : newline;
             int paragraphEnd = newline < 0 ? end : newline + 1;
             String line = source.substring(start, end);
-            boolean hasPersian = hasPersianLetter(line);
-            if (paragraphEnd > start) {
-                Layout.Alignment alignment = hasPersian ? Layout.Alignment.ALIGN_OPPOSITE : Layout.Alignment.ALIGN_NORMAL;
-                editable.setSpan(new AlignmentSpan.Standard(alignment), start, paragraphEnd, Editable.SPAN_PARAGRAPH);
-            }
             String trimmed = line.trim();
             int ruleColor = 0;
             String ruleLabel = null;
@@ -2289,20 +2289,6 @@ public final class MainActivity extends Activity {
             if (newline < 0) break;
             start = newline + 1;
         }
-    }
-
-    private boolean hasPersianLetter(String line) {
-        for (int index = 0; index < line.length();) {
-            int codePoint = line.codePointAt(index);
-            boolean arabicScript = (codePoint >= 0x0600 && codePoint <= 0x06FF)
-                    || (codePoint >= 0x0750 && codePoint <= 0x077F)
-                    || (codePoint >= 0x08A0 && codePoint <= 0x08FF)
-                    || (codePoint >= 0xFB50 && codePoint <= 0xFDFF)
-                    || (codePoint >= 0xFE70 && codePoint <= 0xFEFF);
-            if (arabicScript && Character.isLetter(codePoint)) return true;
-            index += Character.charCount(codePoint);
-        }
-        return false;
     }
 
     private final class CometStar extends View {
