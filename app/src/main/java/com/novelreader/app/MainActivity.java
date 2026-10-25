@@ -91,7 +91,7 @@ public final class MainActivity extends Activity {
             Color.rgb(240, 98, 146)
     };
     private static final String[] ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
-    private static final String VERSION = "1.2.2";
+    private static final String VERSION = "1.2.4";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -106,7 +106,7 @@ public final class MainActivity extends Activity {
     private final Set<String> activeTagFilter = new HashSet<>();
     private final Set<String> selectedBookIds = new LinkedHashSet<>();
     private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
-    private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(8 * 1024) {
+    private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(coverCacheBudgetKb()) {
         @Override protected int sizeOf(String key, Bitmap value) { return Math.max(1, value.getByteCount() / 1024); }
     };
     private NovelStorage storage;
@@ -394,7 +394,11 @@ public final class MainActivity extends Activity {
         }
         saveLibrary();
         showDashboard();
-        systemRoot.animate().alpha(1f).setDuration(170).start();
+    }
+
+    private static int coverCacheBudgetKb() {
+        long heapKb = Runtime.getRuntime().maxMemory() / 1024L;
+        return (int) Math.max(8 * 1024L, Math.min(32 * 1024L, heapKb / 8L));
     }
 
     private void normalizeLibrary() throws JSONException {
@@ -1263,8 +1267,26 @@ public final class MainActivity extends Activity {
         EditText author = edit("نام نویسنده", false); author.setText(isNew ? "" : existing.optString("author"));
         EditText title = edit("نام کتاب", false); title.setText(isNew ? "" : existing.optString("title"));
         EditText count = edit("تعداد Chapter", false); count.setInputType(InputType.TYPE_CLASS_NUMBER); count.setText("1");
-        if (isNew) { form.addView(clearableInput(author), fieldParams()); form.addView(clearableInput(title), fieldParams()); form.addView(clearableInput(count), fieldParams()); }
-        else { form.addView(clearableInput(author), fieldParams()); form.addView(clearableInput(title), fieldParams()); }
+        form.addView(clearableInput(author), fieldParams());
+        form.addView(clearableInput(title), fieldParams());
+        String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
+        if (findCollectionById(initialCollection) == null) initialCollection = "other";
+        final String[] chosenCollectionId = {initialCollection};
+        TextView collectionChoice = text("", 14, TEXT);
+        collectionChoice.setSingleLine(true);
+        collectionChoice.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        collectionChoice.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        collectionChoice.setPadding(dp(12), 0, dp(12), 0);
+        collectionChoice.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
+        Runnable refreshCollectionChoice = () -> {
+            JSONObject collection = findCollectionById(chosenCollectionId[0]);
+            String name = collection == null ? "سایر" : collection.optString("title", "سایر");
+            collectionChoice.setText("مجموعه: " + name + "  ▾");
+        };
+        refreshCollectionChoice.run();
+        collectionChoice.setOnClickListener(v -> showCollectionPicker(chosenCollectionId, refreshCollectionChoice));
+        form.addView(collectionChoice, fieldParams());
+        if (isNew) form.addView(clearableInput(count), fieldParams());
         TextView tagLabel = text("تگ‌ها", 14, MUTED); tagLabel.setPadding(0, dp(12), 0, dp(4)); form.addView(tagLabel);
         LinearLayout tagSearchRow = new LinearLayout(this); tagSearchRow.setGravity(Gravity.CENTER_VERTICAL);
         EditText tagSearch = edit("جستجو یا افزودن تگ", false); tagSearch.setSingleLine(true);
@@ -1323,7 +1345,7 @@ public final class MainActivity extends Activity {
                 JSONObject book = new JSONObject();
                 try { book.put("id", UUID.randomUUID().toString()).put("title", bookTitle).put("author", bookAuthor)
                             .put("tags", savedTags).put("cover", pendingCoverName == null ? "" : pendingCoverName)
-                            .put("collectionId", activeCollectionId).put("hidden", false)
+                            .put("collectionId", chosenCollectionId[0]).put("hidden", false)
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
                 if (!saveLibrary()) {
@@ -1331,10 +1353,12 @@ public final class MainActivity extends Activity {
                     dialog.dismiss(); showBookShelf(false); return;
                 }
                 coverCommitted[0] = true;
+                activeCollectionId = chosenCollectionId[0];
                 dialog.dismiss(); activeBookId = book.optString("id"); returnedFromHiddenBooks = false; showChapters();
             } else {
                 putJson(existing, "title", bookTitle); putJson(existing, "author", bookAuthor);
                 putJson(existing, "tags", savedTags); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
+                putJson(existing, "collectionId", chosenCollectionId[0]);
                 if (!saveLibrary()) {
                     try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
                     dialog.dismiss();
@@ -1342,6 +1366,7 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 coverCommitted[0] = true;
+                if ("chapters".equals(page)) activeCollectionId = chosenCollectionId[0];
                 if (!originalCoverName.isEmpty() && !originalCoverName.equals(pendingCoverName)) deleteCoverFile(originalCoverName);
                 dialog.dismiss(); if (page.equals("chapters")) showChapters(); else if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
             }
@@ -1349,6 +1374,29 @@ public final class MainActivity extends Activity {
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void showCollectionPicker(String[] selectedId, Runnable onSelected) {
+        JSONArray collections = collectionArray();
+        String[] ids = new String[collections.length()];
+        String[] names = new String[collections.length()];
+        int selectedIndex = 0;
+        for (int i = 0; i < collections.length(); i++) {
+            JSONObject collection = collections.optJSONObject(i);
+            ids[i] = collection == null ? "other" : collection.optString("id", "other");
+            names[i] = collection == null ? "سایر" : collection.optString("title", "سایر");
+            if (ids[i].equals(selectedId[0])) selectedIndex = i;
+        }
+        AlertDialog picker = new AlertDialog.Builder(this).setTitle("انتخاب مجموعه")
+                .setSingleChoiceItems(names, selectedIndex, (dialog, which) -> {
+                    if (which >= 0 && which < ids.length) {
+                        selectedId[0] = ids[which];
+                        onSelected.run();
+                    }
+                    dialog.dismiss();
+                }).setNegativeButton("لغو", null).create();
+        picker.show();
+        styleDialogWindow(picker);
     }
 
     private JSONArray tagArray(List<String> values) {
@@ -1457,9 +1505,11 @@ public final class MainActivity extends Activity {
                 int closing = opening < 0 ? -1 : current.toString().indexOf('%', currentCaret);
                 if (opening < 0 || closing < currentCaret) return;
                 current.replace(opening + 1, closing, option);
-                chapterEditor.setSelection(opening + 1 + option.length());
+                chapterEditor.setSelection(Math.min(current.length(), opening + option.length() + 2));
                 chapterEditor.requestFocus();
-                updateTokenSuggestions();
+                tokenSuggestions.setVisibility(View.GONE);
+                tokenSuggestions.removeAllViews();
+                chapterEditor.post(MainActivity.this::updateTokenSuggestions);
             });
         }
         tokenSuggestions.setVisibility(View.VISIBLE);
@@ -1543,7 +1593,17 @@ public final class MainActivity extends Activity {
         Bitmap cached = coverCache.get(name); if (cached != null && !cached.isRecycled()) return cached;
         try {
             byte[] bytes = storage.readImage(name);
-            Bitmap bitmap = bytes == null ? null : BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (bytes == null) return null;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+            int targetEdge = Math.max(720, Math.min(1200, getResources().getDisplayMetrics().widthPixels));
+            int sample = 1;
+            while (bounds.outWidth > 0 && bounds.outHeight > 0
+                    && Math.max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= targetEdge) sample *= 2;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = sample;
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
             if (bitmap != null) coverCache.put(name, bitmap);
             return bitmap;
         } catch (Exception error) {

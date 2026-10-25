@@ -10,12 +10,17 @@ import android.provider.DocumentsContract;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** SAF storage for the existing Documents/NovelReader library format. */
 final class NovelStorage {
@@ -26,16 +31,25 @@ final class NovelStorage {
     private static final String COVER_FOLDER = ".covers";
     private static final String NO_MEDIA_FILE = ".nomedia";
     private static final String DIRECTORY_MIME = "vnd.android.document/directory";
+    private static final long MAX_COVER_CACHE_BYTES = 64L * 1024L * 1024L;
 
     private final MainActivity activity;
     private final SharedPreferences preferences;
     private final File legacyPrivateCoverDirectory;
+    private final File coverCacheDirectory;
+    private final Map<String, Uri> coverDocuments = new HashMap<>();
+    private Uri cachedCoverRoot;
+    private Uri cachedCoverDirectory;
+    private boolean coverDirectoryResolved;
+    private Uri indexedCoverDirectory;
+    private boolean coverIndexLoaded;
     private String lastError = "";
 
     NovelStorage(MainActivity activity) {
         this.activity = activity;
         preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         legacyPrivateCoverDirectory = new File(activity.getFilesDir(), "covers");
+        coverCacheDirectory = new File(activity.getCacheDir(), "covers");
     }
 
     boolean isReady() {
@@ -78,6 +92,7 @@ final class NovelStorage {
             folderId = DocumentsContract.getDocumentId(folder);
         }
         preferences.edit().putString(TREE_URI, selectedTree.toString()).putString(FOLDER_ID, folderId).apply();
+        clearCoverDocumentCache();
     }
 
     String read(String fileName) throws Exception {
@@ -130,10 +145,17 @@ final class NovelStorage {
 
     byte[] readImage(String fileName) throws Exception {
         if (!supportedImageName(fileName)) throw new IOException("Invalid cover image name.");
+        byte[] cached = readCoverCache(fileName);
+        if (cached != null) return cached;
+
         Uri coverDir = coverDirectoryUri(false);
         if (coverDir != null) {
-            Uri cover = findChild(coverDir, fileName);
-            if (cover != null) return readDocumentBytes(cover, "The cover provider returned no image stream.");
+            Uri cover = findCoverDocument(coverDir, fileName);
+            if (cover != null) {
+                byte[] contents = readDocumentBytes(cover, "The cover provider returned no image stream.");
+                writeCoverCache(fileName, contents);
+                return contents;
+            }
         }
 
         byte[] legacyShared = readLegacyImage(fileName);
@@ -160,15 +182,22 @@ final class NovelStorage {
         try {
             Uri coverDir = coverDirectoryUri(true);
             ensureMediaHidden(coverDir);
-            Uri cover = findChild(coverDir, fileName);
-            if (cover == null) cover = DocumentsContract.createDocument(
-                    activity.getContentResolver(), coverDir, "image/jpeg", fileName);
+            Uri cover = findCoverDocument(coverDir, fileName);
+            if (cover == null) {
+                cover = DocumentsContract.createDocument(activity.getContentResolver(), coverDir, "image/jpeg", fileName);
+                if (cover != null) {
+                    coverDocuments.put(fileName, cover);
+                    coverIndexLoaded = true;
+                    indexedCoverDirectory = coverDir;
+                }
+            }
             if (cover == null) throw new IOException("The storage provider could not create the cover image.");
             try (OutputStream out = activity.getContentResolver().openOutputStream(cover, "rwt")) {
                 if (out == null) throw new IOException("The storage provider returned no cover output stream.");
                 out.write(contents);
                 out.flush();
             }
+            writeCoverCache(fileName, contents);
             lastError = "";
             return true;
         } catch (Exception error) {
@@ -180,11 +209,17 @@ final class NovelStorage {
 
     void deleteImage(String fileName) {
         if (!supportedImageName(fileName)) return;
+        File cachedFile = coverCacheFile(fileName);
+        if (cachedFile.exists() && !cachedFile.delete()) {
+            android.util.Log.w("NovelReader", "Could not remove cached cover " + fileName);
+        }
         try {
             Uri coverDir = coverDirectoryUri(false);
             if (coverDir != null) {
-                Uri cover = findChild(coverDir, fileName);
-                if (cover != null) DocumentsContract.deleteDocument(activity.getContentResolver(), cover);
+                Uri cover = findCoverDocument(coverDir, fileName);
+                if (cover != null && DocumentsContract.deleteDocument(activity.getContentResolver(), cover)) {
+                    coverDocuments.remove(fileName);
+                }
             }
             deleteLegacyImage(fileName);
             File oldFile = legacyPrivateCoverFile(fileName);
@@ -244,11 +279,24 @@ final class NovelStorage {
             if (create) throw new IOException("No NovelReader folder is selected.");
             return null;
         }
+        if (root.equals(cachedCoverRoot) && coverDirectoryResolved) {
+            if (cachedCoverDirectory != null) return cachedCoverDirectory;
+            if (!create) return null;
+        } else {
+            cachedCoverRoot = root;
+            cachedCoverDirectory = null;
+            coverDirectoryResolved = false;
+            clearCoverIndex();
+        }
         Uri covers = findChild(root, COVER_FOLDER);
         if (covers == null && create) {
             covers = DocumentsContract.createDocument(activity.getContentResolver(), root,
                     DIRECTORY_MIME, COVER_FOLDER);
         }
+        cachedCoverRoot = root;
+        cachedCoverDirectory = covers;
+        coverDirectoryResolved = true;
+        if (covers != null && !covers.equals(indexedCoverDirectory)) clearCoverIndex();
         if (covers == null) {
             if (create) throw new IOException("Could not create NovelReader/.covers.");
             return null;
@@ -261,10 +309,105 @@ final class NovelStorage {
     }
 
     private void ensureMediaHidden(Uri coverDir) throws Exception {
-        Uri marker = findChild(coverDir, NO_MEDIA_FILE);
+        Uri marker = findCoverDocument(coverDir, NO_MEDIA_FILE);
         if (marker == null) marker = DocumentsContract.createDocument(
                 activity.getContentResolver(), coverDir, "application/octet-stream", NO_MEDIA_FILE);
         if (marker == null) throw new IOException("Could not add the media exclusion marker.");
+        coverDocuments.put(NO_MEDIA_FILE, marker);
+        coverIndexLoaded = true;
+        indexedCoverDirectory = coverDir;
+    }
+
+    private Uri findCoverDocument(Uri coverDir, String fileName) throws Exception {
+        if (!coverDir.equals(indexedCoverDirectory)) clearCoverIndex();
+        if (!coverIndexLoaded) {
+            coverDocuments.clear();
+            String id = DocumentsContract.getDocumentId(coverDir);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(coverDir, id);
+            String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME };
+            try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
+                if (cursor == null) throw new IOException("The cover provider could not list the cover folder.");
+                int idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                int nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                while (cursor.moveToNext()) {
+                    String name = cursor.getString(nameColumn);
+                    String documentId = cursor.getString(idColumn);
+                    if (name != null && documentId != null) {
+                        coverDocuments.put(name, DocumentsContract.buildDocumentUriUsingTree(coverDir, documentId));
+                    }
+                }
+            }
+            indexedCoverDirectory = coverDir;
+            coverIndexLoaded = true;
+        }
+        return coverDocuments.get(fileName);
+    }
+
+    private void clearCoverDocumentCache() {
+        cachedCoverRoot = null;
+        cachedCoverDirectory = null;
+        coverDirectoryResolved = false;
+        clearCoverIndex();
+    }
+
+    private void clearCoverIndex() {
+        coverDocuments.clear();
+        indexedCoverDirectory = null;
+        coverIndexLoaded = false;
+    }
+
+    private byte[] readCoverCache(String fileName) {
+        File file = coverCacheFile(fileName);
+        if (!file.isFile()) return null;
+        try (InputStream input = new FileInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            copy(input, output);
+            file.setLastModified(System.currentTimeMillis());
+            return output.toByteArray();
+        } catch (IOException error) {
+            android.util.Log.w("NovelReader", "Could not read cached cover " + fileName, error);
+            if (!file.delete()) android.util.Log.w("NovelReader", "Could not remove invalid cover cache " + fileName);
+            return null;
+        }
+    }
+
+    private void writeCoverCache(String fileName, byte[] contents) {
+        if (contents == null) return;
+        File target = coverCacheFile(fileName);
+        if (!coverCacheDirectory.isDirectory() && !coverCacheDirectory.mkdirs()) return;
+        File temporary = new File(coverCacheDirectory, fileName + ".tmp");
+        try (FileOutputStream output = new FileOutputStream(temporary)) {
+            output.write(contents);
+            output.flush();
+            output.getFD().sync();
+            if (!temporary.renameTo(target)) throw new IOException("Could not finalize cover cache file.");
+            trimCoverCache(target);
+        } catch (IOException error) {
+            if (temporary.exists() && !temporary.delete()) {
+                android.util.Log.w("NovelReader", "Could not remove temporary cover cache", error);
+            }
+            android.util.Log.w("NovelReader", "Could not cache cover " + fileName, error);
+        }
+    }
+
+    private void trimCoverCache(File keep) {
+        File[] files = coverCacheDirectory.listFiles((directory, name) -> name.endsWith(".jpg"));
+        if (files == null) return;
+        long total = 0;
+        for (File file : files) total += file.length();
+        if (total <= MAX_COVER_CACHE_BYTES) return;
+        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
+        for (File file : files) {
+            if (total <= MAX_COVER_CACHE_BYTES) break;
+            if (file.equals(keep)) continue;
+            long length = file.length();
+            if (file.delete()) total -= length;
+        }
+    }
+
+    private File coverCacheFile(String fileName) {
+        return new File(coverCacheDirectory, fileName);
     }
 
     private byte[] readLegacyImage(String fileName) throws Exception {
