@@ -67,6 +67,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.Collections;
 import java.util.HashSet;
@@ -136,7 +137,7 @@ public final class MainActivity extends Activity {
             GradientDrawable.Orientation.TL_BR, GradientDrawable.Orientation.TL_BR
     };
     private static final int THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
-    private static final String VERSION = "1.2.6";
+    private static final String VERSION = "1.2.8";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -152,6 +153,8 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedBookIds = new LinkedHashSet<>();
     private final Deque<String> chapterUndoStack = new ArrayDeque<>();
     private final Set<Long> seenRecommendationIds = new HashSet<>();
+    private final Set<String> favoriteGenrePreferences = new LinkedHashSet<>();
+    private final Set<String> favoriteBookIds = new LinkedHashSet<>();
     private final BookRecommendationEngine.UserPreferences recommendationPreferences =
             new BookRecommendationEngine.UserPreferences();
     private final BookRecommendationEngine recommendationEngine =
@@ -218,7 +221,6 @@ public final class MainActivity extends Activity {
     private long lastUndoAt;
     private int lastUndoEnd = -1;
     private SharedPreferences recommendationState;
-    private BookRecommendationEngine.Book currentRecommendation;
     private OnBackInvokedCallback systemBackCallback;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -625,6 +627,10 @@ public final class MainActivity extends Activity {
             closeDrawer();
             showRecommendation();
         }), new LinearLayout.LayoutParams(-1, dp(52)));
+        drawerPanel.addView(textButton("آموزش مدل", "settings", PURPLE, () -> {
+            closeDrawer();
+            showTraining();
+        }), new LinearLayout.LayoutParams(-1, dp(52)));
         View spacer = new View(this);
         drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
         drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
@@ -717,6 +723,7 @@ public final class MainActivity extends Activity {
         else if ("reader".equals(page)) showReader();
         else if ("settings".equals(page)) showSettings();
         else if ("recommendations".equals(page)) showRecommendation();
+        else if ("training".equals(page)) showTraining();
         else if ("hiddenBooks".equals(page)) showHiddenBooks();
         else if ("collectionBooks".equals(page)) showBookShelf(false);
         else if ("collections".equals(page)) showCollections();
@@ -760,7 +767,8 @@ public final class MainActivity extends Activity {
     }
 
     private boolean drawerSwipeAvailable() {
-        return "collections".equals(page) || "collectionBooks".equals(page) || "hiddenBooks".equals(page);
+        return "collections".equals(page) || "collectionBooks".equals(page) || "hiddenBooks".equals(page)
+                || "settings".equals(page) || "recommendations".equals(page) || "training".equals(page);
     }
 
     private void beginDrawerGesture(float progress) {
@@ -786,7 +794,6 @@ public final class MainActivity extends Activity {
 
     private void showRecommendation() {
         page = "recommendations";
-        currentRecommendation = null;
         appColumn.removeAllViews();
         appColumn.addView(makeHeader("پیشنهاد کتاب", "", "menu", null, this::openDrawer, null));
         LinearLayout body = new LinearLayout(this);
@@ -812,7 +819,6 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        currentRecommendation = book;
         seenRecommendationIds.add(book.id);
         persistRecommendationState();
         NativeIconView bookIcon = new NativeIconView(this, "book", PURPLE);
@@ -833,18 +839,225 @@ public final class MainActivity extends Activity {
 
         View spacer = new View(this);
         body.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
-        LinearLayout feedback = new LinearLayout(this);
-        feedback.setGravity(Gravity.CENTER);
-        View reject = textButton("نمی‌پسندم", "close", RED,
-                () -> recordRecommendationFeedback(false));
-        View accept = textButton("می‌پسندم", "check", GREEN,
-                () -> recordRecommendationFeedback(true));
-        feedback.addView(reject, new LinearLayout.LayoutParams(0, dp(52), 1));
-        View gap = new View(this);
-        feedback.addView(gap, new LinearLayout.LayoutParams(dp(10), 1));
-        feedback.addView(accept, new LinearLayout.LayoutParams(0, dp(52), 1));
-        body.addView(feedback, new LinearLayout.LayoutParams(-1, dp(58)));
+        body.addView(textButton("پیشنهاد بعدی", "next", PURPLE, this::showRecommendation),
+                new LinearLayout.LayoutParams(-1, dp(52)));
         appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void showTraining() {
+        page = "training";
+        appColumn.removeAllViews();
+        appColumn.addView(makeHeader("آموزش مدل", "", "menu", null, this::openDrawer, null));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(18), dp(14), dp(18), dp(24));
+        body.addView(text("ژانرهای مورد علاقه", 16, TEXT), fieldParams());
+        TextView hint = text("این ژانرها در پیشنهادهای بعدی اولویت می‌گیرند.", 13, MUTED);
+        body.addView(hint, fieldParams());
+
+        EditText genreSearch = edit("جستجو یا افزودن ژانر", false);
+        genreSearch.setSingleLine(true);
+        LinearLayout genreSearchRow = new LinearLayout(this);
+        genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
+        genreSearchRow.addView(clearableInput(genreSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
+        FrameLayout addGenre = iconButton("add", PURPLE, false, () -> { });
+        LinearLayout.LayoutParams addGenreParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        addGenreParams.leftMargin = dp(7);
+        genreSearchRow.addView(addGenre, addGenreParams);
+        body.addView(genreSearchRow, fieldParams());
+
+        Set<String> selectedGenres = new LinkedHashSet<>(favoriteGenrePreferences);
+        ArrayList<String> availableGenres = new ArrayList<>();
+        JSONArray knownGenres = allGenres();
+        for (int i = 0; i < knownGenres.length(); i++) availableGenres.add(knownGenres.optString(i));
+        for (String savedGenre : selectedGenres) addGenreName(availableGenres, savedGenre);
+        GenreCloud cloud = new GenreCloud(this);
+        Runnable renderGenres = () -> cloud.showGenres(genreArray(availableGenres), selectedGenres,
+                genreSearch.getText().toString());
+        renderGenres.run();
+        genreSearch.addTextChangedListener(watcher(renderGenres));
+        addGenre.setOnClickListener(v -> {
+            String value = titleCaseWords(genreSearch.getText().toString());
+            if (value.isEmpty()) { genreSearch.setError("نام ژانر را بنویس"); return; }
+            String existing = findGenreName(availableGenres, value);
+            String chosen = existing == null ? value : existing;
+            addGenreName(availableGenres, chosen);
+            selectedGenres.add(chosen);
+            genreSearch.setText("");
+            renderGenres.run();
+        });
+        body.addView(cloud);
+
+        TextView booksTitle = text("کتاب‌های مورد علاقه", 16, TEXT);
+        booksTitle.setPadding(0, dp(12), 0, dp(4));
+        body.addView(booksTitle);
+        TextView selectedBooksSummary = text(favoriteBookCountText(favoriteBookIds.size()), 13, MUTED);
+        body.addView(selectedBooksSummary, fieldParams());
+        body.addView(textButton("انتخاب کتاب‌ها", "book", PURPLE, () ->
+                showFavoriteBooksPicker(favoriteBookIds, () ->
+                        selectedBooksSummary.setText(favoriteBookCountText(favoriteBookIds.size())))), fieldParams());
+
+        TextView bookGenreHint = text("ژانرهای کتاب‌های انتخاب‌شده هم به‌طور خودکار اولویت می‌گیرند.", 13, MUTED);
+        body.addView(bookGenreHint, fieldParams());
+        body.addView(textButton("ذخیرهٔ علاقه‌مندی‌ها", "check", GREEN, () ->
+                saveModelPreferences(selectedGenres, favoriteBookIds)), fieldParams());
+        scroll.addView(body);
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private String favoriteBookCountText(int count) {
+        return count == 0 ? "هنوز کتابی انتخاب نشده" : count + " کتاب انتخاب شده";
+    }
+
+    private void showFavoriteBooksPicker(Set<String> selectedIds, Runnable onApplied) {
+        List<JSONObject> choices = new ArrayList<>();
+        JSONArray books = library.optJSONArray("books");
+        if (books != null) for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            JSONArray genres = book == null ? null : book.optJSONArray("genres");
+            if (book != null && !book.optBoolean("hidden", false) && genres != null && genres.length() > 0) {
+                choices.add(book);
+            }
+        }
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        EditText search = edit("جستجوی کتاب", false);
+        search.setSingleLine(true);
+        content.addView(clearableInput(search), fieldParams());
+        ListView list = new ListView(this);
+        list.setDivider(null);
+        list.setVerticalScrollBarEnabled(false);
+        content.addView(list, new LinearLayout.LayoutParams(-1, dp(340)));
+        Set<String> draftSelection = new LinkedHashSet<>(selectedIds);
+        final String[] query = {""};
+        BaseAdapter adapter = new BaseAdapter() {
+            private List<JSONObject> visibleBooks() {
+                List<JSONObject> visible = new ArrayList<>();
+                for (JSONObject book : choices) {
+                    String text = (book.optString("title") + " " + book.optString("author"))
+                            .toLowerCase(Locale.ROOT);
+                    if (text.contains(query[0])) visible.add(book);
+                }
+                return visible;
+            }
+            @Override public int getCount() { return visibleBooks().size(); }
+            @Override public Object getItem(int position) { return visibleBooks().get(position); }
+            @Override public long getItemId(int position) { return position; }
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                JSONObject book = visibleBooks().get(position);
+                String id = book.optString("id");
+                boolean selected = draftSelection.contains(id);
+                LinearLayout row = new LinearLayout(MainActivity.this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(10), dp(5), dp(10), dp(5));
+                NativeIconView mark = new NativeIconView(MainActivity.this, selected ? "check" : "select",
+                        selected ? PURPLE : MUTED);
+                row.addView(mark, new LinearLayout.LayoutParams(dp(28), dp(28)));
+                LinearLayout labels = new LinearLayout(MainActivity.this);
+                labels.setOrientation(LinearLayout.VERTICAL);
+                TextView title = text(book.optString("title"), 14, TEXT);
+                title.setMaxLines(1);
+                title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                labels.addView(title);
+                TextView author = text(book.optString("author"), 12, MUTED);
+                author.setMaxLines(1);
+                author.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                labels.addView(author);
+                LinearLayout.LayoutParams labelsParams = new LinearLayout.LayoutParams(0, -2, 1);
+                labelsParams.leftMargin = dp(10);
+                row.addView(labels, labelsParams);
+                row.setBackground(roundDrawable(SURFACE, Color.TRANSPARENT, 10));
+                return row;
+            }
+        };
+        list.setAdapter(adapter);
+        list.setOnItemClickListener((parent, view, position, itemId) -> {
+            JSONObject book = (JSONObject) adapter.getItem(position);
+            String id = book.optString("id");
+            if (!draftSelection.add(id)) draftSelection.remove(id);
+            adapter.notifyDataSetChanged();
+        });
+        search.addTextChangedListener(watcher(() -> {
+            query[0] = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            adapter.notifyDataSetChanged();
+        }));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("کتاب‌های مورد علاقه")
+                .setView(dialogPadding(content)).setNegativeButton("لغو", null)
+                .setPositiveButton("اعمال", null).create();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
+            selectedIds.clear();
+            selectedIds.addAll(draftSelection);
+            if (onApplied != null) onApplied.run();
+            dialog.dismiss();
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void saveModelPreferences(Set<String> selectedGenres, Set<String> selectedBooks) {
+        Set<String> pickedBooks = new HashSet<>(selectedBooks);
+        favoriteGenrePreferences.clear();
+        for (String genre : selectedGenres) {
+            String normalized = titleCaseWords(genre);
+            if (!normalized.isEmpty()) favoriteGenrePreferences.add(normalized);
+        }
+        favoriteBookIds.clear();
+        favoriteBookIds.addAll(pickedBooks);
+
+        Set<String> preferredGenres = new LinkedHashSet<>();
+        for (String genre : favoriteGenrePreferences) addGenreName(preferredGenres, genre);
+        JSONArray books = library.optJSONArray("books");
+        if (books != null) for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book == null || !favoriteBookIds.contains(book.optString("id"))) continue;
+            JSONArray genres = book.optJSONArray("genres");
+            if (genres != null) for (int j = 0; j < genres.length(); j++) {
+                addGenreName(preferredGenres, genres.optString(j));
+            }
+        }
+
+        recommendationPreferences.genreWeights.clear();
+        JSONArray available = allGenres();
+        for (int i = 0; i < available.length(); i++) {
+            String genre = available.optString(i);
+            recommendationPreferences.genreWeights.put(genre,
+                    containsGenre(preferredGenres, genre) ? 30 : 10);
+        }
+        for (String genre : preferredGenres) {
+            String display = findGenreName(available, genre);
+            recommendationPreferences.genreWeights.put(display == null ? genre : display, 30);
+        }
+        persistRecommendationState();
+        toast("علاقه‌مندی‌ها ذخیره شد و پیشنهادها بر اساس آن تنظیم شدند.");
+    }
+
+    private void addGenreName(Collection<String> genres, String value) {
+        String candidate = value == null ? "" : value.trim();
+        if (candidate.isEmpty()) return;
+        for (String genre : genres) if (genre.equalsIgnoreCase(candidate)) return;
+        genres.add(candidate);
+    }
+
+    private String findGenreName(Collection<String> genres, String value) {
+        for (String genre : genres) if (genre.equalsIgnoreCase(value)) return genre;
+        return null;
+    }
+
+    private String findGenreName(JSONArray genres, String value) {
+        for (int i = 0; i < genres.length(); i++) {
+            String genre = genres.optString(i);
+            if (genre.equalsIgnoreCase(value)) return genre;
+        }
+        return null;
+    }
+
+    private boolean containsGenre(Collection<String> genres, String value) {
+        return findGenreName(genres, value) != null;
     }
 
     private List<BookRecommendationEngine.Book> recommendationBooks() {
@@ -870,14 +1083,6 @@ public final class MainActivity extends Activity {
         return result;
     }
 
-    private void recordRecommendationFeedback(boolean accepted) {
-        if (currentRecommendation == null) return;
-        recommendationEngine.recordFeedback(currentRecommendation.genre, accepted);
-        currentRecommendation = null;
-        persistRecommendationState();
-        showRecommendation();
-    }
-
     private void loadRecommendationState() {
         if (recommendationState == null) return;
         try {
@@ -889,11 +1094,19 @@ public final class MainActivity extends Activity {
             }
         } catch (Exception ignored) { }
         Set<String> savedIds = recommendationState.getStringSet("seen_books", Collections.emptySet());
-        if (savedIds == null) return;
-        for (String id : savedIds) {
-            try { seenRecommendationIds.add(Long.parseLong(id)); }
-            catch (NumberFormatException ignored) { }
+        if (savedIds != null) {
+            for (String id : savedIds) {
+                try { seenRecommendationIds.add(Long.parseLong(id)); }
+                catch (NumberFormatException ignored) { }
+            }
         }
+        Set<String> savedGenres = recommendationState.getStringSet("favorite_genres", Collections.emptySet());
+        if (savedGenres != null) for (String genre : savedGenres) {
+            String normalized = titleCaseWords(genre);
+            if (!normalized.isEmpty()) favoriteGenrePreferences.add(normalized);
+        }
+        Set<String> savedBookIds = recommendationState.getStringSet("favorite_book_ids", Collections.emptySet());
+        if (savedBookIds != null) favoriteBookIds.addAll(savedBookIds);
     }
 
     private void persistRecommendationState() {
@@ -906,7 +1119,9 @@ public final class MainActivity extends Activity {
         Set<String> ids = new HashSet<>();
         for (Long id : seenRecommendationIds) ids.add(Long.toString(id));
         recommendationState.edit().putString("genre_weights", weights.toString())
-                .putStringSet("seen_books", ids).apply();
+                .putStringSet("seen_books", ids)
+                .putStringSet("favorite_genres", new HashSet<>(favoriteGenrePreferences))
+                .putStringSet("favorite_book_ids", new HashSet<>(favoriteBookIds)).apply();
     }
 
     private JSONArray collectionArray() {
@@ -2044,7 +2259,7 @@ public final class MainActivity extends Activity {
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) { if (returnedFromHiddenBooks) showHiddenBooks(); else showBookShelf(false); }
         else if ("collectionBooks".equals(page) || "hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
-        else if ("settings".equals(page) || "recommendations".equals(page)) showDashboard();
+        else if ("settings".equals(page) || "recommendations".equals(page) || "training".equals(page)) showDashboard();
         else super.onBackPressed();
     }
 

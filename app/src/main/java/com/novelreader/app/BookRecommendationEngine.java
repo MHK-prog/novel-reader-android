@@ -87,13 +87,6 @@ final class BookRecommendationEngine {
         return candidates.isEmpty() ? null : candidates.get(random.nextInt(candidates.size()));
     }
 
-    void recordFeedback(String genre, boolean accepted) {
-        String key = normalizeGenre(genre);
-        int current = preferences.weightFor(key);
-        long changed = (long) current + (accepted ? 4 : -2);
-        preferences.genreWeights.put(key, (int) Math.max(1, Math.min(Integer.MAX_VALUE, changed)));
-    }
-
     private List<Book> unseen(List<Book> books, Set<Long> seenBookIds) {
         List<Book> result = new ArrayList<>();
         if (books == null) return result;
