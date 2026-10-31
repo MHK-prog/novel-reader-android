@@ -47,6 +47,7 @@ final class NativeIconView extends View {
             case "edit": resourceName = "pencil"; break;
             case "book": resourceName = "open_book"; break;
             case "help": resourceName = "help"; break;
+            case "undo": resourceName = "undo"; break;
             case "check": resourceName = "check"; break;
             case "close": resourceName = "close"; break;
             case "scrolltop": resourceName = "direction"; rotation = 270f; break;
