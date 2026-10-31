@@ -51,6 +51,7 @@ import android.widget.AbsListView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridView;
+import android.widget.GridLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -147,7 +148,7 @@ public final class MainActivity extends Activity {
     private int accentIndex;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Set<String> activeTagFilter = new HashSet<>();
+    private final Set<String> activeGenreFilter = new HashSet<>();
     private final Set<String> selectedBookIds = new LinkedHashSet<>();
     private final Deque<String> chapterUndoStack = new ArrayDeque<>();
     private final Set<Long> seenRecommendationIds = new HashSet<>();
@@ -190,7 +191,7 @@ public final class MainActivity extends Activity {
     private TextView titleView;
     private TextView subtitleView;
     private EditText searchField;
-    private FrameLayout tagFilterButton;
+    private FrameLayout genreFilterButton;
     private GridView booksGrid;
     private GridView collectionsGrid;
     private ListView chaptersList;
@@ -499,14 +500,20 @@ public final class MainActivity extends Activity {
                     JSONObject book = children.optJSONObject(b);
                     if (book != null) {
                         if (book.optString("author").isEmpty()) book.put("author", work.optString("author"));
-                        if (book.optJSONArray("tags") == null) book.put("tags", new JSONArray());
+                        if (book.optJSONArray("genres") == null && book.optJSONArray("tags") == null) {
+                            book.put("genres", new JSONArray());
+                        }
                         books.put(book);
                     }
                 }
             }
         }
-        JSONArray tags = library.optJSONArray("tags");
-        if (tags == null) tags = new JSONArray();
+        JSONArray genres = library.optJSONArray("genres");
+        if (genres == null) genres = new JSONArray();
+        JSONArray legacyTags = library.optJSONArray("tags");
+        if (legacyTags != null) {
+            for (int i = 0; i < legacyTags.length(); i++) appendUniqueGenre(genres, legacyTags.optString(i));
+        }
         JSONArray collections = library.optJSONArray("collections");
         if (collections == null) collections = new JSONArray();
         JSONObject otherCollection = null;
@@ -521,12 +528,16 @@ public final class MainActivity extends Activity {
             otherCollection = new JSONObject().put("id", "other").put("title", "سایر");
             collections.put(otherCollection);
         }
-        library.put("books", books).put("tags", tags).put("collections", collections);
+        library.put("books", books).put("genres", genres).put("collections", collections);
+        library.remove("tags");
         activeCollectionId = "other";
         Set<String> all = new HashSet<>();
         Set<Long> recommendationIds = new HashSet<>();
         long nextRecommendationId = 1;
-        for (int i = 0; i < tags.length(); i++) { String tag = tags.optString(i).trim(); if (!tag.isEmpty()) all.add(tag); }
+        for (int i = 0; i < genres.length(); i++) {
+            String genre = genres.optString(i).trim();
+            if (!genre.isEmpty() && !"Other".equalsIgnoreCase(genre)) all.add(genre);
+        }
         for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
             if (book == null) continue;
@@ -541,14 +552,23 @@ public final class MainActivity extends Activity {
             } else if (recommendationId >= nextRecommendationId && recommendationId < Long.MAX_VALUE) {
                 nextRecommendationId = recommendationId + 1;
             }
-            if (book.optString("genre").trim().isEmpty()) book.put("genre", "Other");
             String collectionId = book.optString("collectionId", "other");
             if (findCollectionById(collectionId) == null) collectionId = "other";
             book.put("collectionId", collectionId);
-            if (book.optJSONArray("tags") == null) book.put("tags", new JSONArray());
             book.put("hidden", book.optBoolean("hidden", false));
-            JSONArray bookTags = book.getJSONArray("tags");
-            for (int j = 0; j < bookTags.length(); j++) if (!bookTags.optString(j).trim().isEmpty()) all.add(bookTags.optString(j).trim());
+            JSONArray bookGenres = book.optJSONArray("genres");
+            if (bookGenres == null) bookGenres = book.optJSONArray("tags");
+            if (bookGenres == null) bookGenres = new JSONArray();
+            book.put("genres", bookGenres);
+            book.remove("tags");
+            String oldGenre = book.optString("genre", "").trim();
+            if (!oldGenre.isEmpty() && !"Other".equalsIgnoreCase(oldGenre)) appendUniqueGenre(bookGenres, oldGenre);
+            book.remove("genre");
+            for (int j = bookGenres.length() - 1; j >= 0; j--) {
+                String genre = bookGenres.optString(j).trim();
+                if (genre.isEmpty() || "Other".equalsIgnoreCase(genre)) bookGenres.remove(j);
+                else all.add(genre);
+            }
             JSONArray chapters = book.optJSONArray("chapters");
             if (chapters == null) { chapters = new JSONArray(); book.put("chapters", chapters); }
             for (int j = 0; j < chapters.length(); j++) {
@@ -560,11 +580,20 @@ public final class MainActivity extends Activity {
                 chapter.put("scroll", Math.max(0, chapter.optInt("scroll", 0)));
             }
         }
-        JSONArray cleanTags = new JSONArray();
+        JSONArray cleanGenres = new JSONArray();
         List<String> sorted = new ArrayList<>(all);
         Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
-        for (String tag : sorted) cleanTags.put(tag);
-        library.put("tags", cleanTags);
+        for (String genre : sorted) cleanGenres.put(genre);
+        library.put("genres", cleanGenres);
+    }
+
+    private void appendUniqueGenre(JSONArray genres, String value) {
+        String candidate = value == null ? "" : value.trim();
+        if (candidate.isEmpty() || "Other".equalsIgnoreCase(candidate)) return;
+        for (int i = 0; i < genres.length(); i++) {
+            if (candidate.equalsIgnoreCase(genres.optString(i).trim())) return;
+        }
+        genres.put(candidate);
     }
 
     private boolean saveLibrary() {
@@ -580,7 +609,7 @@ public final class MainActivity extends Activity {
         drawerPanel.addView(text("فهرست", 20, TEXT), new LinearLayout.LayoutParams(-1, dp(56)));
         drawerPanel.addView(textButton("کتابخانه مجموعه‌ها", "folder", PURPLE, () -> {
             selectedBookIds.clear();
-            activeTagFilter.clear();
+            activeGenreFilter.clear();
             closeDrawer();
             showDashboard();
         }), new LinearLayout.LayoutParams(-1, dp(52)));
@@ -588,7 +617,7 @@ public final class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(-1, dp(52)));
         drawerPanel.addView(textButton("کتابخانه مخفی", "hide", PURPLE, () -> {
             selectedBookIds.clear();
-            activeTagFilter.clear();
+            activeGenreFilter.clear();
             closeDrawer();
             showHiddenBooks();
         }), new LinearLayout.LayoutParams(-1, dp(52)));
@@ -604,7 +633,7 @@ public final class MainActivity extends Activity {
     private void showSettings() {
         page = "settings";
         appColumn.removeAllViews();
-        appColumn.addView(makeHeader("تنظیمات", "", null, null, null, null));
+        appColumn.addView(makeHeader("تنظیمات", "", "menu", null, this::openDrawer, null));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false);
         LinearLayout body = new LinearLayout(this);
@@ -632,36 +661,39 @@ public final class MainActivity extends Activity {
         TextView accentTitle = text("تم رنگی", 15, MUTED);
         accentTitle.setPadding(0, dp(13), 0, dp(7));
         body.addView(accentTitle);
-        HorizontalScrollView swatchScroll = new HorizontalScrollView(this);
-        swatchScroll.setVerticalScrollBarEnabled(false);
-        swatchScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout swatches = new LinearLayout(this);
-        swatches.setGravity(Gravity.CENTER_VERTICAL);
+        GridLayout swatches = new GridLayout(this);
+        swatches.setColumnCount(5);
+        swatches.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
         swatches.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        swatches.setPadding(dp(4), 0, dp(4), 0);
         for (int i = 0; i < THEME_COUNT; i++) {
             final int colorIndex = i;
-            FrameLayout holder = new FrameLayout(this);
-            holder.setContentDescription(themeName(i));
+            FrameLayout cell = new FrameLayout(this);
+            cell.setContentDescription(themeName(i));
             GradientDrawable swatch = new GradientDrawable();
             swatch.setShape(GradientDrawable.OVAL);
             if (i < FLAT_ACCENT_COLORS.length) swatch.setColor(FLAT_ACCENT_COLORS[i]);
             else applyGradientTheme(swatch, i, 19);
             swatch.setStroke(dp(i == accentIndex ? 3 : 1), i == accentIndex ? TEXT : 0x55777777);
-            holder.setBackground(swatch);
-            holder.setClickable(true);
-            holder.setOnClickListener(v -> {
+            FrameLayout dot = new FrameLayout(this);
+            dot.setBackground(swatch);
+            FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER);
+            cell.addView(dot, dotParams);
+            cell.setClickable(true);
+            cell.setOnClickListener(v -> {
                 accentIndex = colorIndex;
                 getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
                 applyThemeColors();
                 rerenderCurrentPage();
             });
-            LinearLayout.LayoutParams swatchParams = new LinearLayout.LayoutParams(dp(32), dp(32));
-            swatchParams.leftMargin = dp(3); swatchParams.rightMargin = dp(3);
-            swatches.addView(holder, swatchParams);
+            GridLayout.LayoutParams cellParams = new GridLayout.LayoutParams();
+            cellParams.width = dp(48);
+            cellParams.height = dp(48);
+            swatches.addView(cell, cellParams);
         }
-        swatchScroll.addView(swatches, new HorizontalScrollView.LayoutParams(-2, -1));
-        body.addView(swatchScroll, new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout swatchGridContainer = new LinearLayout(this);
+        swatchGridContainer.setGravity(Gravity.CENTER_HORIZONTAL);
+        swatchGridContainer.addView(swatches, new LinearLayout.LayoutParams(-2, -2));
+        body.addView(swatchGridContainer, fieldParams());
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     }
@@ -762,12 +794,14 @@ public final class MainActivity extends Activity {
         body.setGravity(Gravity.CENTER);
         body.setPadding(dp(24), dp(20), dp(24), dp(20));
 
-        BookRecommendationEngine.Book book = recommendationEngine.recommendBook(
-                recommendationBooks(), seenRecommendationIds);
+        List<BookRecommendationEngine.Book> availableBooks = recommendationBooks();
+        BookRecommendationEngine.Book book = recommendationEngine.recommendBook(availableBooks, seenRecommendationIds);
         if (book == null) {
-            body.addView(emptyLabel("کتاب نخوانده‌ای برای پیشنهاد باقی نمانده"),
-                    new LinearLayout.LayoutParams(-1, 0, 1));
-            if (!seenRecommendationIds.isEmpty()) {
+            String emptyMessage = availableBooks.isEmpty()
+                    ? "برای پیشنهاد، به کتاب‌ها ژانر اضافه کن"
+                    : "کتاب نخوانده‌ای برای پیشنهاد باقی نمانده";
+            body.addView(emptyLabel(emptyMessage), new LinearLayout.LayoutParams(-1, 0, 1));
+            if (!availableBooks.isEmpty() && !seenRecommendationIds.isEmpty()) {
                 body.addView(textButton("شروع دوبارهٔ پیشنهادها", "book", PURPLE, () -> {
                     seenRecommendationIds.clear();
                     persistRecommendationState();
@@ -821,9 +855,17 @@ public final class MainActivity extends Activity {
             JSONObject book = books.optJSONObject(i);
             if (book == null || book.optBoolean("hidden", false)) continue;
             long id = book.optLong("recommendationId", -1);
-            if (id > 0) result.add(new BookRecommendationEngine.Book(id,
-                    book.optString("title", "بدون عنوان"), book.optString("genre", "Other"),
-                    book.optString("author", "")));
+            JSONArray genres = book.optJSONArray("genres");
+            if (id <= 0 || genres == null) continue;
+            String title = book.optString("title", "بدون عنوان");
+            String author = book.optString("author", "");
+            Set<String> addedGenres = new HashSet<>();
+            for (int j = 0; j < genres.length(); j++) {
+                String genre = genres.optString(j).trim();
+                if (genre.isEmpty() || "Other".equalsIgnoreCase(genre)
+                        || !addedGenres.add(genre.toLowerCase(Locale.ROOT))) continue;
+                result.add(new BookRecommendationEngine.Book(id, title, genre, author));
+            }
         }
         return result;
     }
@@ -988,7 +1030,7 @@ public final class MainActivity extends Activity {
             JSONObject collection = collectionAdapter.getCollection(position);
             if (collection != null) {
                 activeCollectionId = collection.optString("id", "other");
-                activeTagFilter.clear();
+                activeGenreFilter.clear();
                 showBookShelf(false);
             }
         });
@@ -1011,9 +1053,9 @@ public final class MainActivity extends Activity {
         searchField.setSingleLine(true);
         searchField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         filters.addView(clearableInput(searchField), new LinearLayout.LayoutParams(0, dp(48), 1));
-        tagFilterButton = iconButton("filter", PURPLE, !activeTagFilter.isEmpty(), this::showTagFilter);
+        genreFilterButton = iconButton("filter", PURPLE, !activeGenreFilter.isEmpty(), this::showGenreFilter);
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(dp(48), dp(48)); fp.leftMargin = dp(8);
-        filters.addView(tagFilterButton, fp);
+        filters.addView(genreFilterButton, fp);
         appColumn.addView(filters);
         booksGrid = new GridView(this);
         booksGrid.setNumColumns(2); booksGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -1144,20 +1186,20 @@ public final class MainActivity extends Activity {
         page = "chapters"; appColumn.removeAllViews();
         appColumn.addView(makeHeader(book.optString("title"), book.optString("author"), "add", null,
                 this::addChapter, null));
-        JSONArray bookTags = book.optJSONArray("tags");
-        if (bookTags != null && bookTags.length() > 0) {
+        JSONArray bookGenres = book.optJSONArray("genres");
+        if (bookGenres != null && bookGenres.length() > 0) {
             StringBuilder labels = new StringBuilder();
-            for (int i = 0; i < bookTags.length(); i++) {
+            for (int i = 0; i < bookGenres.length(); i++) {
                 if (i > 0) labels.append("  ·  ");
-                labels.append(bookTags.optString(i));
+                labels.append(bookGenres.optString(i));
             }
-            HorizontalScrollView tagScroller = new HorizontalScrollView(this);
-            tagScroller.setVerticalScrollBarEnabled(false); tagScroller.setHorizontalScrollBarEnabled(false);
-            TextView tagLine = text(labels.toString(), 12, PURPLE);
-            tagLine.setSingleLine(true);
-            tagLine.setPadding(dp(16), 0, dp(16), 0);
-            tagScroller.addView(tagLine, new HorizontalScrollView.LayoutParams(-2, dp(36)));
-            appColumn.addView(tagScroller, new LinearLayout.LayoutParams(-1, dp(38)));
+            HorizontalScrollView genreScroller = new HorizontalScrollView(this);
+            genreScroller.setVerticalScrollBarEnabled(false); genreScroller.setHorizontalScrollBarEnabled(false);
+            TextView genreLine = text(labels.toString(), 12, PURPLE);
+            genreLine.setSingleLine(true);
+            genreLine.setPadding(dp(16), 0, dp(16), 0);
+            genreScroller.addView(genreLine, new HorizontalScrollView.LayoutParams(-2, dp(36)));
+            appColumn.addView(genreScroller, new LinearLayout.LayoutParams(-1, dp(38)));
         }
         chaptersList = new ListView(this);
         chaptersList.setDivider(null); chaptersList.setCacheColorHint(Color.TRANSPARENT); chaptersList.setBackgroundColor(BG);
@@ -1548,11 +1590,9 @@ public final class MainActivity extends Activity {
 
         EditText title = edit("نام کتاب", false); title.setText(isNew ? "" : existing.optString("title"));
         EditText author = edit("نام نویسنده", false); author.setText(isNew ? "" : existing.optString("author"));
-        EditText genre = edit("ژانر", false); genre.setText(isNew ? "" : existing.optString("genre", "Other"));
         EditText count = edit("تعداد Chapter", false); count.setInputType(InputType.TYPE_CLASS_NUMBER);
         form.addView(clearableInput(title), fieldParams());
         form.addView(clearableInput(author), fieldParams());
-        form.addView(clearableInput(genre), fieldParams());
         String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
         if (findCollectionById(initialCollection) == null) initialCollection = "other";
         final String[] chosenCollectionId = {initialCollection};
@@ -1571,30 +1611,30 @@ public final class MainActivity extends Activity {
         collectionChoice.setOnClickListener(v -> showCollectionPicker(chosenCollectionId, refreshCollectionChoice));
         form.addView(collectionChoice, fieldParams());
         if (isNew) form.addView(clearableInput(count), fieldParams());
-        TextView tagLabel = text("تگ‌ها", 14, MUTED); tagLabel.setPadding(0, dp(12), 0, dp(4)); form.addView(tagLabel);
-        LinearLayout tagSearchRow = new LinearLayout(this); tagSearchRow.setGravity(Gravity.CENTER_VERTICAL);
-        EditText tagSearch = edit("جستجو یا افزودن تگ", false); tagSearch.setSingleLine(true);
-        tagSearchRow.addView(clearableInput(tagSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
-        FrameLayout addTag = iconButton("add", PURPLE, false, () -> { });
-        LinearLayout.LayoutParams addTagParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        addTagParams.leftMargin = dp(7); tagSearchRow.addView(addTag, addTagParams);
-        TagCloud cloud = new TagCloud(this); Set<String> selected = new HashSet<>();
-        JSONArray oldTags = isNew ? null : existing.optJSONArray("tags");
-        if (oldTags != null) for (int i = 0; i < oldTags.length(); i++) selected.add(oldTags.optString(i));
-        ArrayList<String> availableTags = new ArrayList<>();
-        JSONArray existingTags = allTags();
-        for (int i = 0; i < existingTags.length(); i++) availableTags.add(existingTags.optString(i));
-        Runnable renderTags = () -> cloud.showTags(tagArray(availableTags), selected, tagSearch.getText().toString());
-        renderTags.run(); tagSearch.addTextChangedListener(watcher(renderTags));
-        addTag.setOnClickListener(v -> {
-            String value = titleCaseWords(tagSearch.getText().toString());
-            if (value.isEmpty()) { tagSearch.setError("نام تگ را بنویس"); return; }
+        TextView genreLabel = text("ژانرها", 14, MUTED); genreLabel.setPadding(0, dp(12), 0, dp(4)); form.addView(genreLabel);
+        LinearLayout genreSearchRow = new LinearLayout(this); genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
+        EditText genreSearch = edit("جستجو یا افزودن ژانر", false); genreSearch.setSingleLine(true);
+        genreSearchRow.addView(clearableInput(genreSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
+        FrameLayout addGenre = iconButton("add", PURPLE, false, () -> { });
+        LinearLayout.LayoutParams addGenreParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        addGenreParams.leftMargin = dp(7); genreSearchRow.addView(addGenre, addGenreParams);
+        GenreCloud cloud = new GenreCloud(this); Set<String> selected = new HashSet<>();
+        JSONArray oldGenres = isNew ? null : existing.optJSONArray("genres");
+        if (oldGenres != null) for (int i = 0; i < oldGenres.length(); i++) selected.add(oldGenres.optString(i));
+        ArrayList<String> availableGenres = new ArrayList<>();
+        JSONArray existingGenres = allGenres();
+        for (int i = 0; i < existingGenres.length(); i++) availableGenres.add(existingGenres.optString(i));
+        Runnable renderGenres = () -> cloud.showGenres(genreArray(availableGenres), selected, genreSearch.getText().toString());
+        renderGenres.run(); genreSearch.addTextChangedListener(watcher(renderGenres));
+        addGenre.setOnClickListener(v -> {
+            String value = titleCaseWords(genreSearch.getText().toString());
+            if (value.isEmpty()) { genreSearch.setError("نام ژانر را بنویس"); return; }
             boolean found = false;
-            for (String tag : availableTags) if (tag.equalsIgnoreCase(value)) { selected.add(tag); found = true; break; }
-            if (!found) { availableTags.add(value); selected.add(value); }
-            tagSearch.setText(""); renderTags.run();
+            for (String existingGenre : availableGenres) if (existingGenre.equalsIgnoreCase(value)) { selected.add(existingGenre); found = true; break; }
+            if (!found) { availableGenres.add(value); selected.add(value); }
+            genreSearch.setText(""); renderGenres.run();
         });
-        form.addView(tagSearchRow, fieldParams()); form.addView(cloud);
+        form.addView(genreSearchRow, fieldParams()); form.addView(cloud);
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false); scroll.addView(form);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle(isNew ? "افزودن کتاب" : "ویرایش کتاب")
@@ -1607,8 +1647,6 @@ public final class MainActivity extends Activity {
             String bookTitle = titleCaseWords(title.getText().toString());
             if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
             String bookAuthor = titleCaseWords(author.getText().toString());
-            String bookGenre = titleCaseWords(genre.getText().toString());
-            if (bookGenre.isEmpty()) bookGenre = "Other";
             int chapterTotal = 0;
             if (isNew) {
                 String value = count.getText().toString().trim();
@@ -1620,27 +1658,27 @@ public final class MainActivity extends Activity {
                 }
             }
             LinkedHashSet<String> normalizedSelected = new LinkedHashSet<>();
-            for (String selectedTag : selected) {
-                String normalized = titleCaseWords(selectedTag);
+            for (String selectedGenre : selected) {
+                String normalized = titleCaseWords(selectedGenre);
                 if (!normalized.isEmpty()) normalizedSelected.add(normalized);
             }
-            JSONArray savedTags = new JSONArray();
-            for (String selectedTag : normalizedSelected) savedTags.put(selectedTag);
-            JSONArray globalTags = library.optJSONArray("tags");
-            if (globalTags == null) globalTags = new JSONArray();
-            for (String selectedTag : normalizedSelected) {
-                boolean found = false;
-                for (int i = 0; i < globalTags.length(); i++) if (selectedTag.equalsIgnoreCase(globalTags.optString(i))) { found = true; break; }
-                if (!found) globalTags.put(selectedTag);
+            if (normalizedSelected.isEmpty()) {
+                genreSearch.setError("حداقل یک ژانر انتخاب کن");
+                return;
             }
-            try { library.put("tags", globalTags); } catch (JSONException ignored) { }
+            JSONArray savedGenres = new JSONArray();
+            for (String selectedGenre : normalizedSelected) savedGenres.put(selectedGenre);
+            JSONArray globalGenres = library.optJSONArray("genres");
+            if (globalGenres == null) globalGenres = new JSONArray();
+            for (String selectedGenre : normalizedSelected) appendUniqueGenre(globalGenres, selectedGenre);
+            try { library.put("genres", globalGenres); } catch (JSONException ignored) { }
             if (isNew) {
                 JSONArray chapters = new JSONArray();
                 for (int i = 0; i < chapterTotal; i++) chapters.put(newChapter());
                 JSONObject book = new JSONObject();
                 try { book.put("id", UUID.randomUUID().toString()).put("recommendationId", nextRecommendationId())
-                            .put("title", bookTitle).put("author", bookAuthor).put("genre", bookGenre)
-                            .put("tags", savedTags).put("cover", pendingCoverName == null ? "" : pendingCoverName)
+                            .put("title", bookTitle).put("author", bookAuthor)
+                            .put("genres", savedGenres).put("cover", pendingCoverName == null ? "" : pendingCoverName)
                             .put("collectionId", chosenCollectionId[0]).put("hidden", false)
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
@@ -1653,8 +1691,7 @@ public final class MainActivity extends Activity {
                 dialog.dismiss(); activeBookId = book.optString("id"); returnedFromHiddenBooks = false; showChapters();
             } else {
                 putJson(existing, "title", bookTitle); putJson(existing, "author", bookAuthor);
-                putJson(existing, "genre", bookGenre);
-                putJson(existing, "tags", savedTags); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
+                putJson(existing, "genres", savedGenres); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
                 putJson(existing, "collectionId", chosenCollectionId[0]);
                 if (!saveLibrary()) {
                     try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
@@ -1696,7 +1733,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(picker);
     }
 
-    private JSONArray tagArray(List<String> values) {
+    private JSONArray genreArray(List<String> values) {
         JSONArray result = new JSONArray();
         ArrayList<String> sorted = new ArrayList<>(values);
         Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
@@ -1953,19 +1990,19 @@ public final class MainActivity extends Activity {
         catch (java.util.concurrent.RejectedExecutionException ignored) { }
     }
 
-    private void showTagFilter() {
+    private void showGenreFilter() {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8), dp(4), dp(8), dp(4));
-        EditText search = edit("جستجوی تگ‌ها", false); search.setSingleLine(true); box.addView(clearableInput(search), fieldParams());
-        TagCloud cloud = new TagCloud(this); Set<String> selected = new HashSet<>(activeTagFilter);
-        Runnable render = () -> cloud.showTags(allTags(), selected, search.getText().toString()); render.run();
+        EditText search = edit("جستجوی ژانرها", false); search.setSingleLine(true); box.addView(clearableInput(search), fieldParams());
+        GenreCloud cloud = new GenreCloud(this); Set<String> selected = new HashSet<>(activeGenreFilter);
+        Runnable render = () -> cloud.showGenres(allGenres(), selected, search.getText().toString()); render.run();
         search.addTextChangedListener(watcher(render)); box.addView(cloud);
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false); scroll.addView(box);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("فیلتر تگ‌ها").setView(dialogPadding(scroll))
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("فیلتر ژانرها").setView(dialogPadding(scroll))
                 .setNegativeButton("لغو", null).setPositiveButton("اعمال", null).create();
         dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
-            activeTagFilter.clear(); activeTagFilter.addAll(selected); dialog.dismiss();
-            styleIconButton(tagFilterButton, !activeTagFilter.isEmpty()); bookAdapter.notifyDataSetChanged();
+            activeGenreFilter.clear(); activeGenreFilter.addAll(selected); dialog.dismiss();
+            styleIconButton(genreFilterButton, !activeGenreFilter.isEmpty()); bookAdapter.notifyDataSetChanged();
         }));
         dialog.show();
         styleDialogWindow(dialog);
@@ -1980,9 +2017,9 @@ public final class MainActivity extends Activity {
         return chapter;
     }
 
-    private JSONArray allTags() {
-        JSONArray tags = library.optJSONArray("tags"); JSONArray result = new JSONArray();
-        List<String> values = new ArrayList<>(); if (tags != null) for (int i = 0; i < tags.length(); i++) values.add(tags.optString(i));
+    private JSONArray allGenres() {
+        JSONArray genres = library.optJSONArray("genres"); JSONArray result = new JSONArray();
+        List<String> values = new ArrayList<>(); if (genres != null) for (int i = 0; i < genres.length(); i++) values.add(genres.optString(i));
         Collections.sort(values, String.CASE_INSENSITIVE_ORDER); for (String value : values) result.put(value); return result;
     }
 
@@ -2566,8 +2603,8 @@ public final class MainActivity extends Activity {
                 if (!showingHiddenBooks() && !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
                 if (!(book.optString("title").toLowerCase(Locale.ROOT).contains(query)
                         || book.optString("author").toLowerCase(Locale.ROOT).contains(query))) continue;
-                JSONArray tags = book.optJSONArray("tags"); boolean match = true;
-                for (String tag : activeTagFilter) { boolean found = false; if (tags != null) for (int j = 0; j < tags.length(); j++) if (tag.equals(tags.optString(j))) found = true; if (!found) { match = false; break; } }
+                JSONArray genres = book.optJSONArray("genres"); boolean match = true;
+                for (String selectedGenre : activeGenreFilter) { boolean found = false; if (genres != null) for (int j = 0; j < genres.length(); j++) if (selectedGenre.equals(genres.optString(j))) found = true; if (!found) { match = false; break; } }
                 if (match) result.add(book);
             }
             cachedBooks = result;
@@ -2663,15 +2700,15 @@ public final class MainActivity extends Activity {
         saveLibrary(); chapterAdapter.notifyDataSetChanged();
     }
 
-    private final class TagCloud extends ViewGroup {
-        TagCloud(Context context) { super(context); setLayoutDirection(View.LAYOUT_DIRECTION_RTL); }
-        void showTags(JSONArray tags, Set<String> selected, String query) {
+    private final class GenreCloud extends ViewGroup {
+        GenreCloud(Context context) { super(context); setLayoutDirection(View.LAYOUT_DIRECTION_RTL); }
+        void showGenres(JSONArray genres, Set<String> selected, String query) {
             removeAllViews(); String q = query.trim().toLowerCase(Locale.ROOT);
-            for (int i = 0; i < tags.length(); i++) {
-                String tag = tags.optString(i); if (!tag.toLowerCase(Locale.ROOT).contains(q)) continue;
-                TextView chip = text(tag, 13, selected.contains(tag) ? contrastOnAccent() : TEXT); chip.setGravity(Gravity.CENTER); chip.setPadding(dp(14), 0, dp(14), 0);
-                chip.setBackground(roundDrawable(selected.contains(tag) ? PURPLE : SURFACE_ALT, selected.contains(tag) ? PURPLE : 0xFF40384A, 18));
-                chip.setOnClickListener(v -> { if (!selected.add(tag)) selected.remove(tag); showTags(tags, selected, query); });
+            for (int i = 0; i < genres.length(); i++) {
+                String genre = genres.optString(i); if (!genre.toLowerCase(Locale.ROOT).contains(q)) continue;
+                TextView chip = text(genre, 13, selected.contains(genre) ? contrastOnAccent() : TEXT); chip.setGravity(Gravity.CENTER); chip.setPadding(dp(14), 0, dp(14), 0);
+                chip.setBackground(roundDrawable(selected.contains(genre) ? PURPLE : SURFACE_ALT, selected.contains(genre) ? PURPLE : 0xFF40384A, 18));
+                chip.setOnClickListener(v -> { if (!selected.add(genre)) selected.remove(genre); showGenres(genres, selected, query); });
                 addView(chip, new MarginLayoutParams(-2, dp(38)));
             }
             requestLayout();

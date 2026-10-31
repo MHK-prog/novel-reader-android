@@ -53,7 +53,7 @@ final class BookRecommendationEngine {
         if (books == null || books.isEmpty()) return null;
         Map<String, List<Book>> byGenre = new LinkedHashMap<>();
         for (Book book : books) {
-            if (book == null) continue;
+            if (book == null || book.genre.isEmpty() || "Other".equalsIgnoreCase(book.genre)) continue;
             byGenre.computeIfAbsent(book.genre, ignored -> new ArrayList<>()).add(book);
             preferences.weightFor(book.genre);
         }
@@ -74,12 +74,15 @@ final class BookRecommendationEngine {
 
         List<Book> candidates = unseen(byGenre.get(selectedGenre), seenBookIds);
         if (candidates.isEmpty()) {
-            candidates = new ArrayList<>();
+            Map<Long, Book> unseenById = new LinkedHashMap<>();
             for (List<Book> genreBooks : byGenre.values()) {
                 for (Book book : genreBooks) {
-                    if (seenBookIds == null || !seenBookIds.contains(book.id)) candidates.add(book);
+                    if ((seenBookIds == null || !seenBookIds.contains(book.id)) && !unseenById.containsKey(book.id)) {
+                        unseenById.put(book.id, book);
+                    }
                 }
             }
+            candidates = new ArrayList<>(unseenById.values());
         }
         return candidates.isEmpty() ? null : candidates.get(random.nextInt(candidates.size()));
     }
@@ -101,7 +104,6 @@ final class BookRecommendationEngine {
     }
 
     private static String normalizeGenre(String genre) {
-        String value = genre == null ? "" : genre.trim();
-        return value.isEmpty() ? "Other" : value;
+        return genre == null ? "" : genre.trim();
     }
 }
