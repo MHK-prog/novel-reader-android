@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -11,6 +12,7 @@ import java.util.Set;
 /** Small weighted-by-genre recommendation helper; Android-free and dependency-free. */
 final class BookRecommendationEngine {
     private static final int DEFAULT_WEIGHT = 10;
+    private static final double EXPLORATION_RATE = 0.20;
 
     static final class Book {
         final long id;
@@ -30,7 +32,7 @@ final class BookRecommendationEngine {
         final Map<String, Integer> genreWeights = new HashMap<>();
 
         int weightFor(String genre) {
-            String key = normalizeGenre(genre);
+            String key = normalizeGenre(genre).toLowerCase(Locale.ROOT);
             Integer weight = genreWeights.get(key);
             if (weight == null) {
                 genreWeights.put(key, DEFAULT_WEIGHT);
@@ -52,12 +54,25 @@ final class BookRecommendationEngine {
     Book recommendBook(List<Book> books, Set<Long> seenBookIds) {
         if (books == null || books.isEmpty()) return null;
         Map<String, List<Book>> byGenre = new LinkedHashMap<>();
+        Map<Long, Book> unseenBooks = new LinkedHashMap<>();
         for (Book book : books) {
             if (book == null || book.genre.isEmpty() || "Other".equalsIgnoreCase(book.genre)) continue;
-            byGenre.computeIfAbsent(book.genre, ignored -> new ArrayList<>()).add(book);
+            if (seenBookIds != null && seenBookIds.contains(book.id)) continue;
+            List<Book> genreBooks = byGenre.get(book.genre);
+            if (genreBooks == null) {
+                genreBooks = new ArrayList<>();
+                byGenre.put(book.genre, genreBooks);
+            }
+            genreBooks.add(book);
+            if (!unseenBooks.containsKey(book.id)) unseenBooks.put(book.id, book);
             preferences.weightFor(book.genre);
         }
-        if (byGenre.isEmpty()) return null;
+        if (unseenBooks.isEmpty()) return null;
+
+        if (random.nextDouble() < EXPLORATION_RATE) {
+            List<Book> candidates = new ArrayList<>(unseenBooks.values());
+            return candidates.get(random.nextInt(candidates.size()));
+        }
 
         double totalWeight = 0;
         for (String genre : byGenre.keySet()) totalWeight += preferences.weightFor(genre);
@@ -72,28 +87,8 @@ final class BookRecommendationEngine {
         }
         if (selectedGenre == null) selectedGenre = byGenre.keySet().iterator().next();
 
-        List<Book> candidates = unseen(byGenre.get(selectedGenre), seenBookIds);
-        if (candidates.isEmpty()) {
-            Map<Long, Book> unseenById = new LinkedHashMap<>();
-            for (List<Book> genreBooks : byGenre.values()) {
-                for (Book book : genreBooks) {
-                    if ((seenBookIds == null || !seenBookIds.contains(book.id)) && !unseenById.containsKey(book.id)) {
-                        unseenById.put(book.id, book);
-                    }
-                }
-            }
-            candidates = new ArrayList<>(unseenById.values());
-        }
+        List<Book> candidates = byGenre.get(selectedGenre);
         return candidates.isEmpty() ? null : candidates.get(random.nextInt(candidates.size()));
-    }
-
-    private List<Book> unseen(List<Book> books, Set<Long> seenBookIds) {
-        List<Book> result = new ArrayList<>();
-        if (books == null) return result;
-        for (Book book : books) {
-            if (seenBookIds == null || !seenBookIds.contains(book.id)) result.add(book);
-        }
-        return result;
     }
 
     private static String normalizeGenre(String genre) {

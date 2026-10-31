@@ -70,6 +70,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -137,7 +138,10 @@ public final class MainActivity extends Activity {
             GradientDrawable.Orientation.TL_BR, GradientDrawable.Orientation.TL_BR
     };
     private static final int THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
-    private static final String VERSION = "1.2.8";
+    private static final int BOOK_COMPLETION_THRESHOLD = 70;
+    private static final int COMPLETION_WEIGHT_BONUS = 2;
+    private static final int MAX_GENRE_WEIGHT = 50;
+    private static final String VERSION = "1.2.9";
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -153,6 +157,7 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedBookIds = new LinkedHashSet<>();
     private final Deque<String> chapterUndoStack = new ArrayDeque<>();
     private final Set<Long> seenRecommendationIds = new HashSet<>();
+    private final Set<Long> trainedBookIds = new HashSet<>();
     private final Set<String> favoriteGenrePreferences = new LinkedHashSet<>();
     private final Set<String> favoriteBookIds = new LinkedHashSet<>();
     private final BookRecommendationEngine.UserPreferences recommendationPreferences =
@@ -481,6 +486,7 @@ public final class MainActivity extends Activity {
             return;
         }
         saveLibrary();
+        learnFromCompletedBooks();
         showDashboard();
     }
 
@@ -1008,30 +1014,7 @@ public final class MainActivity extends Activity {
         }
         favoriteBookIds.clear();
         favoriteBookIds.addAll(pickedBooks);
-
-        Set<String> preferredGenres = new LinkedHashSet<>();
-        for (String genre : favoriteGenrePreferences) addGenreName(preferredGenres, genre);
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book == null || !favoriteBookIds.contains(book.optString("id"))) continue;
-            JSONArray genres = book.optJSONArray("genres");
-            if (genres != null) for (int j = 0; j < genres.length(); j++) {
-                addGenreName(preferredGenres, genres.optString(j));
-            }
-        }
-
-        recommendationPreferences.genreWeights.clear();
-        JSONArray available = allGenres();
-        for (int i = 0; i < available.length(); i++) {
-            String genre = available.optString(i);
-            recommendationPreferences.genreWeights.put(genre,
-                    containsGenre(preferredGenres, genre) ? 30 : 10);
-        }
-        for (String genre : preferredGenres) {
-            String display = findGenreName(available, genre);
-            recommendationPreferences.genreWeights.put(display == null ? genre : display, 30);
-        }
+        rebuildRecommendationWeights();
         persistRecommendationState();
         toast("علاقه‌مندی‌ها ذخیره شد و پیشنهادها بر اساس آن تنظیم شدند.");
     }
@@ -1056,8 +1039,106 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private boolean containsGenre(Collection<String> genres, String value) {
-        return findGenreName(genres, value) != null;
+    private String rememberRecommendationGenre(Map<String, String> genres, String value) {
+        String name = value == null ? "" : value.trim();
+        if (name.isEmpty() || "Other".equalsIgnoreCase(name)) return null;
+        String key = name.toLowerCase(Locale.ROOT);
+        if (!genres.containsKey(key)) genres.put(key, name);
+        return key;
+    }
+
+    private void rebuildRecommendationWeights() {
+        Map<String, String> genreNames = new HashMap<>();
+        JSONArray knownGenres = allGenres();
+        for (int i = 0; i < knownGenres.length(); i++) {
+            rememberRecommendationGenre(genreNames, knownGenres.optString(i));
+        }
+
+        Set<String> preferredGenreKeys = new HashSet<>();
+        for (String genre : favoriteGenrePreferences) {
+            String key = rememberRecommendationGenre(genreNames, genre);
+            if (key != null) preferredGenreKeys.add(key);
+        }
+
+        JSONArray books = library.optJSONArray("books");
+        if (books != null) for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book == null) continue;
+            boolean favorite = favoriteBookIds.contains(book.optString("id"));
+            if (!favorite && !trainedBookIds.contains(book.optLong("recommendationId", -1))) continue;
+            JSONArray genres = book.optJSONArray("genres");
+            if (genres == null) continue;
+            Set<String> unique = new HashSet<>();
+            for (int j = 0; j < genres.length(); j++) {
+                String key = rememberRecommendationGenre(genreNames, genres.optString(j));
+                if (favorite && key != null) unique.add(key);
+            }
+            preferredGenreKeys.addAll(unique);
+        }
+
+        recommendationPreferences.genreWeights.clear();
+        for (Map.Entry<String, String> entry : genreNames.entrySet()) {
+            recommendationPreferences.genreWeights.put(entry.getKey(), 10);
+        }
+        for (String key : preferredGenreKeys) {
+            if (genreNames.containsKey(key)) recommendationPreferences.genreWeights.put(key, 30);
+        }
+
+        if (books == null) return;
+        for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book == null || !trainedBookIds.contains(book.optLong("recommendationId", -1))) continue;
+            JSONArray genres = book.optJSONArray("genres");
+            if (genres == null) continue;
+            Set<String> unique = new HashSet<>();
+            for (int j = 0; j < genres.length(); j++) {
+                String key = rememberRecommendationGenre(genreNames, genres.optString(j));
+                if (key == null || !unique.add(key)) continue;
+                Integer savedWeight = recommendationPreferences.genreWeights.get(key);
+                int current = savedWeight == null ? 10 : savedWeight;
+                recommendationPreferences.genreWeights.put(key,
+                        Math.min(MAX_GENRE_WEIGHT, current + COMPLETION_WEIGHT_BONUS));
+            }
+        }
+    }
+
+    private void learnFromCompletedBooks() {
+        JSONArray books = library.optJSONArray("books");
+        if (books != null) for (int i = 0; i < books.length(); i++) {
+            markBookCompletedForLearning(books.optJSONObject(i));
+        }
+        rebuildRecommendationWeights();
+        persistRecommendationState();
+    }
+
+    private void learnFromBookProgress(JSONObject book) {
+        if (markBookCompletedForLearning(book)) {
+            rebuildRecommendationWeights();
+            persistRecommendationState();
+        }
+    }
+
+    private boolean markBookCompletedForLearning(JSONObject book) {
+        if (book == null) return false;
+        long id = book.optLong("recommendationId", -1);
+        if (id <= 0 || trainedBookIds.contains(id)) return false;
+        JSONArray chapters = book.optJSONArray("chapters");
+        if (chapters == null || chapters.length() == 0) return false;
+        double totalPercent = 0;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter == null) continue;
+            int percent = Math.max(chapter.optInt("percent", 0), chapter.optBoolean("done") ? 100 : 0);
+            totalPercent += Math.max(0, Math.min(100, percent));
+        }
+        if (totalPercent / chapters.length() < BOOK_COMPLETION_THRESHOLD) return false;
+        JSONArray genres = book.optJSONArray("genres");
+        if (genres == null) return false;
+        for (int i = 0; i < genres.length(); i++) {
+            String genre = genres.optString(i).trim();
+            if (!genre.isEmpty() && !"Other".equalsIgnoreCase(genre)) return trainedBookIds.add(id);
+        }
+        return false;
     }
 
     private List<BookRecommendationEngine.Book> recommendationBooks() {
@@ -1090,7 +1171,8 @@ public final class MainActivity extends Activity {
             Iterator<String> names = savedWeights.keys();
             while (names.hasNext()) {
                 String genre = names.next();
-                recommendationPreferences.genreWeights.put(genre, Math.max(1, savedWeights.optInt(genre, 10)));
+                recommendationPreferences.genreWeights.put(genre.trim().toLowerCase(Locale.ROOT),
+                        Math.max(1, savedWeights.optInt(genre, 10)));
             }
         } catch (Exception ignored) { }
         Set<String> savedIds = recommendationState.getStringSet("seen_books", Collections.emptySet());
@@ -1099,6 +1181,11 @@ public final class MainActivity extends Activity {
                 try { seenRecommendationIds.add(Long.parseLong(id)); }
                 catch (NumberFormatException ignored) { }
             }
+        }
+        Set<String> savedTrainedIds = recommendationState.getStringSet("trained_books", Collections.emptySet());
+        if (savedTrainedIds != null) for (String id : savedTrainedIds) {
+            try { trainedBookIds.add(Long.parseLong(id)); }
+            catch (NumberFormatException ignored) { }
         }
         Set<String> savedGenres = recommendationState.getStringSet("favorite_genres", Collections.emptySet());
         if (savedGenres != null) for (String genre : savedGenres) {
@@ -1118,8 +1205,11 @@ public final class MainActivity extends Activity {
         }
         Set<String> ids = new HashSet<>();
         for (Long id : seenRecommendationIds) ids.add(Long.toString(id));
+        Set<String> trainedIds = new HashSet<>();
+        for (Long id : trainedBookIds) trainedIds.add(Long.toString(id));
         recommendationState.edit().putString("genre_weights", weights.toString())
                 .putStringSet("seen_books", ids)
+                .putStringSet("trained_books", trainedIds)
                 .putStringSet("favorite_genres", new HashSet<>(favoriteGenrePreferences))
                 .putStringSet("favorite_book_ids", new HashSet<>(favoriteBookIds)).apply();
     }
@@ -1700,11 +1790,12 @@ public final class MainActivity extends Activity {
         openReader(target);
     }
 
-    private boolean saveCurrentChapter(boolean persistNow) {
+    private boolean saveCurrentChapter(boolean learnFromProgress) {
         if (!"reader".equals(page) || chapterEditor == null) return true;
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
         chapterText = chapterEditor.getText().toString();
+        updateProgress();
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
@@ -1717,18 +1808,22 @@ public final class MainActivity extends Activity {
             }
             chapterDirty = false;
         }
-        return saveLibrary();
+        boolean saved = saveLibrary();
+        if (saved && learnFromProgress) learnFromBookProgress(activeBook());
+        return saved;
     }
 
     private void scheduleSave() {
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
-        saveRunnable = () -> saveCurrentChapter(true);
+        saveRunnable = () -> saveCurrentChapter(false);
         handler.postDelayed(saveRunnable, 420);
     }
 
     private void scheduleProgressSave() {
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
-        progressRunnable = () -> { if ("reader".equals(page)) saveLibrary(); };
+        progressRunnable = () -> {
+            if ("reader".equals(page) && saveLibrary()) learnFromBookProgress(activeBook());
+        };
         handler.postDelayed(progressRunnable, 450);
     }
 
@@ -2912,7 +3007,8 @@ public final class MainActivity extends Activity {
         JSONObject chapter = chapters.optJSONObject(index); boolean done = !chapter.optBoolean("done");
         putJson(chapter, "done", done); putJson(chapter, "manualDone", done); putJson(chapter, "percent", done ? 100 : 0);
         if (!done) putJson(chapter, "scroll", 0);
-        saveLibrary(); chapterAdapter.notifyDataSetChanged();
+        if (saveLibrary()) learnFromBookProgress(book);
+        chapterAdapter.notifyDataSetChanged();
     }
 
     private final class GenreCloud extends ViewGroup {
