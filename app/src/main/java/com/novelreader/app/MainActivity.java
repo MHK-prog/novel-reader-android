@@ -343,10 +343,13 @@ public final class MainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
                         | WindowInsets.Type.displayCutout());
-                left = safe.left; top = safe.top; right = safe.right;
+                android.graphics.Insets stableTop = insets.getInsetsIgnoringVisibility(
+                        WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
+                left = safe.left; top = Math.max(safe.top, stableTop.top); right = safe.right;
                 bottom = Math.max(safe.bottom, insets.getInsets(WindowInsets.Type.ime()).bottom);
             } else {
-                left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
+                left = insets.getSystemWindowInsetLeft();
+                top = Math.max(insets.getSystemWindowInsetTop(), insets.getStableInsetTop());
                 right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
                 if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
                     left = Math.max(left, insets.getDisplayCutout().getSafeInsetLeft());
@@ -383,6 +386,28 @@ public final class MainActivity extends Activity {
         systemRoot.addView(drawerLayer, new FrameLayout.LayoutParams(-1, -1));
         setContentView(systemRoot);
         systemRoot.requestApplyInsets();
+        hideAndroidStatusBar();
+    }
+
+    private void hideAndroidStatusBar() {
+        Window window = getWindow();
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsBehavior(
+                        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                controller.hide(WindowInsets.Type.statusBars());
+            }
+            return;
+        }
+        View decor = window.getDecorView();
+        int flags = decor.getSystemUiVisibility()
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+        decor.setSystemUiVisibility(flags);
     }
 
     private void showStartupSplash() {
@@ -2678,6 +2703,11 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onBackPressed() { handleBack(); }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideAndroidStatusBar();
+    }
 
     @Override protected void onPause() { if ("reader".equals(page)) saveCurrentChapter(true); super.onPause(); }
 
