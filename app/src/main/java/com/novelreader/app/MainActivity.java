@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.8";
+    private static final String VERSION = "1.3.9";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -211,6 +211,7 @@ public final class MainActivity extends Activity {
     private View resumePromptView;
     private Runnable resumePromptDismiss;
     private TextView batteryPercentView;
+    private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
     private View coverRemoveButton;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
@@ -234,6 +235,7 @@ public final class MainActivity extends Activity {
     private ChapterAdapter chapterAdapter;
     private EditText chapterEditor;
     private ScrollView readerScroll;
+    private ScrollView settingsScroll;
     private View readerProgress;
     private FrameLayout readerFrame;
     private FrameLayout quickScrollButton;
@@ -358,19 +360,19 @@ public final class MainActivity extends Activity {
         systemRoot.setOnApplyWindowInsetsListener((view, insets) -> {
             int left, top, right, bottom;
             if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
+                android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.navigationBars()
                         | WindowInsets.Type.displayCutout());
-                android.graphics.Insets stableTop = insets.getInsetsIgnoringVisibility(
-                        WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
-                left = safe.left; top = Math.max(safe.top, stableTop.top); right = safe.right;
+                android.graphics.Insets cutout = insets.getInsets(WindowInsets.Type.displayCutout());
+                left = Math.max(safe.left, cutout.left); top = cutout.top;
+                right = Math.max(safe.right, cutout.right);
                 bottom = Math.max(safe.bottom, insets.getInsets(WindowInsets.Type.ime()).bottom);
             } else {
                 left = insets.getSystemWindowInsetLeft();
-                top = Math.max(insets.getSystemWindowInsetTop(), insets.getStableInsetTop());
+                top = 0;
                 right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
                 if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
                     left = Math.max(left, insets.getDisplayCutout().getSafeInsetLeft());
-                    top = Math.max(top, insets.getDisplayCutout().getSafeInsetTop());
+                    top = insets.getDisplayCutout().getSafeInsetTop();
                     right = Math.max(right, insets.getDisplayCutout().getSafeInsetRight());
                     bottom = Math.max(bottom, insets.getDisplayCutout().getSafeInsetBottom());
                 }
@@ -915,6 +917,7 @@ public final class MainActivity extends Activity {
         appColumn.removeAllViews();
         appColumn.addView(makeHeader("تنظیمات", "", "menu", null, this::openDrawer, null));
         ScrollView scroll = new ScrollView(this);
+        settingsScroll = scroll;
         scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false);
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
@@ -1025,6 +1028,8 @@ public final class MainActivity extends Activity {
     }
 
     private void rerenderCurrentPage() {
+        int settingsScrollY = "settings".equals(page) && settingsScroll != null
+                ? settingsScroll.getScrollY() : 0;
         if (systemRoot != null) systemRoot.setBackgroundColor(BG);
         if ("chapters".equals(page)) showChapters();
         else if ("reader".equals(page)) showReader();
@@ -1035,6 +1040,9 @@ public final class MainActivity extends Activity {
         else if ("collectionBooks".equals(page)) showBookShelf(false);
         else if ("collections".equals(page)) showCollections();
         else showDashboard();
+        if ("settings".equals(page) && settingsScroll != null) {
+            settingsScroll.post(() -> settingsScroll.scrollTo(0, settingsScrollY));
+        }
     }
 
     private void openDrawer() {
@@ -2475,6 +2483,7 @@ public final class MainActivity extends Activity {
         boolean showBattery = preferences.getBoolean("show_battery", true);
         boolean showClock = preferences.getBoolean("show_clock", true);
         batteryPercentView = null;
+        batteryLevelIcon = null;
         if (!showBattery && !showClock) return;
 
         LinearLayout row = new LinearLayout(this);
@@ -2485,8 +2494,21 @@ public final class MainActivity extends Activity {
             LinearLayout battery = new LinearLayout(this);
             battery.setGravity(Gravity.CENTER_VERTICAL);
             battery.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            NativeIconView icon = new NativeIconView(this, "battery", PURPLE);
-            battery.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
+            FrameLayout icon = new FrameLayout(this);
+            ImageView fill = new ImageView(this);
+            fill.setScaleType(ImageView.ScaleType.FIT_XY);
+            fill.setImageResource(R.drawable.battery_level_drawable);
+            FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(dp(16), dp(6),
+                    Gravity.LEFT | Gravity.CENTER_VERTICAL);
+            fillParams.leftMargin = dp(3);
+            icon.addView(fill, fillParams);
+            ImageView outline = new ImageView(this);
+            outline.setScaleType(ImageView.ScaleType.FIT_XY);
+            outline.setImageResource(R.drawable.battery_status);
+            outline.setImageTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+            icon.addView(outline, new FrameLayout.LayoutParams(dp(24), dp(12), Gravity.CENTER));
+            batteryLevelIcon = fill;
+            battery.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(18)));
             batteryPercentView = text("--%", 13, TEXT);
             batteryPercentView.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
             LinearLayout.LayoutParams percentParams = new LinearLayout.LayoutParams(-2, -1);
@@ -2510,7 +2532,7 @@ public final class MainActivity extends Activity {
     }
 
     private void updateBatteryIndicator(Intent battery) {
-        if (batteryPercentView == null) return;
+        if (batteryPercentView == null && batteryLevelIcon == null) return;
         int level = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
         int percent = scale > 0 && level >= 0 ? Math.round(level * 100f / scale) : -1;
@@ -2518,7 +2540,13 @@ public final class MainActivity extends Activity {
             BatteryManager manager = (BatteryManager) getSystemService(BATTERY_SERVICE);
             if (manager != null) percent = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
         }
-        batteryPercentView.setText(percent >= 0 ? percent + "%" : "--%");
+        if (batteryPercentView != null) batteryPercentView.setText(percent >= 0 ? percent + "%" : "--%");
+        if (batteryLevelIcon != null) {
+            batteryLevelIcon.setImageLevel(percent >= 0 ? Math.min(100, Math.max(0, percent)) * 100 : 0);
+            int color = percent < 0 ? MUTED : percent <= 15 ? RED
+                    : percent <= 35 ? 0xFFFFB74D : 0xFF4CAF50;
+            batteryLevelIcon.setImageTintList(android.content.res.ColorStateList.valueOf(color));
+        }
     }
 
     private void rememberChapterUndo(CharSequence text, int start, int count, int after) {

@@ -1,0 +1,5 @@
+<!-- res/drawable/battery_level_drawable.xml -->
+<clip xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_battery_fill"
+    android:clipOrientation="horizontal"
+    android:gravity="left" />

@@ -1,0 +1,11 @@
+<!-- res/drawable/ic_battery_fill.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="12dp"
+    android:viewportWidth="24"
+    android:viewportHeight="12">
+    <!-- یه مستطیل پر ساده که نماینده شارژ باتریه -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M0,0h24v12H0z" />
+</vector>
