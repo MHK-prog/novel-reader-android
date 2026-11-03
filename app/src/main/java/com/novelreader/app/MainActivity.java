@@ -196,6 +196,9 @@ public final class MainActivity extends Activity {
     private boolean drawerOpen;
     private boolean returnToSettingsAfterPicker;
     private boolean readerImeVisible;
+    private boolean resumePromptShownThisLaunch;
+    private View resumePromptView;
+    private Runnable resumePromptDismiss;
 
     private FrameLayout systemRoot;
     private LinearLayout appColumn;
@@ -237,6 +240,9 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            resumePromptShownThisLaunch = savedInstanceState.getBoolean("resume_prompt_shown", false);
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             systemBackCallback = this::handleBack;
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -519,6 +525,148 @@ public final class MainActivity extends Activity {
         saveLibrary();
         learnFromCompletedBooks();
         showDashboard();
+        showResumePromptOnce();
+    }
+
+    private final class ResumeTarget {
+        final String bookId;
+        final String collectionId;
+        final int storageIndex;
+        final int chapterPosition;
+
+        ResumeTarget(JSONObject book, JSONObject chapter, int position) {
+            bookId = book.optString("id");
+            collectionId = book.optString("collectionId", "other");
+            storageIndex = chapterStorageIndex(chapter, position);
+            chapterPosition = position;
+        }
+    }
+
+    private void showResumePromptOnce() {
+        if (resumePromptShownThisLaunch) return;
+        resumePromptShownThisLaunch = true;
+        ResumeTarget target = findResumeTarget();
+        if (target == null || systemRoot == null || drawerLayer == null) return;
+
+        JSONObject book = findBookById(target.bookId);
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        JSONObject chapter = chapters == null ? null : chapters.optJSONObject(target.chapterPosition);
+        if (book == null || chapter == null) return;
+
+        LinearLayout banner = new LinearLayout(this);
+        banner.setGravity(Gravity.CENTER_VERTICAL);
+        banner.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        banner.setPadding(dp(14), dp(10), dp(14), dp(10));
+        banner.setBackground(roundDrawable(SURFACE, 0x665D4775, 16));
+        banner.setElevation(dp(10));
+
+        LinearLayout message = new LinearLayout(this);
+        message.setOrientation(LinearLayout.VERTICAL);
+        message.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("ادامهٔ «" + book.optString("title") + "» از جایی که مانده بودی", 14, TEXT);
+        title.setMaxLines(1);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView subtitle = text(chapterLabel(chapter, target.chapterPosition), 12, MUTED);
+        subtitle.setMaxLines(1);
+        message.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subtitleParams.topMargin = dp(3);
+        message.addView(subtitle, subtitleParams);
+        banner.addView(message, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView continueButton = text("ادامه", 14, contrastOnAccent());
+        continueButton.setGravity(Gravity.CENTER);
+        continueButton.setPadding(dp(15), dp(9), dp(15), dp(9));
+        continueButton.setBackground(roundDrawable(PURPLE, PURPLE, 14));
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-2, -2);
+        buttonParams.leftMargin = dp(12);
+        banner.addView(continueButton, buttonParams);
+        continueButton.setOnClickListener(v -> openResumeTarget(target));
+
+        FrameLayout.LayoutParams bannerParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        bannerParams.leftMargin = dp(14);
+        bannerParams.rightMargin = dp(14);
+        bannerParams.bottomMargin = dp(12);
+        int insertAt = Math.max(0, systemRoot.indexOfChild(drawerLayer));
+        systemRoot.addView(banner, insertAt, bannerParams);
+        resumePromptView = banner;
+        banner.setAlpha(0f);
+        banner.setTranslationY(dp(14));
+        banner.post(() -> banner.animate().alpha(1f).translationY(0f).setDuration(180).start());
+
+        resumePromptDismiss = this::dismissResumePrompt;
+        handler.postDelayed(resumePromptDismiss, 7000);
+    }
+
+    private ResumeTarget findResumeTarget() {
+        SharedPreferences recent = getSharedPreferences("recent_reading", MODE_PRIVATE);
+        JSONObject savedBook = findBookById(recent.getString("book_id", ""));
+        JSONArray savedChapters = savedBook == null ? null : savedBook.optJSONArray("chapters");
+        int savedStorageIndex = recent.getInt("chapter_storage_index", 0);
+        if (savedChapters != null && savedStorageIndex > 0) {
+            for (int i = 0; i < savedChapters.length(); i++) {
+                JSONObject chapter = savedChapters.optJSONObject(i);
+                if (chapter != null && chapterStorageIndex(chapter, i) == savedStorageIndex) {
+                    return new ResumeTarget(savedBook, chapter, i);
+                }
+            }
+        }
+
+        // Older versions saved scroll progress per Chapter but did not record which one was opened last.
+        ResumeTarget fallback = null;
+        JSONArray books = library.optJSONArray("books");
+        if (books != null) for (int b = 0; b < books.length(); b++) {
+            JSONObject book = books.optJSONObject(b);
+            JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+            if (chapters == null) continue;
+            for (int i = 0; i < chapters.length(); i++) {
+                JSONObject chapter = chapters.optJSONObject(i);
+                if (chapter != null && !chapter.optBoolean("done")
+                        && (chapter.optInt("scroll", 0) > 0 || chapter.optInt("percent", 0) > 0)) {
+                    fallback = new ResumeTarget(book, chapter, i);
+                }
+            }
+        }
+        return fallback;
+    }
+
+    private void openResumeTarget(ResumeTarget target) {
+        dismissResumePrompt();
+        JSONObject book = findBookById(target.bookId);
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (chapters == null) return;
+        int position = -1;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && chapterStorageIndex(chapter, i) == target.storageIndex) {
+                position = i;
+                break;
+            }
+        }
+        if (position < 0) return;
+        activeBookId = target.bookId;
+        activeCollectionId = book.optString("collectionId", target.collectionId);
+        returnedFromHiddenBooks = false;
+        openReader(position);
+    }
+
+    private void dismissResumePrompt() {
+        if (resumePromptDismiss != null) {
+            handler.removeCallbacks(resumePromptDismiss);
+            resumePromptDismiss = null;
+        }
+        View banner = resumePromptView;
+        resumePromptView = null;
+        if (banner == null) return;
+        banner.animate().cancel();
+        banner.animate().alpha(0f).translationY(dp(12)).setDuration(140).withEndAction(() -> {
+            if (banner.getParent() == systemRoot) systemRoot.removeView(banner);
+        }).start();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        outState.putBoolean("resume_prompt_shown", resumePromptShownThisLaunch);
+        super.onSaveInstanceState(outState);
     }
 
     private static int coverCacheBudgetKb() {
@@ -1929,6 +2077,7 @@ public final class MainActivity extends Activity {
             return;
         }
         activeChapter = index;
+        rememberRecentReading();
         chapterUndoStack.clear();
         lastUndoWasTyping = false;
         lastUndoEnd = -1;
@@ -1955,6 +2104,7 @@ public final class MainActivity extends Activity {
         updateProgress();
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
+        rememberRecentReading();
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
         putJson(chapter, "scroll", readerScroll == null ? 0 : readerScroll.getScrollY());
         String file = "chapter-" + (activeBookId + ":"
@@ -1969,6 +2119,17 @@ public final class MainActivity extends Activity {
         boolean saved = saveLibrary();
         if (saved && learnFromProgress) learnFromBookProgress(activeBook());
         return saved;
+    }
+
+    private void rememberRecentReading() {
+        JSONObject book = activeBook();
+        JSONObject chapter = activeChapterObject();
+        if (book == null || chapter == null) return;
+        getSharedPreferences("recent_reading", MODE_PRIVATE).edit()
+                .putString("book_id", book.optString("id"))
+                .putString("collection_id", book.optString("collectionId", "other"))
+                .putInt("chapter_storage_index", chapterStorageIndex(chapter, activeChapter))
+                .apply();
     }
 
     private void scheduleSave() {
@@ -2523,6 +2684,7 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy() {
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
+        if (resumePromptDismiss != null) handler.removeCallbacks(resumePromptDismiss);
         if (Build.VERSION.SDK_INT >= 33 && systemBackCallback != null) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);
             systemBackCallback = null;
