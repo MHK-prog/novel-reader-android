@@ -46,8 +46,8 @@ app/build/outputs/apk/debug/app-debug.apk
 تاریخچهٔ نسخه‌ها و یادداشت هر انتشار در صفحهٔ **Releases** نگه‌داری می‌شود. برای انتشار نسخهٔ بعدی، `versionName` و `versionCode` را در `app/build.gradle` افزایش بده، تغییر را روی `main` پوش کن، سپس tag هم‌نام نسخه را بساز و پوش کن؛ برای نمونه:
 
 ```bash
-git tag v1.3.5
-git push origin v1.3.5
+git tag v1.3.6
+git push origin v1.3.6
 ```
 
 Workflow فایل APK امضاشده را می‌سازد و مستقیماً به Release پیوست می‌کند. نام tag باید با `versionName` پروژه یکی باشد. یادداشت اولین انتشار نوشته می‌شود و انتشارهای بعدی یادداشت تغییرات را از commitها می‌سازند.

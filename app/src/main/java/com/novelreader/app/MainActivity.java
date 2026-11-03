@@ -150,7 +150,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.5";
+    private static final String VERSION = "1.3.6";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -871,6 +871,11 @@ public final class MainActivity extends Activity {
         return true;
     }
 
+    private void restoreLibrary(String snapshot) {
+        try { library = new JSONObject(snapshot); }
+        catch (JSONException ignored) { }
+    }
+
     private void buildDrawer() {
         drawerPanel.removeAllViews();
         drawerPanel.addView(text("فهرست", 20, TEXT), new LinearLayout.LayoutParams(-1, dp(56)));
@@ -1316,7 +1321,7 @@ public final class MainActivity extends Activity {
         replaceSetValue(favoriteGenrePreferences, oldTag, newTag);
         replaceSetValue(activeGenreFilter, oldTag, newTag);
         if (!saveLibrary()) {
-            try { library = new JSONObject(before); } catch (JSONException ignored) { }
+            restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
             activeGenreFilter.clear(); activeGenreFilter.addAll(oldFilters);
             return false;
@@ -1605,7 +1610,7 @@ public final class MainActivity extends Activity {
             if (!moveJsonItem(items, "id", sourceId, targetId)) return;
             ensureOrderIndexes(items, false);
             if (!saveLibrary()) {
-                try { library = new JSONObject(before); } catch (JSONException ignored) { }
+                restoreLibrary(before);
             }
             refreshCollectionSelection();
         } else if ("book".equals(listType)) {
@@ -1617,7 +1622,7 @@ public final class MainActivity extends Activity {
             if (!moveJsonItem(items, "storageIndex", sourceId, targetId)) return;
             ensureOrderIndexes(items, true);
             if (!saveLibrary()) {
-                try { library = new JSONObject(before); } catch (JSONException ignored) { }
+                restoreLibrary(before);
             }
             refreshChapterSelection();
         }
@@ -1677,7 +1682,7 @@ public final class MainActivity extends Activity {
             if (item != null) putJson(item, "orderIndex", i);
         }
         if (!saveLibrary()) {
-            try { library = new JSONObject(before); } catch (JSONException ignored) { }
+            restoreLibrary(before);
         }
         refreshDashboardSelection();
     }
@@ -1730,18 +1735,7 @@ public final class MainActivity extends Activity {
             for (JSONObject book : available) {
                 String id = book.optString("id");
                 boolean isSelected = selected.contains(id);
-                FrameLayout row = new FrameLayout(this);
-                row.setBackground(roundDrawable(isSelected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                        isSelected ? PURPLE : 0xFF29242F, 10));
-                TextView title = text(book.optString("title"), 14, TEXT);
-                title.setGravity(Gravity.CENTER);
-                title.setMaxLines(1);
-                title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                row.addView(title, new FrameLayout.LayoutParams(-1, -1));
-                NativeIconView mark = new NativeIconView(this, isSelected ? "check" : "add",
-                        isSelected ? PURPLE : MUTED);
-                row.addView(mark, new FrameLayout.LayoutParams(dp(24), dp(24),
-                        Gravity.LEFT | Gravity.CENTER_VERTICAL));
+                FrameLayout row = selectionBookRow(book.optString("title"), isSelected, "add", 24);
                 LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(48));
                 rowParams.bottomMargin = dp(6);
                 choices.addView(row, rowParams);
@@ -1772,7 +1766,7 @@ public final class MainActivity extends Activity {
                 }
             } catch (JSONException ignored) { }
             if (!saveLibrary()) {
-                try { library = new JSONObject(before); } catch (JSONException ignored) { }
+                restoreLibrary(before);
                 dialog.dismiss();
                 showDashboard();
                 return;
@@ -1785,6 +1779,22 @@ public final class MainActivity extends Activity {
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private FrameLayout selectionBookRow(String title, boolean selected, String unselectedIcon, int iconSize) {
+        FrameLayout row = new FrameLayout(this);
+        row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
+                selected ? PURPLE : 0xFF29242F, 10));
+        TextView label = text(title, 14, TEXT);
+        label.setGravity(Gravity.CENTER);
+        label.setMaxLines(1);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(label, new FrameLayout.LayoutParams(-1, -1));
+        NativeIconView mark = new NativeIconView(this, selected ? "check" : unselectedIcon,
+                selected ? PURPLE : MUTED);
+        row.addView(mark, new FrameLayout.LayoutParams(dp(iconSize), dp(iconSize),
+                Gravity.LEFT | Gravity.CENTER_VERTICAL));
+        return row;
     }
 
     private void showCollections() {
@@ -1949,18 +1959,7 @@ public final class MainActivity extends Activity {
             for (JSONObject book : available) {
                 String id = book.optString("id");
                 boolean checked = selected.contains(id);
-                FrameLayout row = new FrameLayout(this);
-                row.setBackground(roundDrawable(checked ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                        checked ? PURPLE : 0xFF29242F, 10));
-                TextView title = text(book.optString("title"), 14, TEXT);
-                title.setGravity(Gravity.CENTER);
-                title.setMaxLines(1);
-                title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                row.addView(title, new FrameLayout.LayoutParams(-1, -1));
-                NativeIconView mark = new NativeIconView(this, checked ? "check" : "hide",
-                        checked ? PURPLE : MUTED);
-                row.addView(mark, new FrameLayout.LayoutParams(dp(22), dp(22),
-                        Gravity.LEFT | Gravity.CENTER_VERTICAL));
+                FrameLayout row = selectionBookRow(book.optString("title"), checked, "hide", 22);
                 LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(48));
                 rowParams.bottomMargin = dp(6);
                 rows.addView(row, rowParams);
@@ -1990,7 +1989,7 @@ public final class MainActivity extends Activity {
                     dialog.dismiss();
                     showHiddenBooks();
                 } else {
-                    try { library = new JSONObject(before); } catch (JSONException ignored) { }
+                    restoreLibrary(before);
                 }
             });
         });
@@ -2033,7 +2032,7 @@ public final class MainActivity extends Activity {
             selectedBookIds.clear();
             if (showingHiddenBooks()) showHiddenBooks(); else showBookShelf(false);
         } else {
-            try { library = new JSONObject(beforeChange); } catch (JSONException ignored) { }
+            restoreLibrary(beforeChange);
             refreshDashboardSelection();
         }
     }
@@ -2059,7 +2058,7 @@ public final class MainActivity extends Activity {
                         selectedBookIds.clear();
                         for (String cover : removedCovers) deleteCoverFile(cover);
                     } else {
-                        try { library = new JSONObject(beforeDelete); } catch (JSONException ignored) { }
+                        restoreLibrary(beforeDelete);
                     }
                     refreshDashboardSelection();
                 }).create();
@@ -2099,6 +2098,18 @@ public final class MainActivity extends Activity {
         chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
     }
 
+    private void copyBookCredits(JSONObject book) {
+        String title = book.optString("title").trim();
+        String author = book.optString("author").trim();
+        String credits = title.isEmpty() ? author : author.isEmpty() ? title : title + " by " + author;
+        if (!credits.isEmpty()) copyToClipboard("book", credits);
+    }
+
+    private void copyToClipboard(String label, String value) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
+    }
+
     private void addChaptersHeader(JSONObject book) {
         View header;
         if (selectedChapterKeys.isEmpty()) {
@@ -2110,6 +2121,10 @@ public final class MainActivity extends Activity {
         } else {
             header = makeHeader(selectedChapterKeys.size() + " Chapters selected", "", "close", null,
                     this::clearChapterSelection, null);
+        }
+        if (selectedChapterKeys.isEmpty() && titleView != null) {
+            titleView.setContentDescription("کپی نام کتاب و نویسنده");
+            titleView.setOnClickListener(v -> copyBookCredits(book));
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
     }
@@ -2169,7 +2184,7 @@ public final class MainActivity extends Activity {
             if (newTitle.isEmpty()) { title.setError("Enter a Chapter title"); return; }
             putJson(chapterToEdit, "title", newTitle);
             if (!saveLibrary()) {
-                try { library = new JSONObject(before); } catch (JSONException ignoredError) { }
+                restoreLibrary(before);
             }
             dialog.dismiss();
             refreshChapterSelection();
@@ -2213,7 +2228,7 @@ public final class MainActivity extends Activity {
             for (int i = 0; i < ordered.length(); i++) putJson(ordered.optJSONObject(i), "orderIndex", i);
             putJson(currentBook, "chapters", ordered);
             if (!saveLibrary()) {
-                try { library = new JSONObject(before); } catch (JSONException ignoredError) { }
+                restoreLibrary(before);
                 return;
             }
             dialog.dismiss();
@@ -2839,7 +2854,7 @@ public final class MainActivity extends Activity {
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
                 if (!saveLibrary()) {
-                    try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
+                    restoreLibrary(libraryBeforeSave);
                     dialog.dismiss(); showBookShelf(false); return;
                 }
                 coverCommitted[0] = true;
@@ -2850,7 +2865,7 @@ public final class MainActivity extends Activity {
                 putJson(existing, "genres", savedGenres); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
                 putJson(existing, "collectionId", chosenCollectionId[0]);
                 if (!saveLibrary()) {
-                    try { library = new JSONObject(libraryBeforeSave); } catch (JSONException ignored) { }
+                    restoreLibrary(libraryBeforeSave);
                     dialog.dismiss();
                     if ("chapters".equals(page)) showChapters(); else showDashboard();
                     return;
@@ -2941,8 +2956,7 @@ public final class MainActivity extends Activity {
         button.setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
         button.setClickable(true);
         button.setOnClickListener(v -> {
-            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("novel-token", token));
+            copyToClipboard("novel-token", token);
             button.setTextColor(Color.WHITE);
             button.setBackground(roundDrawable(GREEN, GREEN, 12));
         });
@@ -3313,11 +3327,7 @@ public final class MainActivity extends Activity {
         NativeIconView glyph = new NativeIconView(this, icon, color);
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER); button.addView(glyph, p);
         button.setContentDescription(iconDescription(icon)); button.setClickable(true); button.setFocusable(true);
-        button.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) v.animate().scaleX(.92f).scaleY(.92f).setDuration(75).start();
-            else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) v.animate().scaleX(1).scaleY(1).setDuration(105).start();
-            return false;
-        });
+        applyPressScale(button);
         if (action != null) button.setOnClickListener(v -> action.run());
         return button;
     }
@@ -3340,7 +3350,18 @@ public final class MainActivity extends Activity {
         row.addView(glyph, new LinearLayout.LayoutParams(dp(22), dp(22)));
         TextView text = text(label, 15, TEXT); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1); tp.leftMargin = dp(12); text.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); row.addView(text, tp);
         row.setPadding(dp(14), 0, dp(14), 0); row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 14)); row.setOnClickListener(v -> action.run());
-        row.setClickable(true); row.setFocusable(true); return row;
+        row.setClickable(true); row.setFocusable(true); applyPressScale(row); return row;
+    }
+
+    private void applyPressScale(View view) {
+        view.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(.92f).scaleY(.92f).setDuration(75).start();
+            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(105).start();
+            }
+            return false;
+        });
     }
 
     private String iconDescription(String icon) {
@@ -3400,11 +3421,7 @@ public final class MainActivity extends Activity {
         NativeIconView close = new NativeIconView(this, "close", MUTED);
         clear.addView(close, new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER));
         clear.setOnClickListener(v -> { input.setText(""); input.requestFocus(); });
-        clear.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) v.animate().scaleX(.88f).scaleY(.88f).setDuration(65).start();
-            else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) v.animate().scaleX(1).scaleY(1).setDuration(95).start();
-            return false;
-        });
+        applyPressScale(clear);
         field.addView(clear, new FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT | Gravity.CENTER_VERTICAL));
         return field;
     }
