@@ -37,6 +37,8 @@ final class NativeIconView extends View {
             case "add": resourceName = "add"; break;
             case "delete": resourceName = "delete"; break;
             case "image": resourceName = "image"; break;
+            case "battery": resourceName = "battery_status"; break;
+            case "dropdown": resourceName = "chevron_down"; break;
             case "settings": resourceName = "settings"; break;
             case "hide": resourceName = "visibility_off"; break;
             case "show": resourceName = "visibility"; break;

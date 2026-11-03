@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.animation.ObjectAnimator;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
 import android.content.SharedPreferences;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -24,6 +26,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Build;
+import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -60,6 +63,8 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.TextClock;
+import android.widget.Switch;
 import android.widget.Toast;
 
 import org.json.JSONArray;
@@ -145,7 +150,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.4";
+    private static final String VERSION = "1.3.5";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -201,6 +206,12 @@ public final class MainActivity extends Activity {
     private boolean resumePromptShownThisLaunch;
     private View resumePromptView;
     private Runnable resumePromptDismiss;
+    private TextView batteryPercentView;
+    private boolean batteryReceiverRegistered;
+    private View coverRemoveButton;
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) { updateBatteryIndicator(intent); }
+    };
 
     private FrameLayout systemRoot;
     private LinearLayout appColumn;
@@ -906,6 +917,12 @@ public final class MainActivity extends Activity {
             chooseFolder();
         }), fieldParams());
 
+        TextView readerDisplayTitle = text("اطلاعات بالای صفحهٔ مطالعه", 15, MUTED);
+        readerDisplayTitle.setPadding(0, dp(15), 0, dp(7));
+        body.addView(readerDisplayTitle);
+        addReaderDisplaySwitch(body, "نمایش درصد باتری", "show_battery");
+        addReaderDisplaySwitch(body, "نمایش ساعت", "show_clock");
+
         TextView appearance = text("ظاهر", 15, MUTED);
         appearance.setPadding(0, dp(15), 0, dp(7));
         body.addView(appearance);
@@ -958,6 +975,31 @@ public final class MainActivity extends Activity {
         body.addView(swatchGridContainer, swatchGridParams);
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void addReaderDisplaySwitch(LinearLayout body, String label, String key) {
+        SharedPreferences preferences = getSharedPreferences("reader_display", MODE_PRIVATE);
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        row.setPadding(dp(14), 0, dp(12), 0);
+        row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
+        TextView labelView = text(label, 14, TEXT);
+        row.addView(labelView, new LinearLayout.LayoutParams(0, -1, 1));
+        Switch toggle = new Switch(this);
+        toggle.setChecked(preferences.getBoolean(key, true));
+        if (Build.VERSION.SDK_INT >= 21) {
+            int[][] states = new int[][]{{android.R.attr.state_checked}, new int[0]};
+            toggle.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{PURPLE, MUTED}));
+            toggle.setTrackTintList(new android.content.res.ColorStateList(states,
+                    new int[]{Color.argb(100, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)), 0xFF625D66}));
+        }
+        toggle.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean(key, checked).apply());
+        row.addView(toggle, new LinearLayout.LayoutParams(-2, -2));
+        row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked()));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
+        params.bottomMargin = dp(8);
+        body.addView(row, params);
     }
 
     private TextView themeChoice(String label, boolean selected, boolean light) {
@@ -1653,40 +1695,53 @@ public final class MainActivity extends Activity {
     private void showCreateCollectionDialog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         EditText name = edit("نام مجموعه", false);
         content.addView(clearableInput(name), fieldParams());
         TextView chooseLabel = text("کتاب‌های این مجموعه را انتخاب کن", 13, MUTED);
+        chooseLabel.setGravity(Gravity.CENTER);
         chooseLabel.setPadding(0, dp(10), 0, dp(6));
         content.addView(chooseLabel);
         ScrollView bookScroll = new ScrollView(this);
         bookScroll.setVerticalScrollBarEnabled(false); bookScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.VERTICAL);
+        choices.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         bookScroll.addView(choices);
         Set<String> selected = new HashSet<>();
         JSONArray books = library.optJSONArray("books");
         List<JSONObject> available = new ArrayList<>();
         if (books != null) for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
-            if (book != null && !book.optBoolean("hidden", false)) available.add(book);
+            if (book != null && !book.optBoolean("hidden", false)) {
+                String collectionId = book.optString("collectionId", "other");
+                if (collectionId.isEmpty() || "other".equals(collectionId)
+                        || findCollectionById(collectionId) == null) available.add(book);
+            }
         }
         Runnable[] renderChoices = new Runnable[1];
         renderChoices[0] = () -> {
             choices.removeAllViews();
+            if (available.isEmpty()) {
+                TextView empty = emptyLabel("کتابی در مجموعهٔ سایر نیست");
+                choices.addView(empty, new LinearLayout.LayoutParams(-1, dp(72)));
+                return;
+            }
             for (JSONObject book : available) {
                 String id = book.optString("id");
                 boolean isSelected = selected.contains(id);
-                LinearLayout row = new LinearLayout(this);
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setPadding(dp(12), 0, dp(12), 0);
+                FrameLayout row = new FrameLayout(this);
                 row.setBackground(roundDrawable(isSelected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                         isSelected ? PURPLE : 0xFF29242F, 10));
                 TextView title = text(book.optString("title"), 14, TEXT);
-                title.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-                row.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-                TextView mark = text(isSelected ? "✓" : "+", 19, isSelected ? PURPLE : MUTED);
-                mark.setGravity(Gravity.CENTER);
-                row.addView(mark, new LinearLayout.LayoutParams(dp(36), -1));
+                title.setGravity(Gravity.CENTER);
+                title.setMaxLines(1);
+                title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                row.addView(title, new FrameLayout.LayoutParams(-1, -1));
+                NativeIconView mark = new NativeIconView(this, isSelected ? "check" : "add",
+                        isSelected ? PURPLE : MUTED);
+                row.addView(mark, new FrameLayout.LayoutParams(dp(24), dp(24),
+                        Gravity.LEFT | Gravity.CENTER_VERTICAL));
                 LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(48));
                 rowParams.bottomMargin = dp(6);
                 choices.addView(row, rowParams);
@@ -1845,8 +1900,8 @@ public final class MainActivity extends Activity {
         String shelfTitle = collection == null ? "سایر" : collection.optString("title", "سایر");
         if (selectedBookIds.isEmpty()) {
             header = makeHeader(hiddenShelf ? "کتابخانه مخفی" : shelfTitle, "", "menu",
-                    hiddenShelf ? null : "add", this::openDrawer,
-                    hiddenShelf ? null : () -> showBookDialog(null), 10);
+                    "add", this::openDrawer,
+                    hiddenShelf ? this::showHideBooksPicker : () -> showBookDialog(null), 10);
         } else {
             String label = selectedBookIds.size() + " انتخاب‌شده";
             if (selectedBookIds.size() == 1) {
@@ -1868,6 +1923,79 @@ public final class MainActivity extends Activity {
             }
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
+    }
+
+    private void showHideBooksPicker() {
+        JSONArray books = library.optJSONArray("books");
+        List<JSONObject> available = new ArrayList<>();
+        if (books != null) for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book != null && !book.optBoolean("hidden", false)) available.add(book);
+        }
+        if (available.isEmpty()) { toast("کتابی برای مخفی کردن وجود ندارد."); return; }
+
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        rows.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(rows);
+        Set<String> selected = new LinkedHashSet<>();
+        android.widget.Button[] confirmButton = new android.widget.Button[1];
+        Runnable[] render = new Runnable[1];
+        render[0] = () -> {
+            rows.removeAllViews();
+            for (JSONObject book : available) {
+                String id = book.optString("id");
+                boolean checked = selected.contains(id);
+                FrameLayout row = new FrameLayout(this);
+                row.setBackground(roundDrawable(checked ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
+                        checked ? PURPLE : 0xFF29242F, 10));
+                TextView title = text(book.optString("title"), 14, TEXT);
+                title.setGravity(Gravity.CENTER);
+                title.setMaxLines(1);
+                title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                row.addView(title, new FrameLayout.LayoutParams(-1, -1));
+                NativeIconView mark = new NativeIconView(this, checked ? "check" : "hide",
+                        checked ? PURPLE : MUTED);
+                row.addView(mark, new FrameLayout.LayoutParams(dp(22), dp(22),
+                        Gravity.LEFT | Gravity.CENTER_VERTICAL));
+                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(48));
+                rowParams.bottomMargin = dp(6);
+                rows.addView(row, rowParams);
+                row.setOnClickListener(v -> {
+                    if (!selected.add(id)) selected.remove(id);
+                    render[0].run();
+                    if (confirmButton[0] != null) confirmButton[0].setEnabled(!selected.isEmpty());
+                });
+            }
+        };
+        render[0].run();
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("افزودن به کتابخانه مخفی")
+                .setView(dialogPadding(scroll)).setNegativeButton("لغو", null)
+                .setPositiveButton("مخفی کردن", null).create();
+        dialog.setOnShowListener(v -> {
+            confirmButton[0] = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            confirmButton[0].setEnabled(false);
+            confirmButton[0].setOnClickListener(button -> {
+                if (selected.isEmpty()) return;
+                String before = library.toString();
+                for (String id : selected) {
+                    JSONObject book = findBookById(id);
+                    if (book != null) putJson(book, "hidden", true);
+                }
+                if (saveLibrary()) {
+                    selectedBookIds.clear();
+                    dialog.dismiss();
+                    showHiddenBooks();
+                } else {
+                    try { library = new JSONObject(before); } catch (JSONException ignored) { }
+                }
+            });
+        });
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void refreshDashboardSelection() {
@@ -2174,6 +2302,7 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
+        addReaderDeviceInfo();
         appColumn.addView(makeHeader(book.optString("title"), chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length(),
                 "next", "help", () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); },
                 this::showSpecialTokenHelp, 0, 68, true));
@@ -2310,6 +2439,57 @@ public final class MainActivity extends Activity {
                         chapterEditor.getWidth(), caretY + dp(60)), true);
             }, 170);
         });
+    }
+
+    private void addReaderDeviceInfo() {
+        SharedPreferences preferences = getSharedPreferences("reader_display", MODE_PRIVATE);
+        boolean showBattery = preferences.getBoolean("show_battery", true);
+        boolean showClock = preferences.getBoolean("show_clock", true);
+        batteryPercentView = null;
+        if (!showBattery && !showClock) return;
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        row.setPadding(dp(16), 0, dp(16), 0);
+        if (showBattery) {
+            LinearLayout battery = new LinearLayout(this);
+            battery.setGravity(Gravity.CENTER_VERTICAL);
+            battery.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+            NativeIconView icon = new NativeIconView(this, "battery", PURPLE);
+            battery.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
+            batteryPercentView = text("--%", 13, TEXT);
+            batteryPercentView.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+            LinearLayout.LayoutParams percentParams = new LinearLayout.LayoutParams(-2, -1);
+            percentParams.leftMargin = dp(5);
+            battery.addView(batteryPercentView, percentParams);
+            row.addView(battery, new LinearLayout.LayoutParams(-2, -1));
+            updateBatteryIndicator(null);
+        }
+        row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        if (showClock) {
+            TextClock clock = new TextClock(this);
+            clock.setFormat24Hour("HH:mm");
+            clock.setFormat12Hour("h:mm a");
+            clock.setTextColor(TEXT);
+            clock.setTextSize(14);
+            clock.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+            clock.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            row.addView(clock, new LinearLayout.LayoutParams(-2, -1));
+        }
+        appColumn.addView(row, new LinearLayout.LayoutParams(-1, dp(30)));
+    }
+
+    private void updateBatteryIndicator(Intent battery) {
+        if (batteryPercentView == null) return;
+        int level = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        int percent = scale > 0 && level >= 0 ? Math.round(level * 100f / scale) : -1;
+        if (percent < 0) {
+            BatteryManager manager = (BatteryManager) getSystemService(BATTERY_SERVICE);
+            if (manager != null) percent = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+        }
+        batteryPercentView.setText(percent >= 0 ? percent + "%" : "--%");
     }
 
     private void rememberChapterUndo(CharSequence text, int start, int count, int after) {
@@ -2509,23 +2689,43 @@ public final class MainActivity extends Activity {
         final boolean[] coverCommitted = {false};
         pendingCoverName = originalCoverName;
         LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(dp(8), dp(4), dp(8), dp(4));
-        LinearLayout coverRow = new LinearLayout(this); coverRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout coverRow = new LinearLayout(this);
+        coverRow.setGravity(Gravity.CENTER);
         FrameLayout previewFrame = new FrameLayout(this);
+        previewFrame.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
+        previewFrame.setClipToOutline(true);
         bookCoverPreview = new ImageView(this); bookCoverPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        bookCoverPreview.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
         previewFrame.addView(bookCoverPreview, new FrameLayout.LayoutParams(-1, -1));
-        NativeIconView placeholder = new NativeIconView(this, "book", PURPLE);
-        previewFrame.addView(placeholder, new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER));
+        LinearLayout placeholder = new LinearLayout(this);
+        placeholder.setGravity(Gravity.CENTER);
+        placeholder.setOrientation(LinearLayout.VERTICAL);
+        NativeIconView chooseCoverIcon = new NativeIconView(this, "image", PURPLE);
+        placeholder.addView(chooseCoverIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        TextView chooseCoverLabel = text("انتخاب جلد", 13, PURPLE);
+        chooseCoverLabel.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams chooseLabelParams = new LinearLayout.LayoutParams(-2, -2);
+        chooseLabelParams.topMargin = dp(8);
+        placeholder.addView(chooseCoverLabel, chooseLabelParams);
+        previewFrame.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         previewFrame.setTag(placeholder);
-        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(dp(92), dp(124));
-        previewParams.rightMargin = dp(12); coverRow.addView(previewFrame, previewParams);
-        LinearLayout coverActions = new LinearLayout(this); coverActions.setOrientation(LinearLayout.VERTICAL);
-        coverActions.addView(textButton("انتخاب جلد", "image", PURPLE, this::chooseBookCover), fieldParams());
-        coverActions.addView(textButton("حذف تصویر جلد", "close", MUTED, () -> {
-            pendingCoverName = ""; renderCoverPreview(bookCoverPreview, pendingCoverName);
-        }), fieldParams());
-        coverRow.addView(coverActions, new LinearLayout.LayoutParams(0, -2, 1));
-        form.addView(coverRow, fieldParams());
+        previewFrame.setOnClickListener(v -> chooseBookCover());
+        previewFrame.setContentDescription("انتخاب جلد کتاب");
+        FrameLayout.LayoutParams previewParams = new FrameLayout.LayoutParams(dp(128), dp(182), Gravity.CENTER);
+        coverRow.addView(previewFrame, previewParams);
+        coverRemoveButton = iconButton("close", TEXT, true, () -> {
+            pendingCoverName = "";
+            renderCoverPreview(bookCoverPreview, pendingCoverName);
+            if (coverRemoveButton != null) coverRemoveButton.setVisibility(View.GONE);
+        });
+        FrameLayout.LayoutParams removeCoverParams = new FrameLayout.LayoutParams(dp(36), dp(36),
+                Gravity.TOP | Gravity.RIGHT);
+        removeCoverParams.topMargin = dp(5);
+        removeCoverParams.rightMargin = dp(5);
+        previewFrame.addView(coverRemoveButton, removeCoverParams);
+        coverRemoveButton.setVisibility(pendingCoverName == null || pendingCoverName.isEmpty() ? View.GONE : View.VISIBLE);
+        LinearLayout.LayoutParams coverRowParams = new LinearLayout.LayoutParams(-1, dp(194));
+        coverRowParams.bottomMargin = dp(9);
+        form.addView(coverRow, coverRowParams);
         renderCoverPreview(bookCoverPreview, pendingCoverName);
 
         EditText title = edit("نام کتاب", false); title.setText(isNew ? "" : existing.optString("title"));
@@ -2536,20 +2736,27 @@ public final class MainActivity extends Activity {
         String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
         if (findCollectionById(initialCollection) == null) initialCollection = "other";
         final String[] chosenCollectionId = {initialCollection};
+        FrameLayout collectionField = new FrameLayout(this);
+        collectionField.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
         TextView collectionChoice = text("", 14, TEXT);
         collectionChoice.setSingleLine(true);
         collectionChoice.setEllipsize(android.text.TextUtils.TruncateAt.END);
         collectionChoice.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        collectionChoice.setPadding(dp(12), 0, dp(12), 0);
-        collectionChoice.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
+        collectionChoice.setPadding(dp(48), 0, dp(12), 0);
+        collectionField.addView(collectionChoice, new FrameLayout.LayoutParams(-1, -1));
+        NativeIconView dropdownIcon = new NativeIconView(this, "dropdown", PURPLE);
+        FrameLayout.LayoutParams dropdownParams = new FrameLayout.LayoutParams(dp(22), dp(22),
+                Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        dropdownParams.leftMargin = dp(10);
+        collectionField.addView(dropdownIcon, dropdownParams);
         Runnable refreshCollectionChoice = () -> {
             JSONObject collection = findCollectionById(chosenCollectionId[0]);
             String name = collection == null ? "سایر" : collection.optString("title", "سایر");
-            collectionChoice.setText("مجموعه: " + name + "  ▾");
+            collectionChoice.setText("مجموعه: " + name);
         };
         refreshCollectionChoice.run();
-        collectionChoice.setOnClickListener(v -> showCollectionPicker(chosenCollectionId, refreshCollectionChoice));
-        form.addView(collectionChoice, fieldParams());
+        collectionField.setOnClickListener(v -> showCollectionPicker(chosenCollectionId, refreshCollectionChoice));
+        form.addView(collectionField, fieldParams());
         if (isNew) form.addView(clearableInput(count), fieldParams());
         TextView genreLabel = text("ژانرها", 14, MUTED); genreLabel.setPadding(0, dp(12), 0, dp(4)); form.addView(genreLabel);
         LinearLayout genreSearchRow = new LinearLayout(this); genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -2582,6 +2789,8 @@ public final class MainActivity extends Activity {
         dialog.setOnDismissListener(ignored -> {
             if (!coverCommitted[0] && pendingCoverName != null && !pendingCoverName.isEmpty()
                     && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
+            bookCoverPreview = null;
+            coverRemoveButton = null;
         });
         dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
             String bookTitle = titleCaseWords(title.getText().toString());
@@ -2861,6 +3070,7 @@ public final class MainActivity extends Activity {
                 else {
                     pendingCoverName = fileName;
                     if (bookCoverPreview != null) renderCoverPreview(bookCoverPreview, pendingCoverName);
+                    if (coverRemoveButton != null) coverRemoveButton.setVisibility(View.VISIBLE);
                 }
             });
         });
@@ -3012,7 +3222,26 @@ public final class MainActivity extends Activity {
         if (hasFocus) hideAndroidStatusBar();
     }
 
-    @Override protected void onPause() { if ("reader".equals(page)) saveCurrentChapter(true); super.onPause(); }
+    @Override protected void onResume() {
+        super.onResume();
+        if (!batteryReceiverRegistered) {
+            IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            Intent sticky = Build.VERSION.SDK_INT >= 33
+                    ? registerReceiver(batteryReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    : registerReceiver(batteryReceiver, filter);
+            batteryReceiverRegistered = true;
+            updateBatteryIndicator(sticky);
+        }
+    }
+
+    @Override protected void onPause() {
+        if ("reader".equals(page)) saveCurrentChapter(true);
+        if (batteryReceiverRegistered) {
+            unregisterReceiver(batteryReceiver);
+            batteryReceiverRegistered = false;
+        }
+        super.onPause();
+    }
 
     @Override protected void onDestroy() {
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
@@ -3203,13 +3432,24 @@ public final class MainActivity extends Activity {
                 lightTheme ? 0xFFD8D2E0 : 0xFF352D3F, 20));
         int titleId = dialog.getContext().getResources().getIdentifier("alertTitle", "id", "android");
         TextView title = titleId == 0 ? null : dialog.findViewById(titleId);
-        if (title != null) title.setTextColor(TEXT);
+        if (title != null) { title.setTextColor(TEXT); title.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); }
         TextView message = dialog.findViewById(android.R.id.message);
-        if (message != null) message.setTextColor(TEXT);
+        if (message != null) { message.setTextColor(TEXT); message.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); }
         for (int which : new int[]{AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL}) {
             android.widget.Button button = dialog.getButton(which);
-            if (button != null) button.setTextColor(PURPLE);
+            if (button != null) {
+                button.setTextColor(PURPLE);
+                button.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+            }
         }
+        if (window != null) applyDialogTypeface(window.getDecorView());
+    }
+
+    private void applyDialogTypeface(View view) {
+        if (view instanceof TextView) ((TextView) view).setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+        if (!(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) applyDialogTypeface(group.getChildAt(i));
     }
 
     private TextWatcher watcher(Runnable run) {
@@ -3282,7 +3522,7 @@ public final class MainActivity extends Activity {
                         ? Math.max(0f, Math.min(1f, 1f - drawerPanel.getTranslationX() / width))
                         : drawerOpen ? 1f : 0f;
                 gestureCandidate = drawerVisible && startProgress > 0f
-                        || drawerSwipeAvailable() && startX >= getWidth() - dp(28);
+                        || drawerSwipeAvailable() && startX >= getWidth() - dp(64);
                 trackingDrawer = false;
                 lastProgress = startProgress;
                 return super.dispatchTouchEvent(event);
