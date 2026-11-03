@@ -41,6 +41,7 @@ final class NativeIconView extends View {
             case "hide": resourceName = "visibility_off"; break;
             case "show": resourceName = "visibility"; break;
             case "select": resourceName = "read_empty"; break;
+            case "reorder": resourceName = "drag_handle"; break;
             case "filter": resourceName = "filter"; break;
             case "back": resourceName = "direction"; rotation = 180f; break;
             case "next": resourceName = "direction"; break;

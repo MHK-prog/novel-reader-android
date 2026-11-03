@@ -145,7 +145,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.1";
+    private static final String VERSION = "1.3.4";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -161,6 +161,8 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Set<String> activeGenreFilter = new HashSet<>();
     private final Set<String> selectedBookIds = new LinkedHashSet<>();
+    private final Set<String> selectedCollectionIds = new LinkedHashSet<>();
+    private final Set<String> selectedChapterKeys = new LinkedHashSet<>();
     private final Deque<String> chapterUndoStack = new ArrayDeque<>();
     private final Set<Long> seenRecommendationIds = new HashSet<>();
     private final Set<Long> trainedBookIds = new HashSet<>();
@@ -740,6 +742,7 @@ public final class MainActivity extends Activity {
             otherCollection = new JSONObject().put("id", "other").put("title", "سایر");
             collections.put(otherCollection);
         }
+        ensureOrderIndexes(collections, false);
         library.put("books", books).put("genres", genres).put("collections", collections);
         library.remove("tags");
         activeCollectionId = "other";
@@ -786,17 +789,58 @@ public final class MainActivity extends Activity {
             for (int j = 0; j < chapters.length(); j++) {
                 JSONObject chapter = chapters.optJSONObject(j);
                 if (chapter == null) { chapter = new JSONObject(); chapters.put(j, chapter); }
+                if (chapter.optString("title").trim().isEmpty()) chapter.put("title", "Chapter " + (j + 1));
                 chapter.put("hasText", chapter.optBoolean("hasText", false));
                 chapter.put("percent", Math.max(0, Math.min(100, chapter.optInt("percent", 0))));
                 chapter.put("done", chapter.optBoolean("done", false));
                 chapter.put("scroll", Math.max(0, chapter.optInt("scroll", 0)));
             }
+            ensureChapterStorageIndexes(chapters);
+            ensureOrderIndexes(chapters, true);
         }
+        ensureOrderIndexes(books, false);
         JSONArray cleanGenres = new JSONArray();
         List<String> sorted = new ArrayList<>(all);
         Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
         for (String genre : sorted) cleanGenres.put(genre);
         library.put("genres", cleanGenres);
+    }
+
+    /** Initializes each list alphabetically once, then follows its saved orderIndex. */
+    private void ensureOrderIndexes(JSONArray items, boolean chapterNames) {
+        if (items == null) return;
+        List<JSONObject> ordered = new ArrayList<>();
+        Set<Integer> used = new HashSet<>();
+        boolean hasValidIndexes = true;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            ordered.add(item);
+            int index = item.optInt("orderIndex", Integer.MIN_VALUE);
+            if (!item.has("orderIndex") || index < 0 || !used.add(index)) hasValidIndexes = false;
+        }
+        final boolean preserveSavedOrder = hasValidIndexes;
+        Collections.sort(ordered, (first, second) -> {
+            if (preserveSavedOrder) {
+                int order = Integer.compare(first.optInt("orderIndex"), second.optInt("orderIndex"));
+                if (order != 0) return order;
+            }
+            String firstTitle = first.optString("title", "");
+            String secondTitle = second.optString("title", "");
+            if (chapterNames) {
+                BigDecimal firstNumber = chapterNumber(firstTitle);
+                BigDecimal secondNumber = chapterNumber(secondTitle);
+                if (firstNumber != null && secondNumber != null) {
+                    int numberOrder = firstNumber.compareTo(secondNumber);
+                    if (numberOrder != 0) return numberOrder;
+                }
+            }
+            return String.CASE_INSENSITIVE_ORDER.compare(firstTitle, secondTitle);
+        });
+        for (int i = 0; i < ordered.size(); i++) {
+            putJson(ordered.get(i), "orderIndex", i);
+            try { items.put(i, ordered.get(i)); } catch (JSONException ignored) { }
+        }
     }
 
     private void appendUniqueGenre(JSONArray genres, String value) {
@@ -1473,6 +1517,129 @@ public final class MainActivity extends Activity {
         return result;
     }
 
+    private int nextOrderIndex(JSONArray items) {
+        int next = 0;
+        if (items != null) for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item != null) next = Math.max(next, item.optInt("orderIndex", -1) + 1);
+        }
+        return next;
+    }
+
+    private boolean startReorderDrag(View source, String listType, String itemId) {
+        ClipData data = ClipData.newPlainText(listType, itemId);
+        View.DragShadowBuilder shadow = new View.DragShadowBuilder(source);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return source.startDragAndDrop(data, shadow, null, 0);
+        }
+        return source.startDrag(data, shadow, null, 0);
+    }
+
+    private void setReorderDropTarget(View target, String listType, String targetId) {
+        target.setOnDragListener((view, event) -> {
+            if (event.getAction() == android.view.DragEvent.ACTION_DRAG_STARTED) {
+                return event.getClipDescription() != null
+                        && listType.contentEquals(event.getClipDescription().getLabel());
+            }
+            if (event.getAction() == android.view.DragEvent.ACTION_DROP) {
+                CharSequence label = event.getClipDescription() == null ? null : event.getClipDescription().getLabel();
+                if (label != null && listType.contentEquals(label)) {
+                    reorderItems(listType, event.getClipData().getItemAt(0).getText().toString(), targetId);
+                    return true;
+                }
+            }
+            return event.getAction() == android.view.DragEvent.ACTION_DRAG_ENTERED
+                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_LOCATION
+                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_EXITED
+                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_ENDED;
+        });
+    }
+
+    private void reorderItems(String listType, String sourceId, String targetId) {
+        if (sourceId == null || targetId == null || sourceId.equals(targetId)) return;
+        if ("collection".equals(listType)) {
+            String before = library.toString();
+            JSONArray items = collectionArray();
+            if (!moveJsonItem(items, "id", sourceId, targetId)) return;
+            ensureOrderIndexes(items, false);
+            if (!saveLibrary()) {
+                try { library = new JSONObject(before); } catch (JSONException ignored) { }
+            }
+            refreshCollectionSelection();
+        } else if ("book".equals(listType)) {
+            reorderVisibleBooks(sourceId, targetId);
+        } else if ("chapter".equals(listType)) {
+            JSONObject book = activeBook();
+            JSONArray items = book == null ? null : book.optJSONArray("chapters");
+            String before = library.toString();
+            if (!moveJsonItem(items, "storageIndex", sourceId, targetId)) return;
+            ensureOrderIndexes(items, true);
+            if (!saveLibrary()) {
+                try { library = new JSONObject(before); } catch (JSONException ignored) { }
+            }
+            refreshChapterSelection();
+        }
+    }
+
+    private boolean moveJsonItem(JSONArray items, String key, String sourceId, String targetId) {
+        if (items == null) return false;
+        List<JSONObject> ordered = new ArrayList<>();
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item != null) ordered.add(item);
+        }
+        int from = -1, to = -1;
+        for (int i = 0; i < ordered.size(); i++) {
+            JSONObject item = ordered.get(i);
+            String id = "storageIndex".equals(key)
+                    ? Integer.toString(chapterStorageIndex(item, i)) : item.optString(key);
+            if (sourceId.equals(id)) from = i;
+            if (targetId.equals(id)) to = i;
+        }
+        if (from < 0 || to < 0 || from == to) return false;
+        JSONObject moving = ordered.remove(from);
+        ordered.add(to, moving);
+        for (int i = 0; i < ordered.size(); i++) {
+            putJson(ordered.get(i), "orderIndex", i);
+            try { items.put(i, ordered.get(i)); } catch (JSONException ignored) { }
+        }
+        return true;
+    }
+
+    private void reorderVisibleBooks(String sourceId, String targetId) {
+        if (bookAdapter == null) return;
+        List<JSONObject> visible = new ArrayList<>(bookAdapter.visible());
+        int from = -1, to = -1;
+        for (int i = 0; i < visible.size(); i++) {
+            String id = visible.get(i).optString("id");
+            if (sourceId.equals(id)) from = i;
+            if (targetId.equals(id)) to = i;
+        }
+        if (from < 0 || to < 0 || from == to) return;
+        String before = library.toString();
+        JSONObject moving = visible.remove(from);
+        visible.add(to, moving);
+        Set<String> visibleIds = new HashSet<>();
+        for (JSONObject item : visible) visibleIds.add(item.optString("id"));
+        JSONArray allBooks = library.optJSONArray("books");
+        if (allBooks == null) return;
+        int nextVisible = 0;
+        for (int i = 0; i < allBooks.length(); i++) {
+            JSONObject item = allBooks.optJSONObject(i);
+            if (item != null && visibleIds.contains(item.optString("id"))) {
+                try { allBooks.put(i, visible.get(nextVisible++)); } catch (JSONException ignored) { }
+            }
+        }
+        for (int i = 0; i < allBooks.length(); i++) {
+            JSONObject item = allBooks.optJSONObject(i);
+            if (item != null) putJson(item, "orderIndex", i);
+        }
+        if (!saveLibrary()) {
+            try { library = new JSONObject(before); } catch (JSONException ignored) { }
+        }
+        refreshDashboardSelection();
+    }
+
     private JSONObject findCollectionById(String id) {
         JSONArray collections = library.optJSONArray("collections");
         if (collections == null) return null;
@@ -1542,6 +1709,7 @@ public final class MainActivity extends Activity {
             String id = UUID.randomUUID().toString();
             try {
                 collection.put("id", id).put("title", title);
+                collection.put("orderIndex", nextOrderIndex(collectionArray()));
                 collectionArray().put(collection);
                 for (String bookId : selected) {
                     JSONObject book = findBookById(bookId);
@@ -1555,6 +1723,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             activeCollectionId = id;
+            selectedCollectionIds.clear();
             dialog.dismiss();
             showBookShelf(false);
         }));
@@ -1566,8 +1735,7 @@ public final class MainActivity extends Activity {
     private void showCollections() {
         page = "collections";
         appColumn.removeAllViews();
-        appColumn.addView(makeHeader("کتابخانه مجموعه‌ها", "", "menu", "add",
-                this::openDrawer, this::showCreateCollectionDialog));
+        addCollectionsHeader();
         collectionsGrid = new GridView(this);
         collectionsGrid.setNumColumns(2);
         collectionsGrid.setVerticalScrollBarEnabled(false); collectionsGrid.setHorizontalScrollBarEnabled(false);
@@ -1584,8 +1752,13 @@ public final class MainActivity extends Activity {
         collectionsGrid.setOnItemClickListener((parent, view, position, id) -> {
             JSONObject collection = collectionAdapter.getCollection(position);
             if (collection != null) {
+                if (!selectedCollectionIds.isEmpty()) {
+                    toggleCollectionSelection(collection);
+                    return;
+                }
                 activeCollectionId = collection.optString("id", "other");
                 activeGenreFilter.clear();
+                selectedBookIds.clear();
                 showBookShelf(false);
             }
         });
@@ -1595,6 +1768,37 @@ public final class MainActivity extends Activity {
         frame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
         collectionsGrid.setEmptyView(empty);
         appColumn.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void addCollectionsHeader() {
+        View header;
+        if (selectedCollectionIds.isEmpty()) {
+            header = makeHeader("کتابخانه مجموعه‌ها", "", "menu", "add",
+                    this::openDrawer, this::showCreateCollectionDialog);
+        } else {
+            header = makeHeader(selectedCollectionIds.size() + " انتخاب‌شده", "", "close", null,
+                    this::clearCollectionSelection, null);
+        }
+        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
+    }
+
+    private void toggleCollectionSelection(JSONObject collection) {
+        if (collection == null) return;
+        String id = collection.optString("id");
+        if (!selectedCollectionIds.add(id)) selectedCollectionIds.remove(id);
+        refreshCollectionSelection();
+    }
+
+    private void clearCollectionSelection() {
+        selectedCollectionIds.clear();
+        refreshCollectionSelection();
+    }
+
+    private void refreshCollectionSelection() {
+        if (!"collections".equals(page) || appColumn == null) return;
+        if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
+        addCollectionsHeader();
+        if (collectionAdapter != null) collectionAdapter.notifyDataSetChanged();
     }
 
     private void showBookShelf(boolean hidden) {
@@ -1739,9 +1943,8 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
-        View header = makeHeader(book.optString("title"), book.optString("author"), "add", "favorite",
-                this::addChapter, this::toggleActiveBookFavorite);
-        appColumn.addView(header);
+        addChaptersHeader(book);
+        View header = appColumn.getChildAt(0);
         updateChapterFavoriteIcon(header, favoriteBookIds.contains(book.optString("id")));
         JSONArray bookGenres = book.optJSONArray("genres");
         if (bookGenres != null && bookGenres.length() > 0) {
@@ -1766,6 +1969,86 @@ public final class MainActivity extends Activity {
         appColumn.addView(chaptersList, new LinearLayout.LayoutParams(-1, 0, 1));
         int next = firstUnread(book);
         chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
+    }
+
+    private void addChaptersHeader(JSONObject book) {
+        View header;
+        if (selectedChapterKeys.isEmpty()) {
+            header = makeHeader(book.optString("title"), book.optString("author"), "add", "favorite",
+                    this::addChapter, this::toggleActiveBookFavorite);
+        } else if (selectedChapterKeys.size() == 1) {
+            header = makeHeader(selectedChapterKeys.size() + " Chapter selected", "", "edit", "close",
+                    this::renameSelectedChapter, this::clearChapterSelection, 0, 118);
+        } else {
+            header = makeHeader(selectedChapterKeys.size() + " Chapters selected", "", "close", null,
+                    this::clearChapterSelection, null);
+        }
+        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
+    }
+
+    private String chapterSelectionKey(JSONObject chapter, int position) {
+        return Integer.toString(chapterStorageIndex(chapter, position));
+    }
+
+    private void toggleChapterSelection(JSONObject chapter, int position) {
+        if (chapter == null) return;
+        String key = chapterSelectionKey(chapter, position);
+        if (!selectedChapterKeys.add(key)) selectedChapterKeys.remove(key);
+        refreshChapterSelection();
+    }
+
+    private void clearChapterSelection() {
+        selectedChapterKeys.clear();
+        refreshChapterSelection();
+    }
+
+    private void refreshChapterSelection() {
+        if (!"chapters".equals(page) || appColumn == null) return;
+        JSONObject book = activeBook();
+        if (book == null) return;
+        if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
+        addChaptersHeader(book);
+        if (chapterAdapter != null) chapterAdapter.notifyDataSetChanged();
+    }
+
+    private void renameSelectedChapter() {
+        if (selectedChapterKeys.size() != 1) return;
+        JSONObject book = activeBook();
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (chapters == null) return;
+        String selectedKey = selectedChapterKeys.iterator().next();
+        JSONObject selected = null;
+        int selectedPosition = -1;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && selectedKey.equals(chapterSelectionKey(chapter, i))) {
+                selected = chapter;
+                selectedPosition = i;
+                break;
+            }
+        }
+        if (selected == null) return;
+        String before = library.toString();
+        EditText title = edit("Chapter title", false);
+        title.setText(chapterLabel(selected, selectedPosition));
+        title.setSelection(title.length());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Edit Chapter")
+                .setView(dialogPadding(title)).setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", null).create();
+        JSONObject chapterToEdit = selected;
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String newTitle = title.getText().toString().trim();
+            if (newTitle.isEmpty()) { title.setError("Enter a Chapter title"); return; }
+            putJson(chapterToEdit, "title", newTitle);
+            if (!saveLibrary()) {
+                try { library = new JSONObject(before); } catch (JSONException ignoredError) { }
+            }
+            dialog.dismiss();
+            refreshChapterSelection();
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
     }
 
     private void addChapter() {
@@ -1799,6 +2082,7 @@ public final class MainActivity extends Activity {
                 if (i == insertAt) ordered.put(chapter);
                 if (i < currentChapters.length()) ordered.put(currentChapters.optJSONObject(i));
             }
+            for (int i = 0; i < ordered.length(); i++) putJson(ordered.optJSONObject(i), "orderIndex", i);
             putJson(currentBook, "chapters", ordered);
             if (!saveLibrary()) {
                 try { library = new JSONObject(before); } catch (JSONException ignoredError) { }
@@ -2081,6 +2365,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openChapters(JSONObject book) {
+        selectedChapterKeys.clear();
         activeBookId = book.optString("id");
         activeCollectionId = book.optString("collectionId", "other");
         returnedFromHiddenBooks = showingHiddenBooks();
@@ -2088,6 +2373,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openReader(int index) {
+        selectedChapterKeys.clear();
         saveCurrentChapter(false);
         JSONObject book = activeBook();
         if (book == null) return;
@@ -2328,12 +2614,19 @@ public final class MainActivity extends Activity {
             try { library.put("genres", globalGenres); } catch (JSONException ignored) { }
             if (isNew) {
                 JSONArray chapters = new JSONArray();
-                for (int i = 0; i < chapterTotal; i++) chapters.put(newChapter());
+                for (int i = 0; i < chapterTotal; i++) {
+                    JSONObject chapter = newChapter();
+                    putJson(chapter, "title", "Chapter " + (i + 1));
+                    putJson(chapter, "storageIndex", i + 1);
+                    putJson(chapter, "orderIndex", i);
+                    chapters.put(chapter);
+                }
                 JSONObject book = new JSONObject();
                 try { book.put("id", UUID.randomUUID().toString()).put("recommendationId", nextRecommendationId())
                             .put("title", bookTitle).put("author", bookAuthor)
                             .put("genres", savedGenres).put("cover", pendingCoverName == null ? "" : pendingCoverName)
                             .put("collectionId", chosenCollectionId[0]).put("hidden", false)
+                            .put("orderIndex", nextOrderIndex(library.optJSONArray("books")))
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
                 if (!saveLibrary()) {
@@ -2690,6 +2983,16 @@ public final class MainActivity extends Activity {
 
     private void handleBack() {
         if (drawerOpen) { closeDrawer(); return; }
+        if (!selectedChapterKeys.isEmpty() && "chapters".equals(page)) {
+            selectedChapterKeys.clear();
+            refreshChapterSelection();
+            return;
+        }
+        if (!selectedCollectionIds.isEmpty() && "collections".equals(page)) {
+            selectedCollectionIds.clear();
+            refreshCollectionSelection();
+            return;
+        }
         if (!selectedBookIds.isEmpty() && ("collectionBooks".equals(page) || "hiddenBooks".equals(page))) {
             selectedBookIds.clear();
             refreshDashboardSelection();
@@ -3212,15 +3515,17 @@ public final class MainActivity extends Activity {
 
         @Override public View getView(int position, View convertView, ViewGroup parent) {
             JSONObject collection = getCollection(position);
+            boolean selected = selectedCollectionIds.contains(collection.optString("id"));
             LinearLayout card = new LinearLayout(MainActivity.this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setGravity(Gravity.CENTER);
             card.setPadding(dp(12), dp(12), dp(12), dp(10));
-            card.setBackground(roundDrawable(SURFACE, 0xFF503C68, 20));
+            card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
+                    selected ? PURPLE : 0xFF503C68, 20));
             card.setLayoutParams(new AbsListView.LayoutParams(-1, dp(154)));
             FrameLayout iconFrame = new FrameLayout(MainActivity.this);
             iconFrame.setBackground(roundDrawable(lightTheme ? 0xFFEDE3FA : 0xFF2A2034, Color.TRANSPARENT, 18));
-            NativeIconView icon = new NativeIconView(MainActivity.this, "folder", PURPLE);
+            NativeIconView icon = new NativeIconView(MainActivity.this, selected ? "reorder" : "folder", PURPLE);
             iconFrame.addView(icon, new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER));
             card.addView(iconFrame, new LinearLayout.LayoutParams(dp(62), dp(62)));
             TextView title = text(collection.optString("title"), 15, TEXT);
@@ -3233,6 +3538,13 @@ public final class MainActivity extends Activity {
             TextView count = text(collectionBookCount(collection.optString("id")) + " کتاب", 12, MUTED);
             count.setGravity(Gravity.CENTER);
             card.addView(count, new LinearLayout.LayoutParams(-1, dp(22)));
+            card.setOnLongClickListener(v -> {
+                String id = collection.optString("id");
+                if (selectedCollectionIds.contains(id)) return startReorderDrag(card, "collection", id);
+                toggleCollectionSelection(collection);
+                return true;
+            });
+            setReorderDropTarget(card, "collection", collection.optString("id"));
             return card;
         }
     }
@@ -3289,7 +3601,13 @@ public final class MainActivity extends Activity {
                     selected ? PURPLE : 0xFF29242F, 13));
             card.setClickable(true); card.setFocusable(true);
             card.setOnClickListener(v -> onBookCardTap(book));
-            card.setOnLongClickListener(v -> { toggleBookSelection(book); return true; });
+            card.setOnLongClickListener(v -> {
+                String id = book.optString("id");
+                if (selectedBookIds.contains(id)) return startReorderDrag(card, "book", id);
+                toggleBookSelection(book);
+                return true;
+            });
+            setReorderDropTarget(card, "book", book.optString("id"));
             int gridWidth = parent.getWidth() > 0 ? parent.getWidth() : getResources().getDisplayMetrics().widthPixels;
             int cellWidth = Math.max(dp(120), (gridWidth - dp(24 + 10)) / 2);
             int artworkHeight = Math.max(dp(160), Math.round((cellWidth - dp(14)) * 1.42f));
@@ -3309,7 +3627,7 @@ public final class MainActivity extends Activity {
             FrameLayout selectionBadge = new FrameLayout(MainActivity.this);
             selectionBadge.setBackground(roundDrawable(selected ? PURPLE : 0x99000000,
                     selected ? PURPLE : Color.TRANSPARENT, 20));
-            NativeIconView check = new NativeIconView(MainActivity.this, selected ? "check" : "select", Color.WHITE);
+            NativeIconView check = new NativeIconView(MainActivity.this, selected ? "reorder" : "select", Color.WHITE);
             selectionBadge.addView(check, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
             FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.RIGHT);
             badgeParams.topMargin = dp(6); badgeParams.rightMargin = dp(6);
@@ -3333,25 +3651,42 @@ public final class MainActivity extends Activity {
         @Override public long getItemId(int position) { return position; }
         @Override public View getView(int position, View convert, ViewGroup parent) {
             JSONObject chapter = chapters().optJSONObject(position); if (chapter == null) chapter = newChapter();
-            boolean done = chapter.optBoolean("done"), hasText = chapter.optBoolean("hasText");
+            final JSONObject chapterItem = chapter;
+            String key = chapterSelectionKey(chapterItem, position);
+            boolean selecting = !selectedChapterKeys.isEmpty();
+            boolean selected = selectedChapterKeys.contains(key);
+            boolean done = chapterItem.optBoolean("done"), hasText = chapterItem.optBoolean("hasText");
             int color = done ? GREEN : hasText ? BLUE : PURPLE;
             LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
-            row.setBackground(roundDrawable(SURFACE, 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
+            row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
+                    selected ? PURPLE : 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
             LinearLayout detail = new LinearLayout(MainActivity.this); detail.setOrientation(LinearLayout.VERTICAL);
-            TextView name = text(chapterLabel(chapter, position), 15, TEXT);
+            TextView name = text(chapterLabel(chapterItem, position), 15, TEXT);
             FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(0xFF302A38, Color.TRANSPARENT, 4));
             View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(color, Color.TRANSPARENT, 4));
-            final int fillPercent = done ? 100 : chapter.optInt("percent");
+            final int fillPercent = done ? 100 : chapterItem.optInt("percent");
             FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(4), Gravity.LEFT);
             meter.addView(fill, fillParams);
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
             detail.addView(name); LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
-            FrameLayout status = plainIconButton(done ? "check" : hasText ? "edit" : "book", color,
-                    () -> toggleChapterDone(position));
+            String statusIcon = selecting ? (selected ? "reorder" : "select") : done ? "check" : hasText ? "edit" : "book";
+            int statusColor = selecting ? (selected ? PURPLE : MUTED) : color;
+            FrameLayout status = plainIconButton(statusIcon, statusColor, selecting
+                    ? () -> toggleChapterSelection(chapterItem, position) : () -> toggleChapterDone(position));
+            if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
             row.setClickable(true);
-            row.setOnClickListener(v -> openReader(position));
+            row.setOnClickListener(v -> {
+                if (!selectedChapterKeys.isEmpty()) toggleChapterSelection(chapterItem, position);
+                else openReader(position);
+            });
+            row.setOnLongClickListener(v -> {
+                if (selectedChapterKeys.contains(key)) return startReorderDrag(row, "chapter", key);
+                toggleChapterSelection(chapterItem, position);
+                return true;
+            });
+            setReorderDropTarget(row, "chapter", key);
             return row;
         }
     }
