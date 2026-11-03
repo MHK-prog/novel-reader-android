@@ -25,6 +25,9 @@ import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.BatteryManager;
 import android.os.Bundle;
@@ -150,7 +153,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.6";
+    private static final String VERSION = "1.3.7";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -178,6 +181,7 @@ public final class MainActivity extends Activity {
     private final BookRecommendationEngine recommendationEngine =
             new BookRecommendationEngine(recommendationPreferences);
     private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService metadataExecutor = Executors.newSingleThreadExecutor();
     private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(coverCacheBudgetKb()) {
         @Override protected int sizeOf(String key, Bitmap value) { return Math.max(1, value.getByteCount() / 1024); }
     };
@@ -1107,17 +1111,8 @@ public final class MainActivity extends Activity {
         List<BookRecommendationEngine.Book> availableBooks = recommendationBooks();
         BookRecommendationEngine.Book book = recommendationEngine.recommendBook(availableBooks, seenRecommendationIds);
         if (book == null) {
-            String emptyMessage = availableBooks.isEmpty()
-                    ? "برای پیشنهاد، به کتاب‌ها ژانر اضافه کن"
-                    : "کتاب نخوانده‌ای برای پیشنهاد باقی نمانده";
+            String emptyMessage = "برای پیشنهاد، به کتاب‌ها ژانر اضافه کن";
             body.addView(emptyLabel(emptyMessage), new LinearLayout.LayoutParams(-1, 0, 1));
-            if (!availableBooks.isEmpty() && !seenRecommendationIds.isEmpty()) {
-                body.addView(textButton("شروع دوبارهٔ پیشنهادها", "book", PURPLE, () -> {
-                    seenRecommendationIds.clear();
-                    persistRecommendationState();
-                    showRecommendation();
-                }), new LinearLayout.LayoutParams(-1, dp(52)));
-            }
             appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
             return;
         }
@@ -1152,13 +1147,6 @@ public final class MainActivity extends Activity {
 
         View spacer = new View(this);
         body.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
-        Runnable openRecommendedChapters = () -> {
-            if (recommendedRecord == null) return;
-            activeBookId = recommendedRecord.optString("id");
-            activeCollectionId = recommendedRecord.optString("collectionId", "other");
-            returnedFromHiddenBooks = false;
-            showChapters();
-        };
         Runnable readRecommendedBook = () -> {
             if (recommendedRecord == null) return;
             activeBookId = recommendedRecord.optString("id");
@@ -1170,9 +1158,6 @@ public final class MainActivity extends Activity {
         };
         body.addView(textButton("خواندن کتاب", "book", PURPLE, readRecommendedBook),
                 new LinearLayout.LayoutParams(-1, dp(50)));
-        LinearLayout.LayoutParams chaptersButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
-        chaptersButtonParams.topMargin = dp(7);
-        body.addView(textButton("رفتن به Chapters", "next", MUTED, openRecommendedChapters), chaptersButtonParams);
         LinearLayout.LayoutParams nextButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
         nextButtonParams.topMargin = dp(7);
         body.addView(textButton("پیشنهاد بعدی", "next", PURPLE, this::showRecommendation), nextButtonParams);
@@ -1183,16 +1168,14 @@ public final class MainActivity extends Activity {
         page = "tagSettings";
         ensureFavoriteTagsDefined();
         appColumn.removeAllViews();
-        appColumn.addView(makeHeader("تنظیمات تگ‌ها", "", "menu", null, this::openDrawer, null));
+        appColumn.addView(makeHeader("تنظیمات تگ‌ها", "", "menu", "help",
+                this::openDrawer, this::showTagSettingsHelp, 0, 68, true));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setHorizontalScrollBarEnabled(false);
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(18), dp(14), dp(18), dp(24));
-        body.addView(text("تگ‌ها برای دسته‌بندی کتاب‌ها و پیشنهادهای شخصی استفاده می‌شوند.", 13, MUTED), fieldParams());
-        TextView hint = text("قلب هر تگ را بزن تا در پیشنهادها اولویت بگیرد؛ مداد هم نام تگ را عوض می‌کند.", 13, MUTED);
-        body.addView(hint, fieldParams());
         EditText tagSearch = edit("جستجو یا افزودن تگ", false);
         tagSearch.setSingleLine(true);
         LinearLayout tagRows = new LinearLayout(this);
@@ -1210,6 +1193,20 @@ public final class MainActivity extends Activity {
         renderManagedTags(tagRows, tagSearch);
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void showTagSettingsHelp() {
+        TextView help = text("تگ‌ها کتاب‌ها را دسته‌بندی می‌کنند و در پیشنهادها به کار می‌روند. قلب هر تگ را بزن تا به ژانرهای موردعلاقه‌ات اضافه شود؛ مداد نام تگ را ویرایش می‌کند.", 15, TEXT);
+        help.setGravity(Gravity.CENTER);
+        help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        help.setPadding(dp(10), dp(12), dp(10), dp(12));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("راهنمای تنظیمات تگ‌ها")
+                .setView(dialogPadding(help))
+                .setPositiveButton("بستن", null)
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void ensureFavoriteTagsDefined() {
@@ -1283,8 +1280,12 @@ public final class MainActivity extends Activity {
         EditText name = edit("نام تگ", false);
         name.setText(oldTag);
         name.setSelection(name.length());
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setGravity(Gravity.CENTER_HORIZONTAL);
+        form.addView(clearableInput(name), fieldParams());
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ویرایش تگ")
-                .setView(dialogPadding(name)).setNegativeButton("لغو", null)
+                .setView(dialogPadding(form)).setNegativeButton("لغو", null)
                 .setPositiveButton("ذخیره", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String newTag = titleCaseWords(name.getText().toString());
@@ -1484,12 +1485,14 @@ public final class MainActivity extends Activity {
             if (id <= 0 || genres == null) continue;
             String title = book.optString("title", "بدون عنوان");
             String author = book.optString("author", "");
+            double rating = book.optDouble("goodreadsRating", -1);
+            long ratingCount = book.optLong("goodreadsRatingCount", 0);
             Set<String> addedGenres = new HashSet<>();
             for (int j = 0; j < genres.length(); j++) {
                 String genre = genres.optString(j).trim();
                 if (genre.isEmpty() || "Other".equalsIgnoreCase(genre)
                         || !addedGenres.add(genre.toLowerCase(Locale.ROOT))) continue;
-                result.add(new BookRecommendationEngine.Book(id, title, genre, author));
+                result.add(new BookRecommendationEngine.Book(id, title, genre, author, rating, ratingCount));
             }
         }
         return result;
@@ -2697,11 +2700,176 @@ public final class MainActivity extends Activity {
         return candidate;
     }
 
+    private boolean hasInternetConnection() {
+        try {
+            ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (manager == null) return false;
+            Network network = manager.getActiveNetwork();
+            NetworkCapabilities capabilities = network == null ? null : manager.getNetworkCapabilities(network);
+            return capabilities != null
+                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
+    private void showGoodreadsPreview(GoodreadsMetadataProvider.BookMetadata metadata,
+                                      Runnable applyMetadata, Runnable continueManually) {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        content.setPadding(dp(18), dp(8), dp(18), dp(4));
+
+        TextView intro = text("این اطلاعات از Goodreads دریافت شد. قبل از اعمال، آن‌ها را بررسی کن.", 13, MUTED);
+        intro.setGravity(Gravity.CENTER);
+        intro.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        content.addView(intro, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout summary = new LinearLayout(this);
+        summary.setGravity(Gravity.CENTER_HORIZONTAL);
+        summary.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(-1, -2);
+        summaryParams.topMargin = dp(14);
+        content.addView(summary, summaryParams);
+
+        ImageView cover = new ImageView(this);
+        cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        cover.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
+        if (metadata.cover != null) cover.setImageBitmap(metadata.cover);
+        LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(dp(100), dp(146));
+        summary.addView(cover, coverParams);
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(-1, -2);
+        detailsParams.topMargin = dp(8);
+        summary.addView(details, detailsParams);
+        details.addView(metadataLine("عنوان", metadata.title));
+        details.addView(metadataLine("نویسنده", metadata.author));
+        String ratingText = metadata.rating >= 0
+                ? String.format(Locale.US, "%.2f از 5", metadata.rating)
+                    + (metadata.ratingCount > 0 ? " · " + metadata.ratingCount + " رأی" : "")
+                : "ثبت نشده";
+        details.addView(metadataLine("امتیاز", ratingText));
+        details.addView(metadataLine("ژانرها", metadata.genres.isEmpty()
+                ? "پیدا نشد" : android.text.TextUtils.join("، ", metadata.genres)));
+        TextView source = text("صفحهٔ Goodreads", 12, PURPLE);
+        source.setGravity(Gravity.CENTER);
+        source.setSingleLine(true);
+        source.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        details.addView(source);
+
+        AlertDialog preview = new AlertDialog.Builder(this)
+                .setTitle("بازبینی اطلاعات کتاب")
+                .setView(dialogPadding(content))
+                .setNegativeButton("ادامه با اطلاعات فعلی", (d, which) -> continueManually.run())
+                .setPositiveButton("اعمال اطلاعات", null)
+                .create();
+        preview.setOnCancelListener(d -> continueManually.run());
+        preview.setOnShowListener(ignored -> preview.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            preview.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+            preview.getButton(AlertDialog.BUTTON_POSITIVE).setText("در حال اعمال…");
+            applyMetadata.run();
+            preview.dismiss();
+        }));
+        preview.show();
+        styleDialogWindow(preview);
+    }
+
+    private View metadataLine(String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setGravity(Gravity.CENTER_HORIZONTAL);
+        row.setPadding(0, dp(3), 0, dp(3));
+        TextView heading = text(label, 11, MUTED);
+        TextView body = text(value == null || value.trim().isEmpty() ? "ثبت نشده" : value, 13, TEXT);
+        heading.setGravity(Gravity.CENTER);
+        body.setGravity(Gravity.CENTER);
+        body.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        body.setMaxLines(2);
+        body.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(heading);
+        row.addView(body);
+        return row;
+    }
+
+    private interface GoodreadsMetadataHandler {
+        void onConfirmed(GoodreadsMetadataProvider.BookMetadata metadata);
+    }
+
+    private void fetchGoodreadsMetadata(String title, String author, AlertDialog parent,
+                                       TextView submitButton, Runnable onFailure,
+                                       GoodreadsMetadataHandler onConfirmed) {
+        if (title == null || title.trim().isEmpty()) {
+            toast("اول نام کتاب را وارد کن.");
+            return;
+        }
+        AlertDialog progress = new AlertDialog.Builder(this)
+                .setTitle("دریافت از Goodreads")
+                .setMessage("در حال جست‌وجوی کتاب و دریافت جلد…")
+                .setView(new ProgressBar(this))
+                .setCancelable(true)
+                .create();
+        submitButton.setEnabled(false);
+        final boolean[] cancelled = {false};
+        progress.setOnCancelListener(ignored -> {
+            cancelled[0] = true;
+            if (parent.isShowing()) submitButton.setEnabled(true);
+        });
+        progress.show();
+        styleDialogWindow(progress);
+        metadataExecutor.execute(() -> {
+            GoodreadsMetadataProvider.BookMetadata metadata = null;
+            Exception failure = null;
+            try { metadata = GoodreadsMetadataProvider.lookup(title, author); }
+            catch (Exception error) { failure = error; }
+            GoodreadsMetadataProvider.BookMetadata result = metadata;
+            Exception error = failure;
+            runOnUiThread(() -> {
+                if (progress.isShowing()) progress.dismiss();
+                if (cancelled[0] || isFinishing() || isDestroyed() || !parent.isShowing()) {
+                    if (result != null && result.cover != null && !result.cover.isRecycled()) result.cover.recycle();
+                    return;
+                }
+                submitButton.setEnabled(true);
+                if (error != null) {
+                    android.util.Log.w("NovelReader", "Goodreads metadata lookup failed", error);
+                    onFailure.run();
+                    AlertDialog failureDialog = new AlertDialog.Builder(this)
+                            .setMessage("اطلاعات خودکار دریافت نشد. می‌توانی با اطلاعات واردشده ادامه بدهی.")
+                            .setPositiveButton("باشه", null).create();
+                    failureDialog.show();
+                    styleDialogWindow(failureDialog);
+                    return;
+                }
+                final boolean[] appliedOrSkipped = {false};
+                showGoodreadsPreview(result, () -> {
+                    if (appliedOrSkipped[0]) return;
+                    appliedOrSkipped[0] = true;
+                    onConfirmed.onConfirmed(result);
+                }, () -> {
+                    if (appliedOrSkipped[0]) return;
+                    appliedOrSkipped[0] = true;
+                    if (result.cover != null && !result.cover.isRecycled()) result.cover.recycle();
+                    onFailure.run();
+                });
+            });
+        });
+    }
+
     private void showBookDialog(JSONObject existing) {
         boolean isNew = existing == null;
         String originalCoverName = isNew ? "" : existing.optString("cover", "");
         String libraryBeforeSave = library.toString();
+        boolean internetAvailable = hasInternetConnection();
         final boolean[] coverCommitted = {false};
+        final boolean[] metadataReady = {!isNew || !internetAvailable};
+        final double[] goodreadsRating = {isNew ? -1 : existing.optDouble("goodreadsRating", -1)};
+        final long[] goodreadsRatingCount = {isNew ? 0 : existing.optLong("goodreadsRatingCount", 0)};
+        final String[] goodreadsPageUrl = {isNew ? "" : existing.optString("goodreadsUrl", "")};
+        final Runnable[] metadataLookupAction = {null};
         pendingCoverName = originalCoverName;
         LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(dp(8), dp(4), dp(8), dp(4));
         LinearLayout coverRow = new LinearLayout(this);
@@ -2748,6 +2916,12 @@ public final class MainActivity extends Activity {
         EditText count = edit("تعداد Chapter", false); count.setInputType(InputType.TYPE_CLASS_NUMBER);
         form.addView(clearableInput(title), fieldParams());
         form.addView(clearableInput(author), fieldParams());
+        TextView metadataLookupButton = isNew ? null : text("دریافت اطلاعات از Goodreads", 13, PURPLE);
+        if (metadataLookupButton != null) {
+            metadataLookupButton.setGravity(Gravity.CENTER);
+            metadataLookupButton.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
+            form.addView(metadataLookupButton, fieldParams());
+        }
         String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
         if (findCollectionById(initialCollection) == null) initialCollection = "other";
         final String[] chosenCollectionId = {initialCollection};
@@ -2800,14 +2974,85 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false); scroll.addView(form);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle(isNew ? "افزودن کتاب" : "ویرایش کتاب")
-                .setView(dialogPadding(scroll)).setNegativeButton("لغو", null).setPositiveButton("ذخیره", null).create();
+                .setView(dialogPadding(scroll)).setNegativeButton("لغو", null)
+                .setPositiveButton(isNew && internetAvailable ? "تکمیل خودکار اطلاعات" : "ثبت اطلاعات", null).create();
         dialog.setOnDismissListener(ignored -> {
             if (!coverCommitted[0] && pendingCoverName != null && !pendingCoverName.isEmpty()
                     && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
             bookCoverPreview = null;
             coverRemoveButton = null;
         });
-        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
+        dialog.setOnShowListener(v -> {
+            TextView submitButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            metadataLookupAction[0] = () -> fetchGoodreadsMetadata(
+                    title.getText().toString(), author.getText().toString(), dialog, submitButton,
+                    () -> {
+                        metadataReady[0] = true;
+                        submitButton.setEnabled(true);
+                        submitButton.setText("ثبت اطلاعات");
+                    }, metadata -> {
+                        metadataReady[0] = true;
+                        goodreadsRating[0] = metadata.rating;
+                        goodreadsRatingCount[0] = metadata.ratingCount;
+                        goodreadsPageUrl[0] = metadata.pageUrl;
+                        Runnable updateForm = () -> {
+                            if (dialog.isShowing()) {
+                                updateBookMetadataFields(metadata, "", originalCoverName, title, author,
+                                        genreSearch, selected, availableGenres, cloud);
+                                submitButton.setEnabled(true);
+                                submitButton.setText("ثبت اطلاعات");
+                            }
+                            if (metadata.cover != null && !metadata.cover.isRecycled()) metadata.cover.recycle();
+                        };
+                        if (metadata.cover == null || metadata.cover.isRecycled()) {
+                            updateForm.run();
+                            return;
+                        }
+                        submitButton.setEnabled(false);
+                        submitButton.setText("در حال ذخیرهٔ جلد…");
+                        metadataExecutor.execute(() -> {
+                            String savedCover = "";
+                            Bitmap copy = null;
+                            try {
+                                copy = metadata.cover.copy(Bitmap.Config.ARGB_8888, false);
+                                if (copy != null) savedCover = saveCoverBitmap(copy);
+                            } catch (Exception error) {
+                                android.util.Log.w("NovelReader", "Could not save Goodreads cover", error);
+                            } finally {
+                                if (copy != null && !copy.isRecycled()) copy.recycle();
+                            }
+                            String coverName = savedCover;
+                            runOnUiThread(() -> {
+                                if (!dialog.isShowing() || isFinishing() || isDestroyed()) {
+                                    if (!coverName.isEmpty()) deleteCoverFile(coverName);
+                                    if (metadata.cover != null && !metadata.cover.isRecycled()) metadata.cover.recycle();
+                                    return;
+                                }
+                                if (coverName.isEmpty() && metadata.cover != null) {
+                                    toast("جلد دریافت شد اما ذخیره نشد؛ می‌توانی بعداً دستی انتخابش کنی.");
+                                }
+                                updateBookMetadataFields(metadata, coverName, originalCoverName, title, author,
+                                        genreSearch, selected, availableGenres, cloud);
+                                submitButton.setEnabled(true);
+                                submitButton.setText("ثبت اطلاعات");
+                                if (metadata.cover != null && !metadata.cover.isRecycled()) metadata.cover.recycle();
+                            });
+                        });
+                    });
+            if (metadataLookupButton != null) {
+                metadataLookupButton.setOnClickListener(button -> metadataLookupAction[0].run());
+                metadataLookupButton.setEnabled(internetAvailable);
+                if (!internetAvailable) metadataLookupButton.setAlpha(0.45f);
+            }
+            submitButton.setOnClickListener(b -> {
+            if (isNew && !metadataReady[0]) {
+                if (hasInternetConnection()) {
+                    metadataLookupAction[0].run();
+                    return;
+                }
+                metadataReady[0] = true;
+                submitButton.setText("ثبت اطلاعات");
+            }
             String bookTitle = titleCaseWords(title.getText().toString());
             if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
             String bookAuthor = titleCaseWords(author.getText().toString());
@@ -2825,10 +3070,6 @@ public final class MainActivity extends Activity {
             for (String selectedGenre : selected) {
                 String normalized = titleCaseWords(selectedGenre);
                 if (!normalized.isEmpty()) normalizedSelected.add(normalized);
-            }
-            if (normalizedSelected.isEmpty()) {
-                genreSearch.setError("حداقل یک ژانر انتخاب کن");
-                return;
             }
             JSONArray savedGenres = new JSONArray();
             for (String selectedGenre : normalizedSelected) savedGenres.put(selectedGenre);
@@ -2853,6 +3094,9 @@ public final class MainActivity extends Activity {
                             .put("orderIndex", nextOrderIndex(library.optJSONArray("books")))
                             .put("chapters", chapters); library.getJSONArray("books").put(book); }
                 catch (JSONException ignored) { }
+                if (goodreadsRating[0] >= 0) putJson(book, "goodreadsRating", goodreadsRating[0]);
+                if (goodreadsRatingCount[0] > 0) putJson(book, "goodreadsRatingCount", goodreadsRatingCount[0]);
+                if (!goodreadsPageUrl[0].isEmpty()) putJson(book, "goodreadsUrl", goodreadsPageUrl[0]);
                 if (!saveLibrary()) {
                     restoreLibrary(libraryBeforeSave);
                     dialog.dismiss(); showBookShelf(false); return;
@@ -2864,6 +3108,9 @@ public final class MainActivity extends Activity {
                 putJson(existing, "title", bookTitle); putJson(existing, "author", bookAuthor);
                 putJson(existing, "genres", savedGenres); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
                 putJson(existing, "collectionId", chosenCollectionId[0]);
+                if (goodreadsRating[0] >= 0) putJson(existing, "goodreadsRating", goodreadsRating[0]);
+                if (goodreadsRatingCount[0] > 0) putJson(existing, "goodreadsRatingCount", goodreadsRatingCount[0]);
+                if (!goodreadsPageUrl[0].isEmpty()) putJson(existing, "goodreadsUrl", goodreadsPageUrl[0]);
                 if (!saveLibrary()) {
                     restoreLibrary(libraryBeforeSave);
                     dialog.dismiss();
@@ -2875,10 +3122,48 @@ public final class MainActivity extends Activity {
                 if (!originalCoverName.isEmpty() && !originalCoverName.equals(pendingCoverName)) deleteCoverFile(originalCoverName);
                 dialog.dismiss(); if (page.equals("chapters")) showChapters(); else if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
             }
-        }));
+            });
+        });
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void updateBookMetadataFields(GoodreadsMetadataProvider.BookMetadata metadata, String coverName,
+                                          String originalCoverName, EditText title, EditText author,
+                                          EditText genreSearch, Set<String> selectedGenres,
+                                          List<String> availableGenres, GenreCloud cloud) {
+        if (!metadata.title.trim().isEmpty()) title.setText(titleCaseWords(metadata.title));
+        if (!metadata.author.trim().isEmpty()) author.setText(titleCaseWords(metadata.author));
+        if (!metadata.genres.isEmpty()) {
+            selectedGenres.clear();
+            for (String rawGenre : metadata.genres) {
+                String normalized = titleCaseWords(rawGenre);
+                if (normalized.isEmpty()) continue;
+                String matching = null;
+                for (String current : availableGenres) {
+                    if (current.equalsIgnoreCase(normalized)) { matching = current; break; }
+                }
+                if (matching == null) {
+                    availableGenres.add(normalized);
+                    matching = normalized;
+                }
+                selectedGenres.add(matching);
+            }
+        }
+        genreSearch.setText("");
+        cloud.showGenres(genreArray(availableGenres), selectedGenres, "");
+
+        if (coverName != null && !coverName.isEmpty()) {
+            String previousCover = pendingCoverName;
+            pendingCoverName = coverName;
+            if (bookCoverPreview != null) renderCoverPreview(bookCoverPreview, coverName);
+            if (coverRemoveButton != null) coverRemoveButton.setVisibility(View.VISIBLE);
+            if (previousCover != null && !previousCover.isEmpty()
+                    && !previousCover.equals(originalCoverName) && !previousCover.equals(coverName)) {
+                deleteCoverFile(previousCover);
+            }
+        }
     }
 
     private void showCollectionPicker(String[] selectedId, Runnable onSelected) {
@@ -3266,6 +3551,7 @@ public final class MainActivity extends Activity {
             systemBackCallback = null;
         }
         imageExecutor.shutdown();
+        metadataExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -3440,18 +3726,35 @@ public final class MainActivity extends Activity {
     }
 
     private View dialogPadding(View child) {
-        LinearLayout wrap = new LinearLayout(this); wrap.setPadding(dp(20), dp(8), dp(20), dp(8)); wrap.addView(child); return wrap;
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setGravity(Gravity.CENTER_HORIZONTAL);
+        wrap.setPadding(dp(20), dp(8), dp(20), dp(8));
+        wrap.addView(child, new LinearLayout.LayoutParams(-1, -2));
+        return wrap;
     }
 
     private void styleDialogWindow(AlertDialog dialog) {
         Window window = dialog.getWindow();
-        if (window != null) window.setBackgroundDrawable(roundDrawable(SURFACE,
-                lightTheme ? 0xFFD8D2E0 : 0xFF352D3F, 20));
+        if (window != null) {
+            window.setBackgroundDrawable(roundDrawable(SURFACE,
+                    lightTheme ? 0xFFD8D2E0 : 0xFF352D3F, 20));
+            window.setGravity(Gravity.CENTER);
+            int width = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(36));
+            window.setLayout(Math.min(width, dp(460)), android.view.WindowManager.LayoutParams.WRAP_CONTENT);
+        }
         int titleId = dialog.getContext().getResources().getIdentifier("alertTitle", "id", "android");
         TextView title = titleId == 0 ? null : dialog.findViewById(titleId);
-        if (title != null) { title.setTextColor(TEXT); title.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); }
+        if (title != null) {
+            title.setTextColor(TEXT);
+            title.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+            title.setGravity(Gravity.CENTER);
+        }
         TextView message = dialog.findViewById(android.R.id.message);
-        if (message != null) { message.setTextColor(TEXT); message.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); }
+        if (message != null) {
+            message.setTextColor(TEXT);
+            message.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+            message.setGravity(Gravity.CENTER);
+        }
         for (int which : new int[]{AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL}) {
             android.widget.Button button = dialog.getButton(which);
             if (button != null) {
@@ -3459,6 +3762,9 @@ public final class MainActivity extends Activity {
                 button.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
             }
         }
+        int buttonPanelId = dialog.getContext().getResources().getIdentifier("buttonPanel", "id", "android");
+        View buttonPanel = buttonPanelId == 0 ? null : dialog.findViewById(buttonPanelId);
+        if (buttonPanel instanceof LinearLayout) ((LinearLayout) buttonPanel).setGravity(Gravity.CENTER_HORIZONTAL);
         if (window != null) applyDialogTypeface(window.getDecorView());
     }
 

@@ -19,12 +19,20 @@ final class BookRecommendationEngine {
         final String title;
         final String genre;
         final String author;
+        final double rating;
+        final long ratingCount;
 
         Book(long id, String title, String genre, String author) {
+            this(id, title, genre, author, -1, 0);
+        }
+
+        Book(long id, String title, String genre, String author, double rating, long ratingCount) {
             this.id = id;
             this.title = title == null ? "" : title;
             this.genre = normalizeGenre(genre);
             this.author = author == null ? "" : author;
+            this.rating = rating;
+            this.ratingCount = Math.max(0, ratingCount);
         }
     }
 
@@ -67,7 +75,9 @@ final class BookRecommendationEngine {
             if (!unseenBooks.containsKey(book.id)) unseenBooks.put(book.id, book);
             preferences.weightFor(book.genre);
         }
-        if (unseenBooks.isEmpty()) return null;
+        if (unseenBooks.isEmpty()) {
+            return seenBookIds == null || seenBookIds.isEmpty() ? null : recommendBook(books, null);
+        }
 
         if (random.nextDouble() < EXPLORATION_RATE) {
             List<Book> candidates = new ArrayList<>(unseenBooks.values());
@@ -88,7 +98,27 @@ final class BookRecommendationEngine {
         if (selectedGenre == null) selectedGenre = byGenre.keySet().iterator().next();
 
         List<Book> candidates = byGenre.get(selectedGenre);
-        return candidates.isEmpty() ? null : candidates.get(random.nextInt(candidates.size()));
+        return chooseByCommunityRating(candidates);
+    }
+
+    private Book chooseByCommunityRating(List<Book> books) {
+        if (books == null || books.isEmpty()) return null;
+        double totalWeight = 0;
+        for (Book book : books) totalWeight += ratingWeight(book);
+        double selection = random.nextDouble() * totalWeight;
+        for (Book book : books) {
+            selection -= ratingWeight(book);
+            if (selection < 0) return book;
+        }
+        return books.get(books.size() - 1);
+    }
+
+    private double ratingWeight(Book book) {
+        if (book.rating < 0 || Double.isNaN(book.rating) || Double.isInfinite(book.rating)) return 1.0;
+        double normalizedRating = Math.max(1.0, Math.min(5.0, book.rating)) / 5.0;
+        double confidence = book.ratingCount > 0
+                ? book.ratingCount / (book.ratingCount + 25.0) : 0.5;
+        return Math.max(0.4, 1.0 + confidence * (normalizedRating - 0.5) * 1.2);
     }
 
     private static String normalizeGenre(String genre) {
