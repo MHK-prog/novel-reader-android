@@ -16,11 +16,12 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
+import android.graphics.RadialGradient;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -79,6 +80,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.math.BigDecimal;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import android.util.LruCache;
@@ -141,7 +145,9 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.0";
+    private static final String VERSION = "1.3.1";
+    private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
+            "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
@@ -215,6 +221,7 @@ public final class MainActivity extends Activity {
     private TextView toastView;
     private FrameLayout splashOverlay;
     private ProgressBar splashProgress;
+    private ObjectAnimator splashArtAnimator;
     private ImageView bookCoverPreview;
     private String pendingCoverName;
     private LinearLayout tokenSuggestions;
@@ -379,8 +386,13 @@ public final class MainActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setGravity(Gravity.CENTER);
         content.setPadding(dp(42), dp(30), dp(42), dp(30));
-        CometStar comet = new CometStar(this);
-        content.addView(comet, new LinearLayout.LayoutParams(dp(112), dp(112)));
+        ReaderSplashArt art = new ReaderSplashArt(this);
+        content.addView(art, new LinearLayout.LayoutParams(dp(156), dp(142)));
+        splashArtAnimator = ObjectAnimator.ofFloat(art, "pulse", 0.97f, 1.03f);
+        splashArtAnimator.setDuration(1150);
+        splashArtAnimator.setRepeatMode(ObjectAnimator.REVERSE);
+        splashArtAnimator.setRepeatCount(ObjectAnimator.INFINITE);
+        splashArtAnimator.start();
         TextView title = text("کتاب‌خوان", 23, TEXT);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-1, dp(48));
@@ -388,11 +400,9 @@ public final class MainActivity extends Activity {
         content.addView(title, titleParams);
         splashProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         splashProgress.setMax(100); splashProgress.setProgress(0);
-        if (Build.VERSION.SDK_INT >= 21) {
-            splashProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE));
-            splashProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(lightTheme ? 0xFFDCD6E5 : 0xFF302A38));
-        }
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(4));
+        splashProgress.setProgressDrawable(createSplashProgressDrawable());
+        splashProgress.setPadding(0, 0, 0, 0);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(9));
         progressParams.topMargin = dp(13);
         content.addView(splashProgress, progressParams);
         splashOverlay.addView(content, new FrameLayout.LayoutParams(-1, -1));
@@ -402,8 +412,29 @@ public final class MainActivity extends Activity {
         progressAnimator.start();
     }
 
+    private Drawable createSplashProgressDrawable() {
+        GradientDrawable track = new GradientDrawable();
+        track.setShape(GradientDrawable.RECTANGLE);
+        track.setColor(lightTheme ? 0xFFDCD6E5 : 0xFF302A38);
+        track.setCornerRadius(dp(8));
+        int bright = Color.rgb(Math.min(255, Color.red(PURPLE) + 55),
+                Math.min(255, Color.green(PURPLE) + 45), Math.min(255, Color.blue(PURPLE) + 35));
+        GradientDrawable fill = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{PURPLE, bright});
+        fill.setCornerRadius(dp(8));
+        ClipDrawable clippedFill = new ClipDrawable(fill, Gravity.LEFT, ClipDrawable.HORIZONTAL);
+        LayerDrawable layers = new LayerDrawable(new Drawable[]{track, clippedFill});
+        layers.setId(0, android.R.id.background);
+        layers.setId(1, android.R.id.progress);
+        return layers;
+    }
+
     private void finishStartupSplash() {
         if (splashOverlay == null) return;
+        if (splashArtAnimator != null) {
+            splashArtAnimator.cancel();
+            splashArtAnimator = null;
+        }
         if (splashProgress != null) splashProgress.setProgress(100);
         systemRoot.removeView(splashOverlay);
         splashOverlay = null;
@@ -633,9 +664,9 @@ public final class MainActivity extends Activity {
             closeDrawer();
             showRecommendation();
         }), new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("آموزش مدل", "settings", PURPLE, () -> {
+        drawerPanel.addView(textButton("تنظیمات تگ‌ها", "tag", PURPLE, () -> {
             closeDrawer();
-            showTraining();
+            showTagSettings();
         }), new LinearLayout.LayoutParams(-1, dp(52)));
         View spacer = new View(this);
         drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
@@ -731,7 +762,7 @@ public final class MainActivity extends Activity {
         else if ("reader".equals(page)) showReader();
         else if ("settings".equals(page)) showSettings();
         else if ("recommendations".equals(page)) showRecommendation();
-        else if ("training".equals(page)) showTraining();
+        else if ("tagSettings".equals(page)) showTagSettings();
         else if ("hiddenBooks".equals(page)) showHiddenBooks();
         else if ("collectionBooks".equals(page)) showBookShelf(false);
         else if ("collections".equals(page)) showCollections();
@@ -776,7 +807,7 @@ public final class MainActivity extends Activity {
 
     private boolean drawerSwipeAvailable() {
         return "collections".equals(page) || "collectionBooks".equals(page) || "hiddenBooks".equals(page)
-                || "settings".equals(page) || "recommendations".equals(page) || "training".equals(page);
+                || "settings".equals(page) || "recommendations".equals(page) || "tagSettings".equals(page);
     }
 
     private void beginDrawerGesture(float progress) {
@@ -884,69 +915,175 @@ public final class MainActivity extends Activity {
         appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
     }
 
-    private void showTraining() {
-        page = "training";
+    private void showTagSettings() {
+        page = "tagSettings";
+        ensureFavoriteTagsDefined();
         appColumn.removeAllViews();
-        appColumn.addView(makeHeader("آموزش مدل", "", "menu", null, this::openDrawer, null));
+        appColumn.addView(makeHeader("تنظیمات تگ‌ها", "", "menu", null, this::openDrawer, null));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setHorizontalScrollBarEnabled(false);
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(18), dp(14), dp(18), dp(24));
-        body.addView(text("ژانرهای مورد علاقه", 16, TEXT), fieldParams());
-        TextView hint = text("این ژانرها در پیشنهادهای بعدی اولویت می‌گیرند.", 13, MUTED);
+        body.addView(text("تگ‌ها برای دسته‌بندی کتاب‌ها و پیشنهادهای شخصی استفاده می‌شوند.", 13, MUTED), fieldParams());
+        TextView hint = text("قلب هر تگ را بزن تا در پیشنهادها اولویت بگیرد؛ مداد هم نام تگ را عوض می‌کند.", 13, MUTED);
         body.addView(hint, fieldParams());
-        body.addView(text("علاقه‌مندی کتاب‌ها را با قلب بالای صفحهٔ Chapters تنظیم کن.", 13, MUTED), fieldParams());
-
-        EditText genreSearch = edit("جستجو یا افزودن ژانر", false);
-        genreSearch.setSingleLine(true);
-        LinearLayout genreSearchRow = new LinearLayout(this);
-        genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
-        genreSearchRow.addView(clearableInput(genreSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
-        FrameLayout addGenre = iconButton("add", PURPLE, false, () -> { });
-        LinearLayout.LayoutParams addGenreParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        addGenreParams.leftMargin = dp(7);
-        genreSearchRow.addView(addGenre, addGenreParams);
-        body.addView(genreSearchRow, fieldParams());
-
-        Set<String> selectedGenres = new LinkedHashSet<>(favoriteGenrePreferences);
-        ArrayList<String> availableGenres = new ArrayList<>();
-        JSONArray knownGenres = allGenres();
-        for (int i = 0; i < knownGenres.length(); i++) availableGenres.add(knownGenres.optString(i));
-        for (String savedGenre : selectedGenres) addGenreName(availableGenres, savedGenre);
-        GenreCloud cloud = new GenreCloud(this);
-        Runnable renderGenres = () -> cloud.showGenres(genreArray(availableGenres), selectedGenres,
-                genreSearch.getText().toString());
-        renderGenres.run();
-        genreSearch.addTextChangedListener(watcher(renderGenres));
-        addGenre.setOnClickListener(v -> {
-            String value = titleCaseWords(genreSearch.getText().toString());
-            if (value.isEmpty()) { genreSearch.setError("نام ژانر را بنویس"); return; }
-            String existing = findGenreName(availableGenres, value);
-            String chosen = existing == null ? value : existing;
-            addGenreName(availableGenres, chosen);
-            selectedGenres.add(chosen);
-            genreSearch.setText("");
-            renderGenres.run();
-        });
-        body.addView(cloud);
-
-        body.addView(textButton("ذخیرهٔ علاقه‌مندی‌ها", "check", GREEN, () ->
-                saveModelPreferences(selectedGenres)), fieldParams());
+        EditText tagSearch = edit("جستجو یا افزودن تگ", false);
+        tagSearch.setSingleLine(true);
+        LinearLayout tagRows = new LinearLayout(this);
+        tagRows.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout searchRow = new LinearLayout(this);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        searchRow.addView(clearableInput(tagSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
+        FrameLayout addTag = iconButton("add", PURPLE, false, () -> addManagedTag(tagSearch, tagRows));
+        LinearLayout.LayoutParams addTagParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        addTagParams.leftMargin = dp(7);
+        searchRow.addView(addTag, addTagParams);
+        body.addView(searchRow, fieldParams());
+        body.addView(tagRows, new LinearLayout.LayoutParams(-1, -2));
+        tagSearch.addTextChangedListener(watcher(() -> renderManagedTags(tagRows, tagSearch)));
+        renderManagedTags(tagRows, tagSearch);
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     }
 
-    private void saveModelPreferences(Set<String> selectedGenres) {
-        favoriteGenrePreferences.clear();
-        for (String genre : selectedGenres) {
-            String normalized = titleCaseWords(genre);
-            if (!normalized.isEmpty()) favoriteGenrePreferences.add(normalized);
+    private void ensureFavoriteTagsDefined() {
+        JSONArray tags = library.optJSONArray("genres");
+        if (tags == null) tags = new JSONArray();
+        int originalCount = tags.length();
+        for (String favorite : favoriteGenrePreferences) appendUniqueGenre(tags, favorite);
+        if (tags.length() == originalCount) return;
+        putJson(library, "genres", tags);
+        if (saveLibrary()) {
+            rebuildRecommendationWeights();
+            persistRecommendationState();
+        }
+    }
+
+    private void renderManagedTags(LinearLayout rows, EditText search) {
+        rows.removeAllViews();
+        String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+        JSONArray tags = allGenres();
+        for (int i = 0; i < tags.length(); i++) {
+            String tag = tags.optString(i);
+            if (!tag.toLowerCase(Locale.ROOT).contains(query)) continue;
+            boolean favorite = favoriteGenrePreferences.contains(tag);
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(10), dp(3), dp(10), dp(3));
+            row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(54));
+            rowParams.bottomMargin = dp(7);
+            TextView label = text(tag, 15, TEXT);
+            label.setSingleLine(true);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
+            FrameLayout favoriteButton = iconButton(favorite ? "heart_filled" : "heart_outline",
+                    favorite ? RED : PURPLE, false, () -> {
+                        if (!favoriteGenrePreferences.add(tag)) favoriteGenrePreferences.remove(tag);
+                        rebuildRecommendationWeights();
+                        persistRecommendationState();
+                        renderManagedTags(rows, search);
+                    });
+            favoriteButton.setContentDescription(favorite ? "حذف تگ از علاقه‌مندی‌ها" : "افزودن تگ به علاقه‌مندی‌ها");
+            row.addView(favoriteButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            FrameLayout editButton = iconButton("edit", MUTED, false,
+                    () -> showEditTagDialog(tag, rows, search));
+            editButton.setContentDescription("ویرایش نام تگ");
+            row.addView(editButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            rows.addView(row, rowParams);
+        }
+        if (rows.getChildCount() == 0) {
+            TextView empty = emptyLabel(query.isEmpty() ? "هنوز تگی ساخته نشده" : "تگی پیدا نشد");
+            rows.addView(empty, new LinearLayout.LayoutParams(-1, dp(80)));
+        }
+    }
+
+    private void addManagedTag(EditText search, LinearLayout rows) {
+        String tag = titleCaseWords(search.getText().toString());
+        if (tag.isEmpty()) { search.setError("نام تگ را وارد کن"); return; }
+        JSONArray tags = library.optJSONArray("genres");
+        if (tags == null) tags = new JSONArray();
+        if (findGenreName(tags, tag) != null) { search.setError("این تگ از قبل وجود دارد"); return; }
+        appendUniqueGenre(tags, tag);
+        putJson(library, "genres", tags);
+        if (!saveLibrary()) return;
+        rebuildRecommendationWeights();
+        persistRecommendationState();
+        search.setText("");
+        renderManagedTags(rows, search);
+    }
+
+    private void showEditTagDialog(String oldTag, LinearLayout rows, EditText search) {
+        EditText name = edit("نام تگ", false);
+        name.setText(oldTag);
+        name.setSelection(name.length());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ویرایش تگ")
+                .setView(dialogPadding(name)).setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String newTag = titleCaseWords(name.getText().toString());
+            if (newTag.isEmpty()) { name.setError("نام تگ را وارد کن"); return; }
+            if (renameTag(oldTag, newTag)) {
+                dialog.dismiss();
+                renderManagedTags(rows, search);
+            }
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private boolean renameTag(String oldTag, String newTag) {
+        JSONArray tags = library.optJSONArray("genres");
+        String existing = tags == null ? null : findGenreName(tags, newTag);
+        if (existing != null && !existing.equalsIgnoreCase(oldTag)) {
+            toast("این تگ از قبل وجود دارد");
+            return false;
+        }
+        if (oldTag.equals(newTag)) return true;
+        String before = library.toString();
+        Set<String> oldFavorites = new LinkedHashSet<>(favoriteGenrePreferences);
+        Set<String> oldFilters = new HashSet<>(activeGenreFilter);
+        try {
+            library.put("genres", renamedTags(tags, oldTag, newTag));
+            JSONArray books = library.optJSONArray("books");
+            if (books != null) for (int i = 0; i < books.length(); i++) {
+                JSONObject book = books.optJSONObject(i);
+                if (book != null) book.put("genres", renamedTags(book.optJSONArray("genres"), oldTag, newTag));
+            }
+        } catch (JSONException ignored) { return false; }
+        replaceSetValue(favoriteGenrePreferences, oldTag, newTag);
+        replaceSetValue(activeGenreFilter, oldTag, newTag);
+        if (!saveLibrary()) {
+            try { library = new JSONObject(before); } catch (JSONException ignored) { }
+            favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
+            activeGenreFilter.clear(); activeGenreFilter.addAll(oldFilters);
+            return false;
         }
         rebuildRecommendationWeights();
         persistRecommendationState();
-        toast("علاقه‌مندی‌ها ذخیره شد و پیشنهادها بر اساس آن تنظیم شدند.");
+        toast("تگ و کتاب‌های مرتبط به‌روزرسانی شدند");
+        return true;
+    }
+
+    private JSONArray renamedTags(JSONArray source, String oldTag, String newTag) {
+        JSONArray result = new JSONArray();
+        if (source == null) return result;
+        for (int i = 0; i < source.length(); i++) {
+            String value = source.optString(i);
+            appendUniqueGenre(result, value.equalsIgnoreCase(oldTag) ? newTag : value);
+        }
+        return result;
+    }
+
+    private void replaceSetValue(Set<String> values, String oldValue, String newValue) {
+        boolean found = false;
+        for (String value : new ArrayList<>(values)) {
+            if (value.equalsIgnoreCase(oldValue)) { values.remove(value); found = true; }
+        }
+        if (found) values.add(newValue);
     }
 
     private void addGenreName(Collection<String> genres, String value) {
@@ -1463,6 +1600,7 @@ public final class MainActivity extends Activity {
         JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
         if (chapters == null) return;
         if (chapters.length() >= 5000) { toast("حداکثر ۵۰۰۰ Chapter پشتیبانی می‌شود."); return; }
+        String bookId = book.optString("id");
         int newIndex = chapters.length();
         EditText chapterName = edit("Chapter name or number", false);
         chapterName.setText("Chapter " + (newIndex + 1));
@@ -1473,19 +1611,65 @@ public final class MainActivity extends Activity {
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String label = chapterName.getText().toString().trim();
             if (label.isEmpty()) { chapterName.setError("Enter a Chapter name or number"); return; }
+            JSONObject currentBook = findBookById(bookId);
+            JSONArray currentChapters = currentBook == null ? null : currentBook.optJSONArray("chapters");
+            if (currentChapters == null || currentChapters.length() >= 5000) return;
+            String before = library.toString();
+            ensureChapterStorageIndexes(currentChapters);
             JSONObject chapter = newChapter();
             putJson(chapter, "title", label);
-            chapters.put(chapter);
+            int storageIndex = currentChapters.length() + 1;
+            putJson(chapter, "storageIndex", storageIndex);
+            int insertAt = chapterInsertionIndex(currentChapters, label);
+            JSONArray ordered = new JSONArray();
+            for (int i = 0; i <= currentChapters.length(); i++) {
+                if (i == insertAt) ordered.put(chapter);
+                if (i < currentChapters.length()) ordered.put(currentChapters.optJSONObject(i));
+            }
+            putJson(currentBook, "chapters", ordered);
             if (!saveLibrary()) {
-                chapters.remove(newIndex);
+                try { library = new JSONObject(before); } catch (JSONException ignoredError) { }
                 return;
             }
             dialog.dismiss();
-            openReader(newIndex);
+            openReader(insertAt);
         }));
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void ensureChapterStorageIndexes(JSONArray chapters) {
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && chapter.optInt("storageIndex", 0) < 1) {
+                putJson(chapter, "storageIndex", i + 1);
+            }
+        }
+    }
+
+    private int chapterInsertionIndex(JSONArray chapters, String newLabel) {
+        BigDecimal number = chapterNumber(newLabel);
+        if (number == null) return chapters.length();
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            BigDecimal existing = chapterNumber(chapter == null ? "" : chapter.optString("title"));
+            if (existing != null && existing.compareTo(number) > 0) return i;
+        }
+        return chapters.length();
+    }
+
+    private BigDecimal chapterNumber(String label) {
+        if (label == null) return null;
+        Matcher matcher = CHAPTER_NUMBER_PATTERN.matcher(label.trim());
+        if (!matcher.matches()) return null;
+        try { return new BigDecimal(matcher.group(1)); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private int chapterStorageIndex(JSONObject chapter, int position) {
+        int saved = chapter == null ? 0 : chapter.optInt("storageIndex", 0);
+        return saved > 0 ? saved : position + 1;
     }
 
     private void toggleActiveBookFavorite() {
@@ -1734,7 +1918,9 @@ public final class MainActivity extends Activity {
         saveCurrentChapter(false);
         JSONObject book = activeBook();
         if (book == null) return;
-        String base = "chapter-" + (book.optString("id") + ":" + (index + 1)).replaceAll("[^A-Za-z0-9._-]", "-");
+        JSONObject chapterForFile = book.optJSONArray("chapters").optJSONObject(index);
+        String base = "chapter-" + (book.optString("id") + ":"
+                + chapterStorageIndex(chapterForFile, index)).replaceAll("[^A-Za-z0-9._-]", "-");
         String loadedText;
         try {
             loadedText = storage.read(base + ".md");
@@ -1771,7 +1957,8 @@ public final class MainActivity extends Activity {
         if (chapter == null) return false;
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
         putJson(chapter, "scroll", readerScroll == null ? 0 : readerScroll.getScrollY());
-        String file = "chapter-" + (activeBookId + ":" + (activeChapter + 1)).replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
+        String file = "chapter-" + (activeBookId + ":"
+                + chapterStorageIndex(chapter, activeChapter)).replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
         if (chapterDirty) {
             if (!storage.write(file, chapterText)) {
                 toast("ذخیرهٔ Chapter ناموفق بود: " + storage.lastError());
@@ -2325,7 +2512,7 @@ public final class MainActivity extends Activity {
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) { if (returnedFromHiddenBooks) showHiddenBooks(); else showBookShelf(false); }
         else if ("collectionBooks".equals(page) || "hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
-        else if ("settings".equals(page) || "recommendations".equals(page) || "training".equals(page)) showDashboard();
+        else if ("settings".equals(page) || "recommendations".equals(page) || "tagSettings".equals(page)) showDashboard();
         else super.onBackPressed();
     }
 
@@ -3087,32 +3274,84 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private final class CometStar extends View {
-        private final Paint gradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Drawable star;
+    private final class ReaderSplashArt extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float pulse = 1f;
 
-        CometStar(Context context) {
+        ReaderSplashArt(Context context) {
             super(context);
-            int resourceId = getResources().getIdentifier("startup_star", "drawable", getPackageName());
-            star = resourceId == 0 ? null : getDrawable(resourceId).mutate();
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        public void setPulse(float value) {
+            pulse = value;
+            invalidate();
         }
 
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            if (star == null) return;
-            float size = Math.min(getWidth(), getHeight());
-            float left = (getWidth() - size) / 2f;
-            float top = (getHeight() - size) / 2f;
-            int layer = canvas.saveLayer(left, top, left + size, top + size, null);
-            star.setBounds(Math.round(left), Math.round(top), Math.round(left + size), Math.round(top + size));
-            star.draw(canvas);
-            gradientPaint.setShader(new LinearGradient(left, top, left + size, top + size,
-                    0xFF6A00F5, 0xFFE2C4FF, android.graphics.Shader.TileMode.CLAMP));
-            gradientPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
-            canvas.drawRect(left, top, left + size, top + size, gradientPaint);
-            gradientPaint.setXfermode(null);
-            gradientPaint.setShader(null);
-            canvas.restoreToCount(layer);
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            canvas.save();
+            canvas.scale(pulse, pulse, cx, cy);
+
+            float glowRadius = dp(50);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new RadialGradient(cx, cy, glowRadius,
+                    new int[]{Color.argb(90, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)),
+                            Color.TRANSPARENT}, null, android.graphics.Shader.TileMode.CLAMP));
+            canvas.drawCircle(cx, cy, glowRadius, paint);
+            paint.setShader(null);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1.2f));
+            paint.setColor(Color.argb(85, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)));
+            canvas.drawCircle(cx, cy, dp(42), paint);
+            android.graphics.RectF orbit = new android.graphics.RectF(cx - dp(52), cy - dp(25),
+                    cx + dp(52), cy + dp(25));
+            paint.setStrokeWidth(dp(1));
+            canvas.drawArc(orbit, 205, 220, false, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(PURPLE);
+            canvas.drawCircle(cx - dp(44), cy - dp(12), dp(2.2f), paint);
+            canvas.drawCircle(cx + dp(47), cy + dp(7), dp(1.7f), paint);
+            paint.setColor(0xFFDCC6FF);
+            canvas.drawCircle(cx + dp(27), cy - dp(37), dp(1.5f), paint);
+
+            Path leftPage = new Path();
+            leftPage.moveTo(cx, cy - dp(19));
+            leftPage.cubicTo(cx - dp(11), cy - dp(27), cx - dp(24), cy - dp(26), cx - dp(31), cy - dp(23));
+            leftPage.lineTo(cx - dp(31), cy + dp(19));
+            leftPage.cubicTo(cx - dp(19), cy + dp(14), cx - dp(8), cy + dp(17), cx, cy + dp(25));
+            leftPage.close();
+            Path rightPage = new Path();
+            rightPage.moveTo(cx, cy - dp(19));
+            rightPage.cubicTo(cx + dp(11), cy - dp(27), cx + dp(24), cy - dp(26), cx + dp(31), cy - dp(23));
+            rightPage.lineTo(cx + dp(31), cy + dp(19));
+            rightPage.cubicTo(cx + dp(19), cy + dp(14), cx + dp(8), cy + dp(17), cx, cy + dp(25));
+            rightPage.close();
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new LinearGradient(cx - dp(31), cy, cx + dp(31), cy,
+                    new int[]{0xFF7B35EB, PURPLE, 0xFFD9BCFF}, null,
+                    android.graphics.Shader.TileMode.CLAMP));
+            canvas.drawPath(leftPage, paint);
+            canvas.drawPath(rightPage, paint);
+            paint.setShader(null);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1.4f));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+            paint.setColor(0xFFEDE1FF);
+            canvas.drawPath(leftPage, paint);
+            canvas.drawPath(rightPage, paint);
+            canvas.drawLine(cx, cy - dp(18), cx, cy + dp(23), paint);
+            canvas.drawLine(cx - dp(24), cy - dp(13), cx - dp(10), cy - dp(10), paint);
+            canvas.drawLine(cx - dp(23), cy - dp(5), cx - dp(10), cy - dp(2), paint);
+            canvas.drawLine(cx + dp(10), cy - dp(10), cx + dp(24), cy - dp(13), paint);
+            canvas.drawLine(cx + dp(10), cy - dp(2), cx + dp(23), cy - dp(5), paint);
+            canvas.restore();
         }
     }
 
