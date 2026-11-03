@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.7";
+    private static final String VERSION = "1.3.8";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -1802,6 +1802,7 @@ public final class MainActivity extends Activity {
 
     private void showCollections() {
         page = "collections";
+        selectedCollectionIds.clear();
         appColumn.removeAllViews();
         addCollectionsHeader();
         collectionsGrid = new GridView(this);
@@ -1829,6 +1830,16 @@ public final class MainActivity extends Activity {
                 selectedBookIds.clear();
                 showBookShelf(false);
             }
+        });
+        collectionsGrid.setOnItemLongClickListener((parent, view, position, id) -> {
+            JSONObject collection = collectionAdapter.getCollection(position);
+            if (collection == null) return false;
+            String collectionId = collection.optString("id");
+            if (selectedCollectionIds.contains(collectionId)) {
+                return startReorderDrag(view, "collection", collectionId);
+            }
+            toggleCollectionSelection(collection);
+            return true;
         });
         FrameLayout frame = new FrameLayout(this);
         frame.addView(collectionsGrid, new FrameLayout.LayoutParams(-1, -1));
@@ -4101,12 +4112,6 @@ public final class MainActivity extends Activity {
             TextView count = text(collectionBookCount(collection.optString("id")) + " کتاب", 12, MUTED);
             count.setGravity(Gravity.CENTER);
             card.addView(count, new LinearLayout.LayoutParams(-1, dp(22)));
-            card.setOnLongClickListener(v -> {
-                String id = collection.optString("id");
-                if (selectedCollectionIds.contains(id)) return startReorderDrag(card, "collection", id);
-                toggleCollectionSelection(collection);
-                return true;
-            });
             setReorderDropTarget(card, "collection", collection.optString("id"));
             return card;
         }
