@@ -24,6 +24,7 @@ final class ColloquialPersianTransformer {
         String result = replacePairs(text, readPairs(rules.optJSONArray("normalizations")), "general", null);
         result = replacePairs(result, readPairs(rules.optJSONArray("prefixes")), "prefix", null);
         result = replacePairs(result, readPairs(rules.optJSONArray("phrases")), "general", null);
+        result = replaceContextualPairs(result, readContextualPairs(rules.optJSONArray("contextualVerbs")));
         result = replacePairs(result, suffixes, "suffix", null);
         result = replacePairs(result, readPairs(rules.optJSONArray("words")), "word", suffixes);
         return replacePairs(result, readPairs(rules.optJSONArray("verbs")), "general", null);
@@ -40,6 +41,48 @@ final class ColloquialPersianTransformer {
             if (!source.isEmpty() && !source.equals(replacement)) pairs.add(new Pair(source, replacement));
         }
         return pairs;
+    }
+
+    private static List<ContextualPair> readContextualPairs(JSONArray array) {
+        List<ContextualPair> pairs = new ArrayList<>();
+        if (array == null) return pairs;
+        for (int i = 0; i < array.length(); i++) {
+            JSONArray item = array.optJSONArray(i);
+            if (item == null || item.length() < 3) continue;
+            String source = item.optString(0, "");
+            String replacement = item.optString(1, "");
+            JSONArray contextsArray = item.optJSONArray(2);
+            if (source.isEmpty() || replacement.isEmpty() || contextsArray == null) continue;
+            List<String> contexts = new ArrayList<>();
+            for (int j = 0; j < contextsArray.length(); j++) {
+                String context = contextsArray.optString(j, "").trim();
+                if (!context.isEmpty()) contexts.add(context);
+            }
+            if (!contexts.isEmpty()) pairs.add(new ContextualPair(source, replacement, contexts));
+        }
+        return pairs;
+    }
+
+    private static String replaceContextualPairs(String text, List<ContextualPair> pairs) {
+        String result = text;
+        for (ContextualPair pair : pairs) {
+            List<String> contexts = new ArrayList<>(pair.contexts);
+            contexts.sort((left, right) -> Integer.compare(right.length(), left.length()));
+            for (String context : contexts) {
+                String regex = "(?<![\\p{L}\\p{N}\\u200c])(" + flexiblePattern(context, false)
+                        + ")([ \\u200c]+)" + flexiblePattern(pair.source, false)
+                        + "(?![\\p{L}\\p{N}\\u200c])";
+                Matcher matcher = Pattern.compile(regex).matcher(result);
+                StringBuffer output = new StringBuffer();
+                while (matcher.find()) {
+                    String replacement = matcher.group(1) + matcher.group(2) + pair.replacement;
+                    matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
+                }
+                matcher.appendTail(output);
+                result = output.toString();
+            }
+        }
+        return result;
     }
 
     private static String replacePairs(String text, List<Pair> pairs, String kind, List<Pair> suffixes) {
@@ -124,6 +167,18 @@ final class ColloquialPersianTransformer {
         Pair(String source, String replacement) {
             this.source = source;
             this.replacement = replacement;
+        }
+    }
+
+    private static final class ContextualPair {
+        final String source;
+        final String replacement;
+        final List<String> contexts;
+
+        ContextualPair(String source, String replacement, List<String> contexts) {
+            this.source = source;
+            this.replacement = replacement;
+            this.contexts = contexts;
         }
     }
 }

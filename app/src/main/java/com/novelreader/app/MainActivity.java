@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.4";
+    private static final String VERSION = "1.4.5";
     private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
     private static final String COLLOQUIAL_MANIFEST_URL =
             "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";
@@ -1134,10 +1134,11 @@ public final class MainActivity extends Activity {
     }
 
     private void validateExtensionManifest(JSONObject manifest) throws Exception {
+        int rulesSchema = manifest.optInt("rulesSchema", 0);
         if (manifest.optInt("schema", 0) != 1
                 || !COLLOQUIAL_PLUGIN_ID.equals(manifest.optString("id"))
                 || manifest.optInt("engineApi", 0) != 1
-                || manifest.optInt("rulesSchema", 0) != 1
+                || (rulesSchema != 1 && rulesSchema != 2)
                 || manifest.optString("version").trim().isEmpty()) {
             throw new IOException("Unsupported colloquial-core extension manifest.");
         }
@@ -1174,7 +1175,8 @@ public final class MainActivity extends Activity {
 
     private void validateRulesJson(String rulesText, int expectedSchema) throws Exception {
         JSONObject rules = new JSONObject(rulesText);
-        if (expectedSchema < 1 || rules.optInt("version", 0) != expectedSchema) {
+        if ((expectedSchema != 1 && expectedSchema != 2)
+                || rules.optInt("version", 0) != expectedSchema) {
             throw new IOException("Unsupported Persian rules schema.");
         }
         for (String section : new String[]{"normalizations", "prefixes", "phrases", "suffixes", "words", "verbs"}) {
@@ -1184,6 +1186,25 @@ public final class MainActivity extends Activity {
                 JSONArray pair = entries.optJSONArray(i);
                 if (pair == null || pair.length() < 2 || pair.optString(0).isEmpty()) {
                     throw new IOException("Invalid rule in " + section + ".");
+                }
+            }
+        }
+        JSONArray contextualVerbs = rules.optJSONArray("contextualVerbs");
+        if (expectedSchema == 2 && contextualVerbs == null) {
+            throw new IOException("The rules are missing contextualVerbs.");
+        }
+        if (contextualVerbs != null) {
+            for (int i = 0; i < contextualVerbs.length(); i++) {
+                JSONArray rule = contextualVerbs.optJSONArray(i);
+                JSONArray contexts = rule == null ? null : rule.optJSONArray(2);
+                if (rule == null || rule.length() < 3 || rule.optString(0).isEmpty()
+                        || rule.optString(1).isEmpty() || contexts == null || contexts.length() == 0) {
+                    throw new IOException("Invalid contextual verb rule.");
+                }
+                for (int j = 0; j < contexts.length(); j++) {
+                    if (contexts.optString(j).trim().isEmpty()) {
+                        throw new IOException("Invalid contextual verb context.");
+                    }
                 }
             }
         }
@@ -1203,23 +1224,23 @@ public final class MainActivity extends Activity {
     }
 
     private FrameLayout createColloquialButton() {
-        FrameLayout holder = new FrameLayout(this);
-        styleIconButton(holder, false);
-        holder.setContentDescription("تبدیل متن به محاوره‌ای");
-        holder.setClickable(true);
-        holder.setFocusable(true);
-        applyPressScale(holder);
-        holder.setOnClickListener(v -> transformCurrentChapter());
+        FrameLayout button = new FrameLayout(this);
+        styleIconButton(button, false);
+        button.setContentDescription("تبدیل متن به محاوره‌ای");
+        button.setClickable(true);
+        button.setFocusable(true);
+        applyPressScale(button);
+        button.setOnClickListener(v -> transformCurrentChapter());
         readerTransformIcon = new NativeIconView(this, "scan_text", PURPLE);
-        holder.addView(readerTransformIcon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        button.addView(readerTransformIcon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
         readerTransformSpinner = new ProgressBar(this);
         readerTransformSpinner.setIndeterminate(true);
         if (Build.VERSION.SDK_INT >= 21) {
             readerTransformSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
         }
         readerTransformSpinner.setVisibility(View.GONE);
-        holder.addView(readerTransformSpinner, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
-        return holder;
+        button.addView(readerTransformSpinner, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
+        return button;
     }
 
     private void transformCurrentChapter() {
@@ -2811,7 +2832,7 @@ public final class MainActivity extends Activity {
         readerBottomBar = null;
         View readerHeaderBar = makeCompactReaderHeader(book.optString("title"),
                 chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length());
-        appColumn.addView(readerHeaderBar, new LinearLayout.LayoutParams(-1, dp(34)));
+        appColumn.addView(readerHeaderBar, new LinearLayout.LayoutParams(-1, dp(80)));
         FrameLayout progressTrack = new FrameLayout(this); progressTrack.setBackgroundColor(0xFF241C2E);
         readerProgress = new View(this); readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
@@ -2862,8 +2883,6 @@ public final class MainActivity extends Activity {
             updateProgress();
         });
         appColumn.addView(readerFrame, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout deviceInfo = addReaderDeviceInfo();
-        if (deviceInfo != null) appColumn.addView(deviceInfo, new LinearLayout.LayoutParams(-1, dp(30)));
         readerFrame.requestFocus();
         if (Build.VERSION.SDK_INT >= 30) {
             readerFrame.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -2890,7 +2909,10 @@ public final class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(0, dp(54), 1));
         if (isColloquialPluginEnabled()) {
             readerTransformButton = createColloquialButton();
-            bottom.addView(readerTransformButton, new LinearLayout.LayoutParams(0, dp(54), 1));
+            FrameLayout transformSlot = new FrameLayout(this);
+            transformSlot.addView(readerTransformButton,
+                    new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
+            bottom.addView(transformSlot, new LinearLayout.LayoutParams(0, dp(54), 1));
         }
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
         nextChapterButton.setTranslationX(dp(8));
@@ -2951,59 +2973,6 @@ public final class MainActivity extends Activity {
                         chapterEditor.getWidth(), caretY + dp(60)), true);
             }, 170);
         });
-    }
-
-    private LinearLayout addReaderDeviceInfo() {
-        SharedPreferences preferences = getSharedPreferences("reader_display", MODE_PRIVATE);
-        boolean showBattery = preferences.getBoolean("show_battery", true);
-        boolean showClock = preferences.getBoolean("show_clock", true);
-        batteryPercentView = null;
-        batteryLevelIcon = null;
-        if (!showBattery && !showClock) return null;
-
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        row.setPadding(dp(16), 0, dp(16), 0);
-        if (showBattery) {
-            LinearLayout battery = new LinearLayout(this);
-            battery.setGravity(Gravity.CENTER_VERTICAL);
-            battery.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            FrameLayout icon = new FrameLayout(this);
-            ImageView fill = new ImageView(this);
-            fill.setScaleType(ImageView.ScaleType.FIT_XY);
-            fill.setImageResource(R.drawable.battery_level_drawable);
-            FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(dp(16), dp(6),
-                    Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            fillParams.leftMargin = dp(3);
-            icon.addView(fill, fillParams);
-            ImageView outline = new ImageView(this);
-            outline.setScaleType(ImageView.ScaleType.FIT_XY);
-            outline.setImageResource(R.drawable.battery_status);
-            outline.setImageTintList(android.content.res.ColorStateList.valueOf(PURPLE));
-            icon.addView(outline, new FrameLayout.LayoutParams(dp(24), dp(12), Gravity.CENTER));
-            batteryLevelIcon = fill;
-            battery.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(18)));
-            batteryPercentView = text("--%", 13, TEXT);
-            batteryPercentView.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
-            LinearLayout.LayoutParams percentParams = new LinearLayout.LayoutParams(-2, -1);
-            percentParams.leftMargin = dp(5);
-            battery.addView(batteryPercentView, percentParams);
-            row.addView(battery, new LinearLayout.LayoutParams(-2, -1));
-            updateBatteryIndicator(null);
-        }
-        row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-        if (showClock) {
-            TextClock clock = new TextClock(this);
-            clock.setFormat24Hour("HH:mm");
-            clock.setFormat12Hour("h:mm a");
-            clock.setTextColor(TEXT);
-            clock.setTextSize(14);
-            clock.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-            clock.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-            row.addView(clock, new LinearLayout.LayoutParams(-2, -1));
-        }
-        return row;
     }
 
     private void updateBatteryIndicator(Intent battery) {
@@ -4074,6 +4043,13 @@ public final class MainActivity extends Activity {
     private View makeCompactReaderHeader(String title, String subtitle) {
         FrameLayout header = new FrameLayout(this);
         header.setBackgroundColor(BG);
+
+        SharedPreferences preferences = getSharedPreferences("reader_display", MODE_PRIVATE);
+        boolean showBattery = preferences.getBoolean("show_battery", true);
+        boolean showClock = preferences.getBoolean("show_clock", true);
+        batteryPercentView = null;
+        batteryLevelIcon = null;
+
         LinearLayout textBlock = new LinearLayout(this);
         textBlock.setGravity(Gravity.CENTER);
         textBlock.setOrientation(LinearLayout.VERTICAL);
@@ -4088,8 +4064,81 @@ public final class MainActivity extends Activity {
         subtitleText.setMaxLines(1);
         subtitleText.setIncludeFontPadding(false);
         textBlock.addView(subtitleText, new LinearLayout.LayoutParams(-1, dp(13)));
-        header.addView(textBlock, new FrameLayout.LayoutParams(-1, -1));
+
+        FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER);
+        textParams.leftMargin = dp(80);
+        textParams.rightMargin = dp(80);
+        header.addView(textBlock, textParams);
+
+        LinearLayout leftSide = new LinearLayout(this);
+        leftSide.setOrientation(LinearLayout.VERTICAL);
+        leftSide.setGravity(Gravity.CENTER);
+        leftSide.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        if (showBattery) {
+            leftSide.addView(createReaderBatteryWidget(), new LinearLayout.LayoutParams(-2, dp(24)));
+        } else {
+            leftSide.addView(new View(this), new LinearLayout.LayoutParams(1, dp(24)));
+        }
+        LinearLayout.LayoutParams helpParams = new LinearLayout.LayoutParams(dp(42), dp(40));
+        helpParams.topMargin = dp(2);
+        leftSide.addView(plainIconButton("help", PURPLE, this::showSpecialTokenHelp), helpParams);
+        header.addView(leftSide, new FrameLayout.LayoutParams(dp(78), -1, Gravity.LEFT | Gravity.CENTER_VERTICAL));
+
+        LinearLayout rightSide = new LinearLayout(this);
+        rightSide.setOrientation(LinearLayout.VERTICAL);
+        rightSide.setGravity(Gravity.CENTER);
+        rightSide.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        if (showClock) {
+            rightSide.addView(createReaderClockWidget(), new LinearLayout.LayoutParams(-1, dp(24)));
+        } else {
+            rightSide.addView(new View(this), new LinearLayout.LayoutParams(1, dp(24)));
+        }
+        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(42), dp(40));
+        backParams.topMargin = dp(2);
+        rightSide.addView(plainIconButton("next", PURPLE, this::showChapters), backParams);
+        header.addView(rightSide, new FrameLayout.LayoutParams(dp(78), -1, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
         return header;
+    }
+
+    private View createReaderBatteryWidget() {
+        LinearLayout battery = new LinearLayout(this);
+        battery.setGravity(Gravity.CENTER_VERTICAL);
+        battery.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        FrameLayout icon = new FrameLayout(this);
+        ImageView fill = new ImageView(this);
+        fill.setScaleType(ImageView.ScaleType.FIT_XY);
+        fill.setImageResource(R.drawable.battery_level_drawable);
+        FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(dp(16), dp(6),
+                Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        fillParams.leftMargin = dp(3);
+        icon.addView(fill, fillParams);
+        ImageView outline = new ImageView(this);
+        outline.setScaleType(ImageView.ScaleType.FIT_XY);
+        outline.setImageResource(R.drawable.battery_status);
+        outline.setImageTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        icon.addView(outline, new FrameLayout.LayoutParams(dp(24), dp(12), Gravity.CENTER));
+        batteryLevelIcon = fill;
+        battery.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(18)));
+        batteryPercentView = text("--%", 12, TEXT);
+        batteryPercentView.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        LinearLayout.LayoutParams percentParams = new LinearLayout.LayoutParams(-2, -1);
+        percentParams.leftMargin = dp(4);
+        battery.addView(batteryPercentView, percentParams);
+        updateBatteryIndicator(null);
+        return battery;
+    }
+
+    private View createReaderClockWidget() {
+        TextClock clock = new TextClock(this);
+        clock.setFormat24Hour("HH:mm");
+        clock.setFormat12Hour("h:mm a");
+        clock.setTextColor(TEXT);
+        clock.setTextSize(14);
+        clock.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+        clock.setGravity(Gravity.CENTER);
+        clock.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        clock.setMaxLines(1);
+        return clock;
     }
 
     private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon, Runnable left, Runnable right) {
