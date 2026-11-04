@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.3";
+    private static final String VERSION = "1.4.4";
     private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
     private static final String COLLOQUIAL_MANIFEST_URL =
             "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";
@@ -1055,16 +1055,25 @@ public final class MainActivity extends Activity {
                 String manifestText = new String(manifestBytes, StandardCharsets.UTF_8);
                 JSONObject manifest = new JSONObject(manifestText);
                 validateExtensionManifest(manifest);
-                JSONObject files = manifest.getJSONObject("files");
-                String engine = downloadExtensionAsset(files, "engine.kt", 128 * 1024);
-                String rules = downloadExtensionAsset(files, "rules.json", 256 * 1024);
-                validateRulesJson(rules, manifest.optInt("rulesSchema", 0));
-                verifyExtensionFile(manifest, "engine.kt", engine);
-                verifyExtensionFile(manifest, "rules.json", rules);
-                if (!storage.writeExtensionFile("engine.kt", engine)) throw new IOException(storage.lastError());
-                if (!storage.writeExtensionFile("rules.json", rules)) throw new IOException(storage.lastError());
-                if (!storage.writeExtensionFile("extension.json", manifestText)) throw new IOException(storage.lastError());
-                readVerifiedColloquialRules();
+                boolean alreadyInstalled = false;
+                try {
+                    if (manifestText.equals(storage.readExtensionFile("extension.json"))) {
+                        readVerifiedColloquialRules();
+                        alreadyInstalled = true;
+                    }
+                } catch (Exception ignored) { }
+                if (!alreadyInstalled) {
+                    JSONObject files = manifest.getJSONObject("files");
+                    String engine = downloadExtensionAsset(files, "engine.kt", 128 * 1024);
+                    String rules = downloadExtensionAsset(files, "rules.json", 256 * 1024);
+                    validateRulesJson(rules, manifest.optInt("rulesSchema", 0));
+                    verifyExtensionFile(manifest, "engine.kt", engine);
+                    verifyExtensionFile(manifest, "rules.json", rules);
+                    if (!storage.writeExtensionFile("engine.kt", engine)) throw new IOException(storage.lastError());
+                    if (!storage.writeExtensionFile("rules.json", rules)) throw new IOException(storage.lastError());
+                    if (!storage.writeExtensionFile("extension.json", manifestText)) throw new IOException(storage.lastError());
+                    readVerifiedColloquialRules();
+                }
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }

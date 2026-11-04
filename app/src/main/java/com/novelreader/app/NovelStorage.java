@@ -153,7 +153,7 @@ final class NovelStorage {
         if (!supportedExtensionFile(fileName)) throw new IOException("Invalid extension file name.");
         Uri directory = extensionDirectoryUri(false);
         if (directory == null) return null;
-        Uri file = findChild(directory, fileName);
+        Uri file = findExtensionFile(directory, fileName);
         if (file == null) return null;
         try (InputStream input = activity.getContentResolver().openInputStream(file);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -168,8 +168,11 @@ final class NovelStorage {
         try {
             Uri directory = extensionDirectoryUri(true);
             String mime = "extension.json".equals(fileName) || "rules.json".equals(fileName)
-                    ? "application/json" : "text/plain";
+                    ? "application/json" : "application/octet-stream";
             Uri file = findChild(directory, fileName);
+            if (file == null && "engine.kt".equals(fileName)) {
+                file = findLegacyEngineFile(directory);
+            }
             if (file == null) file = DocumentsContract.createDocument(
                     activity.getContentResolver(), directory, mime, fileName);
             if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
@@ -263,6 +266,34 @@ final class NovelStorage {
 
     private static boolean supportedExtensionFile(String name) {
         return "extension.json".equals(name) || "rules.json".equals(name) || "engine.kt".equals(name);
+    }
+
+    private Uri findExtensionFile(Uri directory, String fileName) throws Exception {
+        Uri file = findChild(directory, fileName);
+        if (file != null || !"engine.kt".equals(fileName)) return file;
+        return findLegacyEngineFile(directory);
+    }
+
+    private Uri findLegacyEngineFile(Uri directory) throws Exception {
+        Uri exact = findChild(directory, "engine.kt.txt");
+        if (exact != null) return exact;
+
+        String id = DocumentsContract.getDocumentId(directory);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(directory, id);
+        String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME };
+        try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
+            if (cursor == null) return null;
+            int idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+            while (cursor.moveToNext()) {
+                String name = cursor.getString(nameColumn);
+                if (name != null && name.matches("engine\\.kt(?: \\(\\d+\\))?\\.txt(?: \\(\\d+\\))?")) {
+                    return DocumentsContract.buildDocumentUriUsingTree(directory, cursor.getString(idColumn));
+                }
+            }
+        }
+        return null;
     }
 
     byte[] readImage(String fileName) throws Exception {
