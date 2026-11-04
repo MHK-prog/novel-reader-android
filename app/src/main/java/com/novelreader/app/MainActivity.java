@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.1";
+    private static final String VERSION = "1.4.2";
     private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
     private static final String COLLOQUIAL_MANIFEST_URL =
             "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";
@@ -1165,7 +1165,8 @@ public final class MainActivity extends Activity {
 
     private void validateRulesJson(String rulesText) throws Exception {
         JSONObject rules = new JSONObject(rulesText);
-        if (rules.optInt("version", 0) != 1) throw new IOException("Unsupported Persian rules version.");
+        // The manifest's rulesSchema identifies the format; rules.version is a data revision.
+        if (rules.optInt("version", 0) < 1) throw new IOException("Invalid Persian rules revision.");
         for (String section : new String[]{"normalizations", "prefixes", "phrases", "suffixes", "words", "verbs"}) {
             JSONArray entries = rules.optJSONArray(section);
             if (entries == null) throw new IOException("The rules are missing " + section + ".");
