@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.3.9";
+    private static final String VERSION = "1.4.0";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -213,6 +213,12 @@ public final class MainActivity extends Activity {
     private TextView batteryPercentView;
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
+    private View readerDeviceInfoRow;
+    private String activeReorderType;
+    private String activeReorderSourceId;
+    private String lastReorderTargetId;
+    private String reorderOriginalLibrary;
+    private boolean reorderChanged;
     private View coverRemoveButton;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateBatteryIndicator(intent); }
@@ -378,6 +384,9 @@ public final class MainActivity extends Activity {
                 }
             }
             view.setPadding(left, top, right, bottom);
+            if (Build.VERSION.SDK_INT >= 30 && "reader".equals(page)) {
+                applyReaderStatusOverlay(insets.isVisible(WindowInsets.Type.statusBars()));
+            }
             return insets;
         });
         appColumn = new LinearLayout(this);
@@ -405,6 +414,13 @@ public final class MainActivity extends Activity {
         systemRoot.addView(drawerLayer, new FrameLayout.LayoutParams(-1, -1));
         setContentView(systemRoot);
         systemRoot.requestApplyInsets();
+        if (Build.VERSION.SDK_INT < 30) {
+            window.getDecorView().setOnSystemUiVisibilityChangeListener(visibility -> {
+                if ("reader".equals(page)) {
+                    applyReaderStatusOverlay((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0);
+                }
+            });
+        }
         hideAndroidStatusBar();
     }
 
@@ -457,7 +473,7 @@ public final class MainActivity extends Activity {
         content.addView(splashProgress, progressParams);
         splashOverlay.addView(content, new FrameLayout.LayoutParams(-1, -1));
         systemRoot.addView(splashOverlay, new FrameLayout.LayoutParams(-1, -1));
-        ObjectAnimator progressAnimator = ObjectAnimator.ofInt(splashProgress, "progress", 0, 92);
+        ObjectAnimator progressAnimator = ObjectAnimator.ofInt(splashProgress, "progress", 0, 100);
         progressAnimator.setDuration(850);
         progressAnimator.start();
     }
@@ -599,7 +615,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout banner = new LinearLayout(this);
         banner.setGravity(Gravity.CENTER_VERTICAL);
-        banner.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        banner.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         banner.setPadding(dp(14), dp(10), dp(14), dp(10));
         banner.setBackground(roundDrawable(SURFACE, 0x665D4775, 16));
         banner.setElevation(dp(10));
@@ -607,11 +623,15 @@ public final class MainActivity extends Activity {
         LinearLayout message = new LinearLayout(this);
         message.setOrientation(LinearLayout.VERTICAL);
         message.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("ادامهٔ «" + book.optString("title") + "» از جایی که مانده بودی", 14, TEXT);
+        TextView title = text(book.optString("title"), 14, TEXT);
         title.setMaxLines(1);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        title.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
         TextView subtitle = text(chapterLabel(chapter, target.chapterPosition), 12, MUTED);
         subtitle.setMaxLines(1);
+        subtitle.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        subtitle.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
         message.addView(title, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
         subtitleParams.topMargin = dp(3);
@@ -1587,10 +1607,18 @@ public final class MainActivity extends Activity {
     private boolean startReorderDrag(View source, String listType, String itemId) {
         ClipData data = ClipData.newPlainText(listType, itemId);
         View.DragShadowBuilder shadow = new View.DragShadowBuilder(source);
+        activeReorderType = listType;
+        activeReorderSourceId = itemId;
+        lastReorderTargetId = itemId;
+        reorderOriginalLibrary = library.toString();
+        reorderChanged = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            return source.startDragAndDrop(data, shadow, null, 0);
+            if (source.startDragAndDrop(data, shadow, null, 0)) return true;
+        } else if (source.startDrag(data, shadow, null, 0)) {
+            return true;
         }
-        return source.startDrag(data, shadow, null, 0);
+        clearReorderSession();
+        return false;
     }
 
     private void setReorderDropTarget(View target, String listType, String targetId) {
@@ -1599,44 +1627,131 @@ public final class MainActivity extends Activity {
                 return event.getClipDescription() != null
                         && listType.contentEquals(event.getClipDescription().getLabel());
             }
+            if (event.getAction() == android.view.DragEvent.ACTION_DRAG_ENTERED
+                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_LOCATION) {
+                if (listType.equals(activeReorderType) && activeReorderSourceId != null
+                        && !targetId.equals(lastReorderTargetId)
+                        && reorderItems(listType, activeReorderSourceId, targetId)) {
+                    lastReorderTargetId = targetId;
+                    reorderChanged = true;
+                }
+                return true;
+            }
             if (event.getAction() == android.view.DragEvent.ACTION_DROP) {
-                CharSequence label = event.getClipDescription() == null ? null : event.getClipDescription().getLabel();
-                if (label != null && listType.contentEquals(label)) {
-                    reorderItems(listType, event.getClipData().getItemAt(0).getText().toString(), targetId);
+                if (listType.equals(activeReorderType) && activeReorderSourceId != null) {
+                    if (!targetId.equals(lastReorderTargetId)
+                            && reorderItems(listType, activeReorderSourceId, targetId)) {
+                        lastReorderTargetId = targetId;
+                        reorderChanged = true;
+                    }
+                    finishReorderSession();
                     return true;
                 }
+                return false;
             }
-            return event.getAction() == android.view.DragEvent.ACTION_DRAG_ENTERED
-                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_LOCATION
-                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_EXITED
-                    || event.getAction() == android.view.DragEvent.ACTION_DRAG_ENDED;
+            if (event.getAction() == android.view.DragEvent.ACTION_DRAG_ENDED) {
+                if (listType.equals(activeReorderType)) finishReorderSession();
+                return true;
+            }
+            return event.getAction() == android.view.DragEvent.ACTION_DRAG_EXITED;
         });
     }
 
-    private void reorderItems(String listType, String sourceId, String targetId) {
-        if (sourceId == null || targetId == null || sourceId.equals(targetId)) return;
+    private boolean reorderItems(String listType, String sourceId, String targetId) {
+        if (sourceId == null || targetId == null || sourceId.equals(targetId)) return false;
+        Map<String, int[]> beforePositions = captureReorderPositions(listType);
+        boolean changed = false;
         if ("collection".equals(listType)) {
-            String before = library.toString();
             JSONArray items = collectionArray();
-            if (!moveJsonItem(items, "id", sourceId, targetId)) return;
-            ensureOrderIndexes(items, false);
-            if (!saveLibrary()) {
-                restoreLibrary(before);
+            if (moveJsonItem(items, "id", sourceId, targetId)) {
+                ensureOrderIndexes(items, false);
+                refreshCollectionSelection();
+                changed = true;
             }
-            refreshCollectionSelection();
         } else if ("book".equals(listType)) {
-            reorderVisibleBooks(sourceId, targetId);
+            changed = reorderVisibleBooks(sourceId, targetId);
         } else if ("chapter".equals(listType)) {
             JSONObject book = activeBook();
             JSONArray items = book == null ? null : book.optJSONArray("chapters");
-            String before = library.toString();
-            if (!moveJsonItem(items, "storageIndex", sourceId, targetId)) return;
-            ensureOrderIndexes(items, true);
-            if (!saveLibrary()) {
-                restoreLibrary(before);
+            if (moveJsonItem(items, "storageIndex", sourceId, targetId)) {
+                ensureOrderIndexes(items, true);
+                refreshChapterSelection();
+                changed = true;
             }
-            refreshChapterSelection();
         }
+        if (changed) animateReorderPositions(listType, beforePositions);
+        return changed;
+    }
+
+    private ViewGroup reorderContainer(String listType) {
+        if ("collection".equals(listType)) return collectionsGrid;
+        if ("book".equals(listType)) return booksGrid;
+        if ("chapter".equals(listType)) return chaptersList;
+        return null;
+    }
+
+    private Map<String, int[]> captureReorderPositions(String listType) {
+        Map<String, int[]> positions = new HashMap<>();
+        ViewGroup container = reorderContainer(listType);
+        if (container == null) return positions;
+        for (int i = 0; i < container.getChildCount(); i++) {
+            View child = container.getChildAt(i);
+            Object id = child.getTag();
+            if (id instanceof String) {
+                int[] location = new int[2];
+                child.getLocationOnScreen(location);
+                positions.put((String) id, location);
+            }
+        }
+        return positions;
+    }
+
+    private void animateReorderPositions(String listType, Map<String, int[]> before) {
+        ViewGroup container = reorderContainer(listType);
+        if (container == null || before == null || before.isEmpty()) return;
+        android.view.ViewTreeObserver observer = container.getViewTreeObserver();
+        observer.addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                if (observer.isAlive()) observer.removeOnPreDrawListener(this);
+                if (!container.isAttachedToWindow()) return true;
+            for (int i = 0; i < container.getChildCount(); i++) {
+                View child = container.getChildAt(i);
+                Object tag = child.getTag();
+                int[] old = tag instanceof String ? before.get((String) tag) : null;
+                if (old == null) continue;
+                int[] now = new int[2];
+                child.getLocationOnScreen(now);
+                float dx = old[0] - now[0];
+                float dy = old[1] - now[1];
+                if (Math.abs(dx) < 1f && Math.abs(dy) < 1f) continue;
+                child.animate().cancel();
+                child.setTranslationX(dx);
+                child.setTranslationY(dy);
+                child.animate().translationX(0f).translationY(0f)
+                        .setDuration(180).setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f)).start();
+            }
+                return true;
+            }
+        });
+    }
+
+    private void finishReorderSession() {
+        if (reorderChanged && !saveLibrary()) {
+            restoreLibrary(reorderOriginalLibrary);
+            if ("collection".equals(activeReorderType)) refreshCollectionSelection();
+            else if ("book".equals(activeReorderType)) refreshDashboardSelection();
+            else if ("chapter".equals(activeReorderType)) refreshChapterSelection();
+            toast("ذخیرهٔ ترتیب جدید انجام نشد.");
+        }
+        clearReorderSession();
+    }
+
+    private void clearReorderSession() {
+        activeReorderType = null;
+        activeReorderSourceId = null;
+        lastReorderTargetId = null;
+        reorderOriginalLibrary = null;
+        reorderChanged = false;
     }
 
     private boolean moveJsonItem(JSONArray items, String key, String sourceId, String targetId) {
@@ -1664,8 +1779,8 @@ public final class MainActivity extends Activity {
         return true;
     }
 
-    private void reorderVisibleBooks(String sourceId, String targetId) {
-        if (bookAdapter == null) return;
+    private boolean reorderVisibleBooks(String sourceId, String targetId) {
+        if (bookAdapter == null) return false;
         List<JSONObject> visible = new ArrayList<>(bookAdapter.visible());
         int from = -1, to = -1;
         for (int i = 0; i < visible.size(); i++) {
@@ -1673,14 +1788,13 @@ public final class MainActivity extends Activity {
             if (sourceId.equals(id)) from = i;
             if (targetId.equals(id)) to = i;
         }
-        if (from < 0 || to < 0 || from == to) return;
-        String before = library.toString();
+        if (from < 0 || to < 0 || from == to) return false;
         JSONObject moving = visible.remove(from);
         visible.add(to, moving);
         Set<String> visibleIds = new HashSet<>();
         for (JSONObject item : visible) visibleIds.add(item.optString("id"));
         JSONArray allBooks = library.optJSONArray("books");
-        if (allBooks == null) return;
+        if (allBooks == null) return false;
         int nextVisible = 0;
         for (int i = 0; i < allBooks.length(); i++) {
             JSONObject item = allBooks.optJSONObject(i);
@@ -1692,10 +1806,8 @@ public final class MainActivity extends Activity {
             JSONObject item = allBooks.optJSONObject(i);
             if (item != null) putJson(item, "orderIndex", i);
         }
-        if (!saveLibrary()) {
-            restoreLibrary(before);
-        }
         refreshDashboardSelection();
+        return true;
     }
 
     private JSONObject findCollectionById(String id) {
@@ -2339,10 +2451,11 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
-        addReaderDeviceInfo();
-        appColumn.addView(makeHeader(book.optString("title"), chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length(),
+        readerDeviceInfoRow = addReaderDeviceInfo();
+        View readerHeaderBar = makeHeader(book.optString("title"), chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length(),
                 "next", "help", () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); },
-                this::showSpecialTokenHelp, 0, 68, true));
+                this::showSpecialTokenHelp, 0, 68, true);
+        appColumn.addView(readerHeaderBar);
         FrameLayout progressTrack = new FrameLayout(this); progressTrack.setBackgroundColor(0xFF241C2E);
         readerProgress = new View(this); readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
@@ -2409,6 +2522,7 @@ public final class MainActivity extends Activity {
                 setReaderImeVisible(obscured > dp(140));
             });
         }
+        systemRoot.post(this::updateReaderStatusOverlay);
 
         LinearLayout bottom = new LinearLayout(this); bottom.setGravity(Gravity.CENTER); bottom.setPadding(dp(18), dp(7), dp(18), dp(7));
         bottom.setLayoutDirection(View.LAYOUT_DIRECTION_LTR); bottom.setBackgroundColor(BG);
@@ -2478,13 +2592,13 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void addReaderDeviceInfo() {
+    private LinearLayout addReaderDeviceInfo() {
         SharedPreferences preferences = getSharedPreferences("reader_display", MODE_PRIVATE);
         boolean showBattery = preferences.getBoolean("show_battery", true);
         boolean showClock = preferences.getBoolean("show_clock", true);
         batteryPercentView = null;
         batteryLevelIcon = null;
-        if (!showBattery && !showClock) return;
+        if (!showBattery && !showClock) return null;
 
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -2529,6 +2643,27 @@ public final class MainActivity extends Activity {
             row.addView(clock, new LinearLayout.LayoutParams(-2, -1));
         }
         appColumn.addView(row, new LinearLayout.LayoutParams(-1, dp(30)));
+        return row;
+    }
+
+    private void updateReaderStatusOverlay() {
+        if (!"reader".equals(page) || systemRoot == null) return;
+        boolean statusVisible = false;
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsets insets = systemRoot.getRootWindowInsets();
+            statusVisible = insets != null && insets.isVisible(WindowInsets.Type.statusBars());
+        } else {
+            statusVisible = (getWindow().getDecorView().getSystemUiVisibility()
+                    & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0;
+        }
+        applyReaderStatusOverlay(statusVisible);
+    }
+
+    private void applyReaderStatusOverlay(boolean statusVisible) {
+        if (!"reader".equals(page) || readerDeviceInfoRow == null) return;
+        // Collapse the in-app clock/battery row while Android's transient status bar is over it.
+        // This also moves the reader title and progress strip up under the system bar.
+        readerDeviceInfoRow.setVisibility(statusVisible ? View.GONE : View.VISIBLE);
     }
 
     private void updateBatteryIndicator(Intent battery) {
@@ -4125,6 +4260,7 @@ public final class MainActivity extends Activity {
             card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF503C68, 20));
             card.setLayoutParams(new AbsListView.LayoutParams(-1, dp(154)));
+            card.setTag(collection.optString("id"));
             FrameLayout iconFrame = new FrameLayout(MainActivity.this);
             iconFrame.setBackground(roundDrawable(lightTheme ? 0xFFEDE3FA : 0xFF2A2034, Color.TRANSPARENT, 18));
             NativeIconView icon = new NativeIconView(MainActivity.this, selected ? "reorder" : "folder", PURPLE);
@@ -4192,6 +4328,7 @@ public final class MainActivity extends Activity {
             boolean selected = selectedBookIds.contains(book.optString("id"));
             LinearLayout card = new LinearLayout(MainActivity.this);
             card.setOrientation(LinearLayout.VERTICAL);
+            card.setTag(book.optString("id"));
             card.setPadding(dp(7), dp(7), dp(7), dp(4));
             card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF29242F, 13));
@@ -4254,6 +4391,7 @@ public final class MainActivity extends Activity {
             boolean done = chapterItem.optBoolean("done"), hasText = chapterItem.optBoolean("hasText");
             int color = done ? GREEN : hasText ? BLUE : PURPLE;
             LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
+            row.setTag(key);
             row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
             LinearLayout detail = new LinearLayout(MainActivity.this); detail.setOrientation(LinearLayout.VERTICAL);
