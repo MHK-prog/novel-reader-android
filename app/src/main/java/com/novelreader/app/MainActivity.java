@@ -208,6 +208,10 @@ public final class MainActivity extends Activity {
     private int activeChapter;
     private String chapterText = "";
     private boolean chapterDirty;
+    private boolean colloquialPreviewActive;
+    private boolean changingColloquialPreview;
+    private int colloquialOriginalSelection;
+    private android.text.method.KeyListener colloquialOriginalKeyListener;
     private boolean restoringScroll;
     private float scrollGestureStartY;
     private long scrollGestureStartAt;
@@ -1245,11 +1249,16 @@ public final class MainActivity extends Activity {
 
     private void transformCurrentChapter() {
         if (!isColloquialPluginEnabled()) { toast("افزونهٔ محاوره‌ساز فعال نیست."); return; }
-        if (chapterEditor == null || !saveCurrentChapter(false)) return;
+        if (chapterEditor == null) return;
+        if (colloquialPreviewActive) {
+            restoreColloquialPreview();
+            return;
+        }
+        if (!saveCurrentChapter(false)) return;
         final EditText targetEditor = chapterEditor;
         final String targetBookId = activeBookId;
         final int targetChapter = activeChapter;
-        final String source = targetEditor.getText().toString();
+        final String source = chapterText;
         final int selection = Math.max(0, targetEditor.getSelectionStart());
         final FrameLayout targetButton = readerTransformButton;
         final NativeIconView targetIcon = readerTransformIcon;
@@ -1296,14 +1305,42 @@ public final class MainActivity extends Activity {
                     toast("تغییری برای اعمال پیدا نشد.");
                     return;
                 }
+                colloquialOriginalSelection = selection;
+                colloquialOriginalKeyListener = targetEditor.getKeyListener();
+                colloquialPreviewActive = true;
+                targetEditor.setKeyListener(null);
+                targetEditor.setTextIsSelectable(true);
+                changingColloquialPreview = true;
                 targetEditor.setText(output);
+                applyRuleSpans(targetEditor.getText());
                 targetEditor.setSelection(Math.min(selection, targetEditor.length()));
-                chapterText = output;
-                chapterDirty = true;
+                changingColloquialPreview = false;
+                if (targetButton != null) {
+                    styleIconButton(targetButton, true);
+                    targetButton.setContentDescription("نمایش متن اصلی");
+                }
                 updateProgress();
-                if (saveCurrentChapter(false)) toast("متن محاوره‌ای ذخیره شد.");
             });
         });
+    }
+
+    private void restoreColloquialPreview() {
+        EditText editor = chapterEditor;
+        if (editor == null || !colloquialPreviewActive) return;
+        colloquialPreviewActive = false;
+        changingColloquialPreview = true;
+        editor.setTextIsSelectable(false);
+        if (colloquialOriginalKeyListener != null) editor.setKeyListener(colloquialOriginalKeyListener);
+        editor.setText(chapterText);
+        applyRuleSpans(editor.getText());
+        editor.setSelection(Math.min(colloquialOriginalSelection, editor.length()));
+        changingColloquialPreview = false;
+        colloquialOriginalKeyListener = null;
+        if (readerTransformButton != null) {
+            styleIconButton(readerTransformButton, false);
+            readerTransformButton.setContentDescription("تبدیل متن به محاوره‌ای");
+        }
+        updateProgress();
     }
 
     private void showSettings() {
@@ -2825,6 +2862,9 @@ public final class MainActivity extends Activity {
     private void showReader() {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
+        colloquialPreviewActive = false;
+        changingColloquialPreview = false;
+        colloquialOriginalKeyListener = null;
         page = "reader"; appColumn.removeAllViews();
         readerTransformButton = null;
         readerTransformIcon = null;
@@ -2924,6 +2964,7 @@ public final class MainActivity extends Activity {
                 rememberChapterUndo(text, start, count, after);
             }
             @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
+                if (colloquialPreviewActive || changingColloquialPreview) return;
                 if (pairingPercent || before != 0 || count != 1 || start >= text.length() || text.charAt(start) != '%') return;
                 int cursor = start + 1;
                 if (cursor < text.length() && text.charAt(cursor) == '%') return;
@@ -2940,6 +2981,7 @@ public final class MainActivity extends Activity {
         restoringScroll = true;
         readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; });
         chapterEditor.addTextChangedListener(watcher(() -> {
+            if (colloquialPreviewActive || changingColloquialPreview) return;
             chapterText = chapterEditor.getText().toString();
             chapterDirty = true;
             applyRuleSpans(chapterEditor.getText());
@@ -2994,7 +3036,7 @@ public final class MainActivity extends Activity {
     }
 
     private void rememberChapterUndo(CharSequence text, int start, int count, int after) {
-        if (restoringChapterUndo || pairingPercent) return;
+        if (restoringChapterUndo || pairingPercent || colloquialPreviewActive || changingColloquialPreview) return;
         long now = android.os.SystemClock.uptimeMillis();
         boolean typing = count == 0 && after == 1;
         boolean coalesce = typing && lastUndoWasTyping && start == lastUndoEnd && now - lastUndoAt < 850;
@@ -3008,6 +3050,7 @@ public final class MainActivity extends Activity {
     }
 
     private void undoChapterEdit() {
+        if (colloquialPreviewActive) return;
         if (chapterEditor == null || chapterUndoStack.isEmpty()) {
             toast("تغییری برای بازگردانی نیست");
             return;
@@ -3092,7 +3135,7 @@ public final class MainActivity extends Activity {
         if (!"reader".equals(page) || chapterEditor == null) return true;
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
-        chapterText = chapterEditor.getText().toString();
+        if (!colloquialPreviewActive) chapterText = chapterEditor.getText().toString();
         updateProgress();
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
