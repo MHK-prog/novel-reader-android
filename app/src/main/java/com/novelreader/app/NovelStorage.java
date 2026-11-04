@@ -31,6 +31,9 @@ final class NovelStorage {
     private static final String COVER_FOLDER = ".covers";
     private static final String PLUGIN_FOLDER = ".plugins";
     private static final String COLLOQUIAL_PLUGIN_FOLDER = "colloquial-core";
+    private static final String PLUGIN_DOCUMENT_ID = "plugin_folder_document_id";
+    private static final String PLUGIN_MARKER_DOCUMENT_ID = "plugin_marker_document_id";
+    private static final String COLLOQUIAL_DOCUMENT_ID = "colloquial_plugin_document_id";
     private static final String NO_MEDIA_FILE = ".nomedia";
     private static final String DIRECTORY_MIME = "vnd.android.document/directory";
     private static final long MAX_COVER_CACHE_BYTES = 64L * 1024L * 1024L;
@@ -93,7 +96,8 @@ final class NovelStorage {
             if (folder == null) throw new IllegalStateException("Could not create the NovelReader folder.");
             folderId = DocumentsContract.getDocumentId(folder);
         }
-        preferences.edit().putString(TREE_URI, selectedTree.toString()).putString(FOLDER_ID, folderId).apply();
+        preferences.edit().putString(TREE_URI, selectedTree.toString()).putString(FOLDER_ID, folderId)
+                .remove(PLUGIN_DOCUMENT_ID).remove(PLUGIN_MARKER_DOCUMENT_ID).remove(COLLOQUIAL_DOCUMENT_ID).apply();
         clearCoverDocumentCache();
     }
 
@@ -189,19 +193,65 @@ final class NovelStorage {
             if (create) throw new IOException("No NovelReader folder is selected.");
             return null;
         }
-        Uri plugins = findChild(root, PLUGIN_FOLDER);
-        if (plugins == null && create) plugins = createDirectory(root, PLUGIN_FOLDER);
+        Uri plugins = resolveExtensionChild(root, PLUGIN_FOLDER, PLUGIN_DOCUMENT_ID, DIRECTORY_MIME, true, create);
         if (plugins == null) return null;
-        Uri marker = findChild(plugins, NO_MEDIA_FILE);
-        if (marker == null && create) {
-            marker = DocumentsContract.createDocument(activity.getContentResolver(), plugins,
-                    "application/octet-stream", NO_MEDIA_FILE);
-            if (marker == null) throw new IOException("Could not hide the extension storage folder from media scanners.");
+        if (create && resolveExtensionChild(plugins, NO_MEDIA_FILE, PLUGIN_MARKER_DOCUMENT_ID,
+                "application/octet-stream", false, true) == null) {
+            throw new IOException("Could not hide the extension storage folder from media scanners.");
         }
-        Uri extension = findChild(plugins, COLLOQUIAL_PLUGIN_FOLDER);
-        if (extension == null && create) extension = createDirectory(plugins, COLLOQUIAL_PLUGIN_FOLDER);
-        if (extension == null) return null;
-        return extension;
+        return resolveExtensionChild(plugins, COLLOQUIAL_PLUGIN_FOLDER, COLLOQUIAL_DOCUMENT_ID,
+                DIRECTORY_MIME, true, create);
+    }
+
+    private Uri resolveExtensionChild(Uri parent, String name, String preferenceKey,
+                                      String mimeType, boolean directory, boolean create) throws Exception {
+        String rememberedId = preferences.getString(preferenceKey, null);
+        if (rememberedId != null) {
+            Uri remembered = DocumentsContract.buildDocumentUriUsingTree(
+                    Uri.parse(preferences.getString(TREE_URI, "")), rememberedId);
+            if (extensionDocumentExists(remembered, directory)) return remembered;
+            preferences.edit().remove(preferenceKey).apply();
+        }
+
+        Uri direct = directExternalStorageChild(parent, name);
+        if (direct != null && extensionDocumentExists(direct, directory)) {
+            rememberExtensionDocument(preferenceKey, direct);
+            return direct;
+        }
+
+        Uri existing = findChild(parent, name);
+        if (existing != null && extensionDocumentExists(existing, directory)) {
+            rememberExtensionDocument(preferenceKey, existing);
+            return existing;
+        }
+        if (!create) return null;
+
+        Uri created = directory
+                ? createDirectory(parent, name)
+                : DocumentsContract.createDocument(activity.getContentResolver(), parent, mimeType, name);
+        if (created == null) throw new IOException("Could not create " + name + ".");
+        rememberExtensionDocument(preferenceKey, created);
+        return created;
+    }
+
+    private Uri directExternalStorageChild(Uri parent, String name) throws Exception {
+        if (!"com.android.externalstorage.documents".equals(parent.getAuthority())) return null;
+        String parentId = DocumentsContract.getDocumentId(parent);
+        return DocumentsContract.buildDocumentUriUsingTree(parent, parentId + "/" + name);
+    }
+
+    private boolean extensionDocumentExists(Uri document, boolean directory) {
+        try {
+            queryName(document);
+            String mime = activity.getContentResolver().getType(document);
+            return !directory || mime == null || DIRECTORY_MIME.equals(mime);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void rememberExtensionDocument(String preferenceKey, Uri document) throws Exception {
+        preferences.edit().putString(preferenceKey, DocumentsContract.getDocumentId(document)).apply();
     }
 
     private Uri createDirectory(Uri parent, String name) throws Exception {
