@@ -89,6 +89,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.math.BigDecimal;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
@@ -153,7 +160,12 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.0";
+    private static final String VERSION = "1.4.1";
+    private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
+    private static final String COLLOQUIAL_MANIFEST_URL =
+            "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";
+    private static final String COLLOQUIAL_RAW_BASE =
+            "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -182,6 +194,7 @@ public final class MainActivity extends Activity {
             new BookRecommendationEngine(recommendationPreferences);
     private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService metadataExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService pluginExecutor = Executors.newSingleThreadExecutor();
     private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(coverCacheBudgetKb()) {
         @Override protected int sizeOf(String key, Bitmap value) { return Math.max(1, value.getByteCount() / 1024); }
     };
@@ -213,7 +226,11 @@ public final class MainActivity extends Activity {
     private TextView batteryPercentView;
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
-    private View readerDeviceInfoRow;
+    private SharedPreferences extensionPreferences;
+    private FrameLayout readerTransformButton;
+    private NativeIconView readerTransformIcon;
+    private ProgressBar readerTransformSpinner;
+    private LinearLayout readerBottomBar;
     private String activeReorderType;
     private String activeReorderSourceId;
     private String lastReorderTargetId;
@@ -275,6 +292,7 @@ public final class MainActivity extends Activity {
         }
         vazir = Typeface.createFromAsset(getAssets(), "fonts/Vazirmatn-Regular.ttf");
         storage = new NovelStorage(this);
+        extensionPreferences = getSharedPreferences("extensions", MODE_PRIVATE);
         recommendationState = getSharedPreferences("recommendations", MODE_PRIVATE);
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
@@ -384,9 +402,6 @@ public final class MainActivity extends Activity {
                 }
             }
             view.setPadding(left, top, right, bottom);
-            if (Build.VERSION.SDK_INT >= 30 && "reader".equals(page)) {
-                applyReaderStatusOverlay(insets.isVisible(WindowInsets.Type.statusBars()));
-            }
             return insets;
         });
         appColumn = new LinearLayout(this);
@@ -414,13 +429,6 @@ public final class MainActivity extends Activity {
         systemRoot.addView(drawerLayer, new FrameLayout.LayoutParams(-1, -1));
         setContentView(systemRoot);
         systemRoot.requestApplyInsets();
-        if (Build.VERSION.SDK_INT < 30) {
-            window.getDecorView().setOnSystemUiVisibilityChangeListener(visibility -> {
-                if ("reader".equals(page)) {
-                    applyReaderStatusOverlay((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0);
-                }
-            });
-        }
         hideAndroidStatusBar();
     }
 
@@ -913,6 +921,10 @@ public final class MainActivity extends Activity {
         }), new LinearLayout.LayoutParams(-1, dp(52)));
         drawerPanel.addView(textButton("تنظیمات", "settings", PURPLE, () -> { closeDrawer(); showSettings(); }),
                 new LinearLayout.LayoutParams(-1, dp(52)));
+        drawerPanel.addView(textButton("افزونه‌ها", "scan_text", PURPLE, () -> {
+            closeDrawer();
+            showExtensions();
+        }), new LinearLayout.LayoutParams(-1, dp(52)));
         drawerPanel.addView(textButton("کتابخانه مخفی", "hide", PURPLE, () -> {
             selectedBookIds.clear();
             activeGenreFilter.clear();
@@ -930,6 +942,336 @@ public final class MainActivity extends Activity {
         View spacer = new View(this);
         drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
         drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
+    }
+
+    private void showExtensions() {
+        page = "extensions";
+        appColumn.removeAllViews();
+        appColumn.addView(makeHeader("افزونه‌ها", "", "menu", null, this::openDrawer, null));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(16), dp(18), dp(24));
+
+        boolean installed = isColloquialPluginInstalled();
+        String version = installed ? installedColloquialVersion() : null;
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setBackground(roundDrawable(SURFACE, 0xFF302A38, 16));
+
+        TextView title = text("محاوره‌ساز فارسی", 19, TEXT);
+        title.setGravity(Gravity.CENTER);
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView description = text("متن رسمی Chapter را با قواعد فارسی به نثر محاوره‌ای تبدیل می‌کند.", 14, MUTED);
+        description.setGravity(Gravity.CENTER);
+        description.setPadding(0, dp(8), 0, dp(10));
+        card.addView(description, new LinearLayout.LayoutParams(-1, -2));
+        TextView status = text(installed ? "نصب‌شده · نسخهٔ " + version : "هنوز نصب نشده", 13,
+                installed ? GREEN : MUTED);
+        status.setGravity(Gravity.CENTER);
+        card.addView(status, new LinearLayout.LayoutParams(-1, dp(28)));
+
+        Switch enabled = new Switch(this);
+        enabled.setText("فعال‌سازی افزونه");
+        enabled.setTextColor(TEXT);
+        enabled.setTextSize(14);
+        enabled.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+        enabled.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        enabled.setGravity(Gravity.CENTER_VERTICAL);
+        enabled.setChecked(installed && isColloquialPluginEnabled());
+        enabled.setEnabled(installed);
+        enabled.setOnCheckedChangeListener((button, checked) -> {
+            if (checked && !isColloquialPluginInstalled()) {
+                button.setChecked(false);
+                toast("اول افزونه را دریافت کن.");
+                return;
+            }
+            extensionPreferences.edit().putBoolean("colloquial-core-enabled", checked).apply();
+        });
+        LinearLayout.LayoutParams enabledParams = new LinearLayout.LayoutParams(-1, dp(48));
+        enabledParams.topMargin = dp(5);
+        card.addView(enabled, enabledParams);
+
+        ProgressBar progress = new ProgressBar(this);
+        progress.setIndeterminate(true);
+        if (Build.VERSION.SDK_INT >= 21) {
+            progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        }
+        progress.setVisibility(View.GONE);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(32), dp(32));
+        progressParams.gravity = Gravity.CENTER;
+        card.addView(progress, progressParams);
+
+        View download = textButton(installed ? "به‌روزرسانی افزونه" : "دریافت افزونه",
+                "scan_text", PURPLE, () -> { });
+        download.setOnClickListener(view -> {
+            download.setEnabled(false);
+            progress.setVisibility(View.VISIBLE);
+            installColloquialPlugin((success, error) -> {
+                if (!success) toast("دریافت افزونه ناموفق بود: " + error);
+                if ("extensions".equals(page)) showExtensions();
+            });
+        });
+        LinearLayout.LayoutParams downloadParams = new LinearLayout.LayoutParams(-1, dp(52));
+        downloadParams.topMargin = dp(10);
+        card.addView(download, downloadParams);
+
+        content.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private boolean isColloquialPluginEnabled() {
+        return extensionPreferences != null
+                && extensionPreferences.getBoolean("colloquial-core-enabled", false);
+    }
+
+    private boolean isColloquialPluginInstalled() {
+        try {
+            readVerifiedColloquialRules();
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String installedColloquialVersion() {
+        try {
+            JSONObject manifest = new JSONObject(storage.readExtensionFile("extension.json"));
+            return manifest.optString("version", "?");
+        } catch (Exception ignored) {
+            return "?";
+        }
+    }
+
+    private void installColloquialPlugin(ExtensionInstallHandler callback) {
+        pluginExecutor.execute(() -> {
+            String errorMessage = null;
+            try {
+                byte[] manifestBytes = downloadHttps(COLLOQUIAL_MANIFEST_URL, 32 * 1024);
+                String manifestText = new String(manifestBytes, StandardCharsets.UTF_8);
+                JSONObject manifest = new JSONObject(manifestText);
+                validateExtensionManifest(manifest);
+                JSONObject files = manifest.getJSONObject("files");
+                String engine = downloadExtensionAsset(files, "engine.kt", 128 * 1024);
+                String rules = downloadExtensionAsset(files, "rules.json", 256 * 1024);
+                validateRulesJson(rules);
+                verifyExtensionFile(manifest, "engine.kt", engine);
+                verifyExtensionFile(manifest, "rules.json", rules);
+                if (!storage.writeExtensionFile("engine.kt", engine)) throw new IOException(storage.lastError());
+                if (!storage.writeExtensionFile("rules.json", rules)) throw new IOException(storage.lastError());
+                if (!storage.writeExtensionFile("extension.json", manifestText)) throw new IOException(storage.lastError());
+                readVerifiedColloquialRules();
+            } catch (Exception error) {
+                errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            }
+            final String resultError = errorMessage;
+            runOnUiThread(() -> {
+                if (!isFinishing()) callback.onComplete(resultError == null, resultError);
+            });
+        });
+    }
+
+    private interface ExtensionInstallHandler {
+        void onComplete(boolean success, String error);
+    }
+
+    private String downloadExtensionAsset(JSONObject files, String fileName, int hardLimit) throws Exception {
+        JSONObject descriptor = files.optJSONObject(fileName);
+        if (descriptor == null) throw new IOException("The extension manifest is missing " + fileName + ".");
+        long declaredLimit = descriptor.optLong("maxBytes", hardLimit);
+        int limit = (int) Math.max(1, Math.min(hardLimit, declaredLimit));
+        String url = COLLOQUIAL_RAW_BASE + fileName;
+        byte[] data = downloadHttps(url, limit);
+        String contents = new String(data, StandardCharsets.UTF_8);
+        verifyExtensionFile(files, fileName, contents);
+        return contents;
+    }
+
+    private byte[] downloadHttps(String address, int maxBytes) throws Exception {
+        if (address == null || !address.startsWith("https://")) throw new IOException("Only HTTPS extension downloads are allowed.");
+        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(20000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", "NovelReader-Android/" + VERSION);
+        connection.setRequestProperty("Accept", "application/json, text/plain, */*");
+        try {
+            int response = connection.getResponseCode();
+            if (!"https".equalsIgnoreCase(connection.getURL().getProtocol())) {
+                throw new IOException("The extension download redirected away from HTTPS.");
+            }
+            if (response < 200 || response >= 300) throw new IOException("HTTP " + response);
+            int contentLength = connection.getContentLength();
+            if (contentLength > maxBytes) throw new IOException("Downloaded extension file is too large.");
+            try (InputStream input = connection.getInputStream();
+                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int count;
+                int total = 0;
+                while ((count = input.read(buffer)) != -1) {
+                    total += count;
+                    if (total > maxBytes) throw new IOException("Downloaded extension file is too large.");
+                    output.write(buffer, 0, count);
+                }
+                return output.toByteArray();
+            }
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private void validateExtensionManifest(JSONObject manifest) throws Exception {
+        if (manifest.optInt("schema", 0) != 1
+                || !COLLOQUIAL_PLUGIN_ID.equals(manifest.optString("id"))
+                || manifest.optInt("engineApi", 0) != 1
+                || manifest.optInt("rulesSchema", 0) != 1
+                || manifest.optString("version").trim().isEmpty()) {
+            throw new IOException("Unsupported colloquial-core extension manifest.");
+        }
+        JSONObject files = manifest.optJSONObject("files");
+        if (files == null || files.optJSONObject("engine.kt") == null
+                || files.optJSONObject("rules.json") == null) {
+            throw new IOException("The extension manifest is incomplete.");
+        }
+        if (files.length() != 2) throw new IOException("The extension declares an unsupported file.");
+        for (String name : new String[]{"engine.kt", "rules.json"}) {
+            String hash = files.getJSONObject(name).optString("sha256");
+            if (!hash.matches("(?i)[0-9a-f]{64}")) throw new IOException("Invalid SHA-256 for " + name + ".");
+        }
+    }
+
+    private void verifyExtensionFile(JSONObject manifestOrFiles, String name, String contents) throws Exception {
+        JSONObject files = manifestOrFiles.has("files")
+                ? manifestOrFiles.getJSONObject("files") : manifestOrFiles;
+        String expected = files.getJSONObject(name).getString("sha256");
+        if (!expected.equalsIgnoreCase(sha256(contents))) throw new IOException("Checksum mismatch for " + name + ".");
+    }
+
+    private String sha256(String contents) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(contents.getBytes(StandardCharsets.UTF_8));
+        final char[] hex = "0123456789abcdef".toCharArray();
+        char[] output = new char[digest.length * 2];
+        for (int i = 0; i < digest.length; i++) {
+            int value = digest[i] & 0xff;
+            output[i * 2] = hex[value >>> 4];
+            output[i * 2 + 1] = hex[value & 0x0f];
+        }
+        return new String(output);
+    }
+
+    private void validateRulesJson(String rulesText) throws Exception {
+        JSONObject rules = new JSONObject(rulesText);
+        if (rules.optInt("version", 0) != 1) throw new IOException("Unsupported Persian rules version.");
+        for (String section : new String[]{"normalizations", "prefixes", "phrases", "suffixes", "words", "verbs"}) {
+            JSONArray entries = rules.optJSONArray(section);
+            if (entries == null) throw new IOException("The rules are missing " + section + ".");
+            for (int i = 0; i < entries.length(); i++) {
+                JSONArray pair = entries.optJSONArray(i);
+                if (pair == null || pair.length() < 2 || pair.optString(0).isEmpty()) {
+                    throw new IOException("Invalid rule in " + section + ".");
+                }
+            }
+        }
+    }
+
+    private String readVerifiedColloquialRules() throws Exception {
+        String manifestText = storage.readExtensionFile("extension.json");
+        String engine = storage.readExtensionFile("engine.kt");
+        String rules = storage.readExtensionFile("rules.json");
+        if (manifestText == null || engine == null || rules == null) throw new IOException("The extension files are incomplete.");
+        JSONObject manifest = new JSONObject(manifestText);
+        validateExtensionManifest(manifest);
+        validateRulesJson(rules);
+        verifyExtensionFile(manifest, "engine.kt", engine);
+        verifyExtensionFile(manifest, "rules.json", rules);
+        return rules;
+    }
+
+    private FrameLayout createColloquialButton() {
+        FrameLayout holder = new FrameLayout(this);
+        styleIconButton(holder, false);
+        holder.setContentDescription("تبدیل متن به محاوره‌ای");
+        holder.setClickable(true);
+        holder.setFocusable(true);
+        applyPressScale(holder);
+        holder.setOnClickListener(v -> transformCurrentChapter());
+        readerTransformIcon = new NativeIconView(this, "scan_text", PURPLE);
+        holder.addView(readerTransformIcon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        readerTransformSpinner = new ProgressBar(this);
+        readerTransformSpinner.setIndeterminate(true);
+        if (Build.VERSION.SDK_INT >= 21) {
+            readerTransformSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+        }
+        readerTransformSpinner.setVisibility(View.GONE);
+        holder.addView(readerTransformSpinner, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
+        return holder;
+    }
+
+    private void transformCurrentChapter() {
+        if (!isColloquialPluginEnabled()) { toast("افزونهٔ محاوره‌ساز فعال نیست."); return; }
+        if (chapterEditor == null || !saveCurrentChapter(false)) return;
+        final EditText targetEditor = chapterEditor;
+        final String targetBookId = activeBookId;
+        final int targetChapter = activeChapter;
+        final String source = targetEditor.getText().toString();
+        final int selection = Math.max(0, targetEditor.getSelectionStart());
+        final FrameLayout targetButton = readerTransformButton;
+        final NativeIconView targetIcon = readerTransformIcon;
+        final ProgressBar targetSpinner = readerTransformSpinner;
+        final LinearLayout targetBottomBar = readerBottomBar;
+        targetEditor.setEnabled(false);
+        if (targetButton != null) targetButton.setEnabled(false);
+        if (targetBottomBar != null) {
+            for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
+                targetBottomBar.getChildAt(i).setEnabled(false);
+            }
+        }
+        if (targetIcon != null) targetIcon.setVisibility(View.GONE);
+        if (targetSpinner != null) targetSpinner.setVisibility(View.VISIBLE);
+
+        pluginExecutor.execute(() -> {
+            String transformed = null;
+            String errorMessage = null;
+            try {
+                String rules = readVerifiedColloquialRules();
+                transformed = ColloquialPersianTransformer.transform(source, rules);
+            } catch (Exception error) {
+                errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            }
+            final String output = transformed;
+            final String resultError = errorMessage;
+            runOnUiThread(() -> {
+                if (targetSpinner != null) targetSpinner.setVisibility(View.GONE);
+                if (targetIcon != null) targetIcon.setVisibility(View.VISIBLE);
+                if (targetButton != null) targetButton.setEnabled(true);
+                if (targetBottomBar != null) {
+                    for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
+                        targetBottomBar.getChildAt(i).setEnabled(true);
+                    }
+                }
+                targetEditor.setEnabled(true);
+                if (!"reader".equals(page) || chapterEditor != targetEditor
+                        || !targetBookId.equals(activeBookId) || targetChapter != activeChapter) return;
+                if (resultError != null) {
+                    toast("افزونه اجرا نشد: " + resultError);
+                    return;
+                }
+                if (source.equals(output)) {
+                    toast("تغییری برای اعمال پیدا نشد.");
+                    return;
+                }
+                targetEditor.setText(output);
+                targetEditor.setSelection(Math.min(selection, targetEditor.length()));
+                chapterText = output;
+                chapterDirty = true;
+                updateProgress();
+                if (saveCurrentChapter(false)) toast("متن محاوره‌ای ذخیره شد.");
+            });
+        });
     }
 
     private void showSettings() {
@@ -1056,6 +1398,7 @@ public final class MainActivity extends Activity {
         else if ("settings".equals(page)) showSettings();
         else if ("recommendations".equals(page)) showRecommendation();
         else if ("tagSettings".equals(page)) showTagSettings();
+        else if ("extensions".equals(page)) showExtensions();
         else if ("hiddenBooks".equals(page)) showHiddenBooks();
         else if ("collectionBooks".equals(page)) showBookShelf(false);
         else if ("collections".equals(page)) showCollections();
@@ -2451,11 +2794,13 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
-        readerDeviceInfoRow = addReaderDeviceInfo();
-        View readerHeaderBar = makeHeader(book.optString("title"), chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length(),
-                "next", "help", () -> { saveCurrentChapter(true); chapterEditor = null; showChapters(); },
-                this::showSpecialTokenHelp, 0, 68, true);
-        appColumn.addView(readerHeaderBar);
+        readerTransformButton = null;
+        readerTransformIcon = null;
+        readerTransformSpinner = null;
+        readerBottomBar = null;
+        View readerHeaderBar = makeCompactReaderHeader(book.optString("title"),
+                chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length());
+        appColumn.addView(readerHeaderBar, new LinearLayout.LayoutParams(-1, dp(34)));
         FrameLayout progressTrack = new FrameLayout(this); progressTrack.setBackgroundColor(0xFF241C2E);
         readerProgress = new View(this); readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
@@ -2506,6 +2851,8 @@ public final class MainActivity extends Activity {
             updateProgress();
         });
         appColumn.addView(readerFrame, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout deviceInfo = addReaderDeviceInfo();
+        if (deviceInfo != null) appColumn.addView(deviceInfo, new LinearLayout.LayoutParams(-1, dp(30)));
         readerFrame.requestFocus();
         if (Build.VERSION.SDK_INT >= 30) {
             readerFrame.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -2522,15 +2869,18 @@ public final class MainActivity extends Activity {
                 setReaderImeVisible(obscured > dp(140));
             });
         }
-        systemRoot.post(this::updateReaderStatusOverlay);
-
-        LinearLayout bottom = new LinearLayout(this); bottom.setGravity(Gravity.CENTER); bottom.setPadding(dp(18), dp(7), dp(18), dp(7));
+        LinearLayout bottom = new LinearLayout(this); readerBottomBar = bottom;
+        bottom.setGravity(Gravity.CENTER); bottom.setPadding(dp(18), dp(7), dp(18), dp(7));
         bottom.setLayoutDirection(View.LAYOUT_DIRECTION_LTR); bottom.setBackgroundColor(BG);
         FrameLayout previousChapterButton = weightedIconButton("back", () -> moveChapter(-1));
         previousChapterButton.setTranslationX(-dp(8));
         bottom.addView(previousChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         bottom.addView(weightedIconButton("undo", this::undoChapterEdit),
                 new LinearLayout.LayoutParams(0, dp(54), 1));
+        if (isColloquialPluginEnabled()) {
+            readerTransformButton = createColloquialButton();
+            bottom.addView(readerTransformButton, new LinearLayout.LayoutParams(0, dp(54), 1));
+        }
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
         nextChapterButton.setTranslationX(dp(8));
         bottom.addView(nextChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
@@ -2642,28 +2992,7 @@ public final class MainActivity extends Activity {
             clock.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
             row.addView(clock, new LinearLayout.LayoutParams(-2, -1));
         }
-        appColumn.addView(row, new LinearLayout.LayoutParams(-1, dp(30)));
         return row;
-    }
-
-    private void updateReaderStatusOverlay() {
-        if (!"reader".equals(page) || systemRoot == null) return;
-        boolean statusVisible = false;
-        if (Build.VERSION.SDK_INT >= 30) {
-            WindowInsets insets = systemRoot.getRootWindowInsets();
-            statusVisible = insets != null && insets.isVisible(WindowInsets.Type.statusBars());
-        } else {
-            statusVisible = (getWindow().getDecorView().getSystemUiVisibility()
-                    & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0;
-        }
-        applyReaderStatusOverlay(statusVisible);
-    }
-
-    private void applyReaderStatusOverlay(boolean statusVisible) {
-        if (!"reader".equals(page) || readerDeviceInfoRow == null) return;
-        // Collapse the in-app clock/battery row while Android's transient status bar is over it.
-        // This also moves the reader title and progress strip up under the system bar.
-        readerDeviceInfoRow.setVisibility(statusVisible ? View.GONE : View.VISIBLE);
     }
 
     private void updateBatteryIndicator(Intent battery) {
@@ -3684,7 +4013,8 @@ public final class MainActivity extends Activity {
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) { if (returnedFromHiddenBooks) showHiddenBooks(); else showBookShelf(false); }
         else if ("collectionBooks".equals(page) || "hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
-        else if ("settings".equals(page) || "recommendations".equals(page) || "tagSettings".equals(page)) showDashboard();
+        else if ("settings".equals(page) || "recommendations".equals(page)
+                || "tagSettings".equals(page) || "extensions".equals(page)) showDashboard();
         else super.onBackPressed();
     }
 
@@ -3726,7 +4056,29 @@ public final class MainActivity extends Activity {
         }
         imageExecutor.shutdown();
         metadataExecutor.shutdownNow();
+        pluginExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    private View makeCompactReaderHeader(String title, String subtitle) {
+        FrameLayout header = new FrameLayout(this);
+        header.setBackgroundColor(BG);
+        LinearLayout textBlock = new LinearLayout(this);
+        textBlock.setGravity(Gravity.CENTER);
+        textBlock.setOrientation(LinearLayout.VERTICAL);
+        TextView titleText = text(title, 15, TEXT);
+        titleText.setGravity(Gravity.CENTER);
+        titleText.setMaxLines(1);
+        titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleText.setIncludeFontPadding(false);
+        textBlock.addView(titleText, new LinearLayout.LayoutParams(-1, dp(19)));
+        TextView subtitleText = text(subtitle, 10, MUTED);
+        subtitleText.setGravity(Gravity.CENTER);
+        subtitleText.setMaxLines(1);
+        subtitleText.setIncludeFontPadding(false);
+        textBlock.addView(subtitleText, new LinearLayout.LayoutParams(-1, dp(13)));
+        header.addView(textBlock, new FrameLayout.LayoutParams(-1, -1));
+        return header;
     }
 
     private View makeHeader(String title, String subtitle, String leftIcon, String rightIcon, Runnable left, Runnable right) {

@@ -29,6 +29,8 @@ final class NovelStorage {
     private static final String FOLDER_ID = "folder_document_id";
     private static final String FOLDER = "NovelReader";
     private static final String COVER_FOLDER = ".covers";
+    private static final String PLUGIN_FOLDER = ".plugins";
+    private static final String COLLOQUIAL_PLUGIN_FOLDER = "colloquial-core";
     private static final String NO_MEDIA_FILE = ".nomedia";
     private static final String DIRECTORY_MIME = "vnd.android.document/directory";
     private static final long MAX_COVER_CACHE_BYTES = 64L * 1024L * 1024L;
@@ -141,6 +143,76 @@ final class NovelStorage {
             android.util.Log.e("NovelReader", "Could not write " + fileName, error);
             return false;
         }
+    }
+
+    String readExtensionFile(String fileName) throws Exception {
+        if (!supportedExtensionFile(fileName)) throw new IOException("Invalid extension file name.");
+        Uri directory = extensionDirectoryUri(false);
+        if (directory == null) return null;
+        Uri file = findChild(directory, fileName);
+        if (file == null) return null;
+        try (InputStream input = activity.getContentResolver().openInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) throw new IOException("The extension provider returned no input stream.");
+            copy(input, output);
+            return output.toString("UTF-8");
+        }
+    }
+
+    boolean writeExtensionFile(String fileName, String contents) {
+        if (!supportedExtensionFile(fileName)) { lastError = "Invalid extension file name."; return false; }
+        try {
+            Uri directory = extensionDirectoryUri(true);
+            String mime = "extension.json".equals(fileName) || "rules.json".equals(fileName)
+                    ? "application/json" : "text/plain";
+            Uri file = findChild(directory, fileName);
+            if (file == null) file = DocumentsContract.createDocument(
+                    activity.getContentResolver(), directory, mime, fileName);
+            if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
+            try (OutputStream output = activity.getContentResolver().openOutputStream(file, "rwt")) {
+                if (output == null) throw new IOException("The storage provider returned no extension output stream.");
+                output.write((contents == null ? "" : contents).getBytes(StandardCharsets.UTF_8));
+                output.flush();
+            }
+            lastError = "";
+            return true;
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not write extension file " + fileName, error);
+            return false;
+        }
+    }
+
+    private Uri extensionDirectoryUri(boolean create) throws Exception {
+        Uri root = directoryUri();
+        if (root == null) {
+            if (create) throw new IOException("No NovelReader folder is selected.");
+            return null;
+        }
+        Uri plugins = findChild(root, PLUGIN_FOLDER);
+        if (plugins == null && create) plugins = createDirectory(root, PLUGIN_FOLDER);
+        if (plugins == null) return null;
+        Uri marker = findChild(plugins, NO_MEDIA_FILE);
+        if (marker == null && create) {
+            marker = DocumentsContract.createDocument(activity.getContentResolver(), plugins,
+                    "application/octet-stream", NO_MEDIA_FILE);
+            if (marker == null) throw new IOException("Could not hide the extension storage folder from media scanners.");
+        }
+        Uri extension = findChild(plugins, COLLOQUIAL_PLUGIN_FOLDER);
+        if (extension == null && create) extension = createDirectory(plugins, COLLOQUIAL_PLUGIN_FOLDER);
+        if (extension == null) return null;
+        return extension;
+    }
+
+    private Uri createDirectory(Uri parent, String name) throws Exception {
+        Uri directory = DocumentsContract.createDocument(
+                activity.getContentResolver(), parent, DIRECTORY_MIME, name);
+        if (directory == null) throw new IOException("Could not create " + name + ".");
+        return directory;
+    }
+
+    private static boolean supportedExtensionFile(String name) {
+        return "extension.json".equals(name) || "rules.json".equals(name) || "engine.kt".equals(name);
     }
 
     byte[] readImage(String fileName) throws Exception {
