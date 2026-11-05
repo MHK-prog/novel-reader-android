@@ -1212,6 +1212,16 @@ public final class MainActivity extends Activity {
                 }
             }
         }
+        JSONArray verbStems = rules.optJSONArray("verb_stems");
+        if (verbStems != null) {
+            for (int i = 0; i < verbStems.length(); i++) {
+                JSONObject stem = verbStems.optJSONObject(i);
+                if (stem == null || stem.optString("f").trim().isEmpty()
+                        || stem.optString("c").trim().isEmpty()) {
+                    throw new IOException("Invalid verb stem.");
+                }
+            }
+        }
     }
 
     private String readVerifiedColloquialRules() throws Exception {
@@ -1224,6 +1234,7 @@ public final class MainActivity extends Activity {
         validateRulesJson(rules, manifest.optInt("rulesSchema", 0));
         verifyExtensionFile(manifest, "engine.kt", engine);
         verifyExtensionFile(manifest, "rules.json", rules);
+        ColloquialPersianTransformer.prepare(rules);
         return rules;
     }
 

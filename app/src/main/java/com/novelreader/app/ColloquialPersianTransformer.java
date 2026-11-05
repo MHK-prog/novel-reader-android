@@ -6,28 +6,105 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Java runtime for the colloquial-core rule format. Downloaded Kotlin is stored, never executed. */
 final class ColloquialPersianTransformer {
     private static final char ZWNJ = '\u200c';
+    private static final String[] VERB_PREFIXES = {"می‌", "نمی‌", "ب"};
+    private static final String[] FORMAL_ENDINGS = {"م", "ی", "د", "یم", "ید", "ند"};
+    private static final String[] COLLOQUIAL_ENDINGS = {"م", "ی", "ه", "یم", "ین", "ن"};
+    private static String cachedRulesJson;
+    private static PreparedRules cachedRules;
 
     private ColloquialPersianTransformer() { }
 
     static String transform(String text, String rulesJson) throws JSONException {
+        PreparedRules rules = loadRules(rulesJson);
+        String result = replacePairs(text, rules.normalizations, "general", null);
+        result = replacePairs(result, rules.prefixes, "prefix", null);
+        result = replacePairs(result, rules.phrases, "general", null);
+        result = replaceContextualPairs(result, rules.contextualVerbs);
+        result = replacePairs(result, rules.suffixes, "suffix", null);
+        result = replacePairs(result, rules.words, "word", rules.suffixes);
+        return replacePairs(result, rules.verbs, "general", null);
+    }
+
+    static synchronized void prepare(String rulesJson) throws JSONException {
+        loadRules(rulesJson);
+    }
+
+    private static synchronized PreparedRules loadRules(String rulesJson) throws JSONException {
+        if (rulesJson.equals(cachedRulesJson) && cachedRules != null) return cachedRules;
         JSONObject rules = new JSONObject(rulesJson);
         List<Pair> suffixes = readPairs(rules.optJSONArray("suffixes"));
-        String result = replacePairs(text, readPairs(rules.optJSONArray("normalizations")), "general", null);
-        result = replacePairs(result, readPairs(rules.optJSONArray("prefixes")), "prefix", null);
-        result = replacePairs(result, readPairs(rules.optJSONArray("phrases")), "general", null);
-        result = replaceContextualPairs(result, readContextualPairs(rules.optJSONArray("contextualVerbs")));
-        result = replacePairs(result, suffixes, "suffix", null);
-        result = replacePairs(result, readPairs(rules.optJSONArray("words")), "word", suffixes);
-        return replacePairs(result, readPairs(rules.optJSONArray("verbs")), "general", null);
+        PreparedRules prepared = new PreparedRules(
+                readPairs(rules.optJSONArray("normalizations")),
+                readPairs(rules.optJSONArray("prefixes")),
+                readPairs(rules.optJSONArray("phrases")),
+                readContextualPairs(rules.optJSONArray("contextualVerbs")),
+                suffixes,
+                readPairs(rules.optJSONArray("words")),
+                expandVerbStems(readPairs(rules.optJSONArray("verbs")), rules.optJSONArray("verb_stems"))
+        );
+        cachedRulesJson = rulesJson;
+        cachedRules = prepared;
+        return prepared;
+    }
+
+    private static List<Pair> expandVerbStems(List<Pair> manual, JSONArray stems) {
+        List<Pair> result = new ArrayList<>(manual);
+        Set<String> seenSources = new HashSet<>();
+        for (Pair pair : manual) seenSources.add(pair.source);
+        if (stems == null) return result;
+
+        for (int i = 0; i < stems.length(); i++) {
+            JSONObject stem = stems.optJSONObject(i);
+            if (stem == null) continue;
+            String formal = stem.optString("f", "");
+            String colloquial = stem.optString("c", "");
+            if (formal.isEmpty() || colloquial.isEmpty()) continue;
+            String linkedFormal = formal + stem.optString("link", "");
+            for (String prefix : VERB_PREFIXES) {
+                for (int ending = 0; ending < FORMAL_ENDINGS.length; ending++) {
+                    String source = prefix + linkedFormal + FORMAL_ENDINGS[ending];
+                    String replacement = prefix + colloquial + COLLOQUIAL_ENDINGS[ending];
+                    // An explicitly listed verb always overrides a generated form.
+                    if (!source.equals(replacement) && seenSources.add(source)) {
+                        result.add(new Pair(source, replacement));
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private static final class PreparedRules {
+        final List<Pair> normalizations;
+        final List<Pair> prefixes;
+        final List<Pair> phrases;
+        final List<ContextualPair> contextualVerbs;
+        final List<Pair> suffixes;
+        final List<Pair> words;
+        final List<Pair> verbs;
+
+        PreparedRules(List<Pair> normalizations, List<Pair> prefixes, List<Pair> phrases,
+                      List<ContextualPair> contextualVerbs, List<Pair> suffixes,
+                      List<Pair> words, List<Pair> verbs) {
+            this.normalizations = normalizations;
+            this.prefixes = prefixes;
+            this.phrases = phrases;
+            this.contextualVerbs = contextualVerbs;
+            this.suffixes = suffixes;
+            this.words = words;
+            this.verbs = verbs;
+        }
     }
 
     private static List<Pair> readPairs(JSONArray array) {
