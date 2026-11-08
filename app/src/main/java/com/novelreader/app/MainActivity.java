@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.8";
+    private static final String VERSION = "1.4.9";
     private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
     private static final String COLLOQUIAL_MANIFEST_URL =
             "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";
@@ -1137,8 +1137,8 @@ public final class MainActivity extends Activity {
         int rulesSchema = manifest.optInt("rulesSchema", 0);
         if (manifest.optInt("schema", 0) != 1
                 || !COLLOQUIAL_PLUGIN_ID.equals(manifest.optString("id"))
-                || manifest.optInt("engineApi", 0) != 1
-                || (rulesSchema != 1 && rulesSchema != 2)
+                || manifest.optInt("engineApi", 0) != 2
+                || rulesSchema != 3
                 || manifest.optString("version").trim().isEmpty()) {
             throw new IOException("Unsupported colloquial-core extension manifest.");
         }
@@ -1174,48 +1174,14 @@ public final class MainActivity extends Activity {
     }
 
     private void validateRulesJson(String rulesText, int expectedSchema) throws Exception {
-        JSONObject rules = new JSONObject(rulesText);
-        if ((expectedSchema != 1 && expectedSchema != 2)
-                || rules.optInt("version", 0) != expectedSchema) {
-            throw new IOException("Unsupported Persian rules schema.");
-        }
-        for (String section : new String[]{"normalizations", "prefixes", "phrases", "suffixes", "words", "verbs"}) {
-            JSONArray entries = rules.optJSONArray(section);
-            if (entries == null) throw new IOException("The rules are missing " + section + ".");
-            for (int i = 0; i < entries.length(); i++) {
-                JSONArray pair = entries.optJSONArray(i);
-                if (pair == null || pair.length() < 2 || pair.optString(0).isEmpty()) {
-                    throw new IOException("Invalid rule in " + section + ".");
-                }
-            }
-        }
-        JSONArray contextualVerbs = rules.optJSONArray("contextualVerbs");
-        if (expectedSchema == 2 && contextualVerbs == null) {
-            throw new IOException("The rules are missing contextualVerbs.");
-        }
-        if (contextualVerbs != null) {
-            for (int i = 0; i < contextualVerbs.length(); i++) {
-                JSONArray rule = contextualVerbs.optJSONArray(i);
-                JSONArray contexts = rule == null ? null : rule.optJSONArray(2);
-                if (rule == null || rule.length() < 3 || rule.optString(0).isEmpty()
-                        || rule.optString(1).isEmpty() || contexts == null || contexts.length() == 0) {
-                    throw new IOException("Invalid contextual verb rule.");
-                }
-                for (int j = 0; j < contexts.length(); j++) {
-                    if (contexts.optString(j).trim().isEmpty()) {
-                        throw new IOException("Invalid contextual verb context.");
-                    }
-                }
-            }
-        }
-        JSONArray verbStems = rules.optJSONArray("verb_stems");
-        if (verbStems != null) {
-            for (int i = 0; i < verbStems.length(); i++) {
-                JSONObject stem = verbStems.optJSONObject(i);
-                if (stem == null || stem.optString("f").trim().isEmpty()
-                        || stem.optString("c").trim().isEmpty()) {
-                    throw new IOException("Invalid verb stem.");
-                }
+        if (expectedSchema != 3) throw new IOException("Unsupported Persian rules schema.");
+        JSONArray rules = new JSONArray(rulesText);
+        for (int i = 0; i < rules.length(); i++) {
+            JSONArray pair = rules.optJSONArray(i);
+            if (pair == null || pair.length() != 2
+                    || !(pair.opt(0) instanceof String) || !(pair.opt(1) instanceof String)
+                    || pair.optString(0).isEmpty()) {
+                throw new IOException("Each rule must contain two strings and a non-empty source.");
             }
         }
     }
