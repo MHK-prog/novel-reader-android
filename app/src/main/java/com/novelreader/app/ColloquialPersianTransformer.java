@@ -6,7 +6,7 @@ import org.json.JSONException;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Applies literal source-to-replacement rules without regex or generated patterns. */
+/** Applies literal replacement pairs with separator-tolerant Persian key matching. */
 final class ColloquialPersianTransformer {
     private static String cachedRulesJson;
     private static List<Rule> cachedRules;
@@ -33,46 +33,87 @@ final class ColloquialPersianTransformer {
             }
             String source = pair.optString(0);
             if (source.isEmpty()) throw new JSONException("Rule source cannot be empty.");
-            rules.add(new Rule(source, pair.optString(1)));
+            Rule rule = new Rule(source, pair.optString(1));
+            if (rule.matchSource.isEmpty()) throw new JSONException("Rule source must contain a matchable character.");
+            rules.add(rule);
         }
-        rules.sort((left, right) -> Integer.compare(right.source.length(), left.source.length()));
+        rules.sort((left, right) -> Integer.compare(right.matchSource.length(), left.matchSource.length()));
         cachedRulesJson = rulesJson;
         cachedRules = rules;
         return rules;
     }
 
+    private static String normalizeKey(String value) {
+        StringBuilder key = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            if (character == ' ' || character == '\u200c') continue;
+            key.append(character == '\u0622' ? '\u0627' : character);
+        }
+        return key.toString();
+    }
+
     private static String transform(String text, List<Rule> rules) {
         String sourceText = text == null ? "" : text;
-        List<Rule> textRules = new ArrayList<>();
         for (Rule rule : rules) {
             if (rule.source.length() == 1) sourceText = sourceText.replace(rule.source, rule.replacement);
-            else textRules.add(rule);
         }
+
+        StringBuilder normalized = new StringBuilder(sourceText.length());
+        int[] starts = new int[sourceText.length()];
+        int[] ends = new int[sourceText.length()];
+        int normalizedLength = 0;
+        for (int i = 0; i < sourceText.length(); i++) {
+            char character = sourceText.charAt(i);
+            if (character == ' ' || character == '\u200c') continue;
+            normalized.append(character == '\u0622' ? '\u0627' : character);
+            starts[normalizedLength] = i;
+            ends[normalizedLength] = i + 1;
+            normalizedLength++;
+        }
+
         StringBuilder result = new StringBuilder(sourceText.length());
-        for (int index = 0; index < sourceText.length();) {
+        int originalCursor = 0;
+        for (int index = 0; index < normalizedLength;) {
             Rule match = null;
-            for (Rule rule : textRules) {
-                if (sourceText.startsWith(rule.source, index)) {
+            for (Rule rule : rules) {
+                if (rule.source.length() != 1 && startsWith(normalized, rule.matchSource, index)) {
                     match = rule;
                     break;
                 }
             }
-            if (match == null) result.append(sourceText.charAt(index++));
-            else {
+            if (match == null) {
+                index++;
+            } else {
+                int originalStart = starts[index];
+                int originalEnd = ends[index + match.matchSource.length() - 1];
+                result.append(sourceText, originalCursor, originalStart);
                 result.append(match.replacement);
-                index += match.source.length();
+                originalCursor = originalEnd;
+                index += match.matchSource.length();
             }
         }
+        result.append(sourceText, originalCursor, sourceText.length());
         return result.toString();
+    }
+
+    private static boolean startsWith(StringBuilder text, String value, int offset) {
+        if (offset + value.length() > text.length()) return false;
+        for (int i = 0; i < value.length(); i++) {
+            if (text.charAt(offset + i) != value.charAt(i)) return false;
+        }
+        return true;
     }
 
     private static final class Rule {
         final String source;
         final String replacement;
+        final String matchSource;
 
         Rule(String source, String replacement) {
             this.source = source;
             this.replacement = replacement;
+            this.matchSource = normalizeKey(source);
         }
     }
 }
