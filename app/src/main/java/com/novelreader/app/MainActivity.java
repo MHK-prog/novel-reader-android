@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.10";
+    private static final String VERSION = "1.4.11";
     private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
     private static final String COLLOQUIAL_MANIFEST_URL =
             "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";

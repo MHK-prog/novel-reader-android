@@ -43,14 +43,39 @@ final class ColloquialPersianTransformer {
         return rules;
     }
 
-    private static String normalizeKey(String value) {
-        StringBuilder key = new StringBuilder(value.length());
-        for (int i = 0; i < value.length(); i++) {
-            char character = value.charAt(i);
-            if (character == ' ' || character == '\u200c') continue;
-            key.append(character == '\u0622' ? '\u0627' : character);
+    private static boolean isSeparator(char character) {
+        return character == ' ' || character == '\u200c';
+    }
+
+    private static char foldCharacter(char character) {
+        return character == '\u0622' ? '\u0627' : character;
+    }
+
+    private static String matchKey(String source) {
+        StringBuilder key = new StringBuilder(source.length());
+        for (int i = 0; i < source.length(); i++) {
+            char character = source.charAt(i);
+            if (!isSeparator(character)) key.append(foldCharacter(character));
         }
         return key.toString();
+    }
+
+    private static int matchEnd(String text, int start, String source) {
+        int textIndex = start;
+        for (int ruleIndex = 0; ruleIndex < source.length(); ruleIndex++) {
+            char expected = source.charAt(ruleIndex);
+            if (isSeparator(expected)) {
+                int separatorStart = textIndex;
+                while (textIndex < text.length() && isSeparator(text.charAt(textIndex))) textIndex++;
+                boolean isSourceEdge = ruleIndex == 0 || ruleIndex == source.length() - 1;
+                if (isSourceEdge && textIndex == separatorStart) return -1;
+                continue;
+            }
+            if (textIndex >= text.length() || isSeparator(text.charAt(textIndex))
+                    || foldCharacter(text.charAt(textIndex)) != foldCharacter(expected)) return -1;
+            textIndex++;
+        }
+        return textIndex;
     }
 
     private static String transform(String text, List<Rule> rules) {
@@ -58,51 +83,33 @@ final class ColloquialPersianTransformer {
         for (Rule rule : rules) {
             if (rule.source.length() == 1) sourceText = sourceText.replace(rule.source, rule.replacement);
         }
-
-        StringBuilder normalized = new StringBuilder(sourceText.length());
-        int[] starts = new int[sourceText.length()];
-        int[] ends = new int[sourceText.length()];
-        int normalizedLength = 0;
-        for (int i = 0; i < sourceText.length(); i++) {
-            char character = sourceText.charAt(i);
-            if (character == ' ' || character == '\u200c') continue;
-            normalized.append(character == '\u0622' ? '\u0627' : character);
-            starts[normalizedLength] = i;
-            ends[normalizedLength] = i + 1;
-            normalizedLength++;
-        }
+        List<Rule> textRules = new ArrayList<>();
+        for (Rule rule : rules) if (rule.source.length() != 1) textRules.add(rule);
 
         StringBuilder result = new StringBuilder(sourceText.length());
         int originalCursor = 0;
-        for (int index = 0; index < normalizedLength;) {
-            Rule match = null;
-            for (Rule rule : rules) {
-                if (rule.source.length() != 1 && startsWith(normalized, rule.matchSource, index)) {
-                    match = rule;
+        for (int index = 0; index < sourceText.length();) {
+            Rule matchedRule = null;
+            int matchEndIndex = -1;
+            for (Rule rule : textRules) {
+                int end = matchEnd(sourceText, index, rule.source);
+                if (end >= 0) {
+                    matchedRule = rule;
+                    matchEndIndex = end;
                     break;
                 }
             }
-            if (match == null) {
+            if (matchedRule == null) {
                 index++;
             } else {
-                int originalStart = starts[index];
-                int originalEnd = ends[index + match.matchSource.length() - 1];
-                result.append(sourceText, originalCursor, originalStart);
-                result.append(match.replacement);
-                originalCursor = originalEnd;
-                index += match.matchSource.length();
+                result.append(sourceText, originalCursor, index);
+                result.append(matchedRule.replacement);
+                originalCursor = matchEndIndex;
+                index = matchEndIndex;
             }
         }
         result.append(sourceText, originalCursor, sourceText.length());
         return result.toString();
-    }
-
-    private static boolean startsWith(StringBuilder text, String value, int offset) {
-        if (offset + value.length() > text.length()) return false;
-        for (int i = 0; i < value.length(); i++) {
-            if (text.charAt(offset + i) != value.charAt(i)) return false;
-        }
-        return true;
     }
 
     private static final class Rule {
@@ -113,7 +120,7 @@ final class ColloquialPersianTransformer {
         Rule(String source, String replacement) {
             this.source = source;
             this.replacement = replacement;
-            this.matchSource = normalizeKey(source);
+            this.matchSource = matchKey(source);
         }
     }
 }
