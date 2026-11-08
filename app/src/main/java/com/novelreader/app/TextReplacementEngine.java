@@ -6,19 +6,15 @@ import org.json.JSONException;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Applies literal replacement pairs with separator-tolerant Persian key matching. */
-final class ColloquialPersianTransformer {
+/** Shared host capability for literal replacement pairs supplied by extensions. */
+final class TextReplacementEngine {
     private static String cachedRulesJson;
     private static List<Rule> cachedRules;
 
-    private ColloquialPersianTransformer() { }
+    private TextReplacementEngine() { }
 
     static String transform(String text, String rulesJson) throws JSONException {
         return transform(text, loadRules(rulesJson));
-    }
-
-    static synchronized void prepare(String rulesJson) throws JSONException {
-        loadRules(rulesJson);
     }
 
     private static synchronized List<Rule> loadRules(String rulesJson) throws JSONException {

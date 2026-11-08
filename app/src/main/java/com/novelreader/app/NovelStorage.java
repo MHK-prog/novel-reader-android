@@ -17,6 +17,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -30,10 +31,8 @@ final class NovelStorage {
     private static final String FOLDER = "NovelReader";
     private static final String COVER_FOLDER = ".covers";
     private static final String PLUGIN_FOLDER = ".plugins";
-    private static final String COLLOQUIAL_PLUGIN_FOLDER = "colloquial-core";
     private static final String PLUGIN_DOCUMENT_ID = "plugin_folder_document_id";
     private static final String PLUGIN_MARKER_DOCUMENT_ID = "plugin_marker_document_id";
-    private static final String COLLOQUIAL_DOCUMENT_ID = "colloquial_plugin_document_id";
     private static final String NO_MEDIA_FILE = ".nomedia";
     private static final String DIRECTORY_MIME = "vnd.android.document/directory";
     private static final long MAX_COVER_CACHE_BYTES = 64L * 1024L * 1024L;
@@ -97,7 +96,7 @@ final class NovelStorage {
             folderId = DocumentsContract.getDocumentId(folder);
         }
         preferences.edit().putString(TREE_URI, selectedTree.toString()).putString(FOLDER_ID, folderId)
-                .remove(PLUGIN_DOCUMENT_ID).remove(PLUGIN_MARKER_DOCUMENT_ID).remove(COLLOQUIAL_DOCUMENT_ID).apply();
+                .remove(PLUGIN_DOCUMENT_ID).remove(PLUGIN_MARKER_DOCUMENT_ID).apply();
         clearCoverDocumentCache();
     }
 
@@ -149,11 +148,40 @@ final class NovelStorage {
         }
     }
 
-    String readExtensionFile(String fileName) throws Exception {
-        if (!supportedExtensionFile(fileName)) throw new IOException("Invalid extension file name.");
-        Uri directory = extensionDirectoryUri(false);
+    List<String> listPluginIds() {
+        List<String> ids = new ArrayList<>();
+        try {
+            Uri root = extensionRootUri(false);
+            if (root == null) return ids;
+            String documentId = DocumentsContract.getDocumentId(root);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(root, documentId);
+            String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME };
+            try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
+                if (cursor == null) return ids;
+                int idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                int nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                while (cursor.moveToNext()) {
+                    String name = cursor.getString(nameColumn);
+                    if (isPluginId(name)) {
+                        Uri child = DocumentsContract.buildDocumentUriUsingTree(root, cursor.getString(idColumn));
+                        String mime = activity.getContentResolver().getType(child);
+                        if (mime == null || DIRECTORY_MIME.equals(mime)) ids.add(name);
+                    }
+                }
+            }
+        } catch (Exception error) {
+            android.util.Log.w("NovelReader", "Could not list installed extensions", error);
+        }
+        Collections.sort(ids, String.CASE_INSENSITIVE_ORDER);
+        return ids;
+    }
+
+    String readPluginFile(String pluginId, String fileName) throws Exception {
+        if (!isPluginId(pluginId) || !safePluginFileName(fileName)) throw new IOException("Invalid extension path.");
+        Uri directory = pluginDirectoryUri(pluginId, false);
         if (directory == null) return null;
-        Uri file = findExtensionFile(directory, fileName);
+        Uri file = findChild(directory, fileName);
         if (file == null) return null;
         try (InputStream input = activity.getContentResolver().openInputStream(file);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -163,16 +191,16 @@ final class NovelStorage {
         }
     }
 
-    boolean writeExtensionFile(String fileName, String contents) {
-        if (!supportedExtensionFile(fileName)) { lastError = "Invalid extension file name."; return false; }
+    boolean writePluginFile(String pluginId, String fileName, String contents) {
+        if (!isPluginId(pluginId) || !safePluginFileName(fileName)) {
+            lastError = "Invalid extension path.";
+            return false;
+        }
         try {
-            Uri directory = extensionDirectoryUri(true);
-            String mime = "extension.json".equals(fileName) || "rules.json".equals(fileName)
+            Uri directory = pluginDirectoryUri(pluginId, true);
+            String mime = fileName.endsWith(".json")
                     ? "application/json" : "application/octet-stream";
             Uri file = findChild(directory, fileName);
-            if (file == null && "engine.kt".equals(fileName)) {
-                file = findLegacyEngineFile(directory);
-            }
             if (file == null) file = DocumentsContract.createDocument(
                     activity.getContentResolver(), directory, mime, fileName);
             if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
@@ -190,7 +218,41 @@ final class NovelStorage {
         }
     }
 
-    private Uri extensionDirectoryUri(boolean create) throws Exception {
+    boolean deletePlugin(String pluginId) {
+        if (!isPluginId(pluginId)) return false;
+        try {
+            Uri directory = pluginDirectoryUri(pluginId, false);
+            if (directory == null) return true;
+            String id = DocumentsContract.getDocumentId(directory);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(directory, id);
+            String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID };
+            List<Uri> files = new ArrayList<>();
+            try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
+                if (cursor != null) {
+                    int idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                    while (cursor.moveToNext()) {
+                        files.add(DocumentsContract.buildDocumentUriUsingTree(directory, cursor.getString(idColumn)));
+                    }
+                }
+            }
+            for (Uri file : files) {
+                if (!DocumentsContract.deleteDocument(activity.getContentResolver(), file)) {
+                    throw new IOException("Could not remove an extension file.");
+                }
+            }
+            if (!DocumentsContract.deleteDocument(activity.getContentResolver(), directory)) {
+                throw new IOException("Could not remove the extension folder.");
+            }
+            preferences.edit().remove(pluginPreferenceKey(pluginId)).apply();
+            return true;
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not remove extension " + pluginId, error);
+            return false;
+        }
+    }
+
+    private Uri extensionRootUri(boolean create) throws Exception {
         Uri root = directoryUri();
         if (root == null) {
             if (create) throw new IOException("No NovelReader folder is selected.");
@@ -202,8 +264,19 @@ final class NovelStorage {
                 "application/octet-stream", false, true) == null) {
             throw new IOException("Could not hide the extension storage folder from media scanners.");
         }
-        return resolveExtensionChild(plugins, COLLOQUIAL_PLUGIN_FOLDER, COLLOQUIAL_DOCUMENT_ID,
+        return plugins;
+    }
+
+    private Uri pluginDirectoryUri(String pluginId, boolean create) throws Exception {
+        if (!isPluginId(pluginId)) throw new IOException("Invalid extension id.");
+        Uri root = extensionRootUri(create);
+        if (root == null) return null;
+        return resolveExtensionChild(root, pluginId, pluginPreferenceKey(pluginId),
                 DIRECTORY_MIME, true, create);
+    }
+
+    private static String pluginPreferenceKey(String pluginId) {
+        return "plugin_directory_" + pluginId;
     }
 
     private Uri resolveExtensionChild(Uri parent, String name, String preferenceKey,
@@ -264,36 +337,14 @@ final class NovelStorage {
         return directory;
     }
 
-    private static boolean supportedExtensionFile(String name) {
-        return "extension.json".equals(name) || "rules.json".equals(name) || "engine.kt".equals(name);
+
+    private static boolean isPluginId(String id) {
+        return id != null && id.length() <= 64 && id.matches("[a-z0-9][a-z0-9._-]*") && !id.contains("..");
     }
 
-    private Uri findExtensionFile(Uri directory, String fileName) throws Exception {
-        Uri file = findChild(directory, fileName);
-        if (file != null || !"engine.kt".equals(fileName)) return file;
-        return findLegacyEngineFile(directory);
-    }
-
-    private Uri findLegacyEngineFile(Uri directory) throws Exception {
-        Uri exact = findChild(directory, "engine.kt.txt");
-        if (exact != null) return exact;
-
-        String id = DocumentsContract.getDocumentId(directory);
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(directory, id);
-        String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME };
-        try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
-            if (cursor == null) return null;
-            int idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
-            int nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
-            while (cursor.moveToNext()) {
-                String name = cursor.getString(nameColumn);
-                if (name != null && name.matches("engine\\.kt(?: \\(\\d+\\))?\\.txt(?: \\(\\d+\\))?")) {
-                    return DocumentsContract.buildDocumentUriUsingTree(directory, cursor.getString(idColumn));
-                }
-            }
-        }
-        return null;
+    private static boolean safePluginFileName(String name) {
+        return name != null && name.length() <= 100 && !name.contains("..")
+                && name.matches("[A-Za-z0-9][A-Za-z0-9._-]*");
     }
 
     byte[] readImage(String fileName) throws Exception {

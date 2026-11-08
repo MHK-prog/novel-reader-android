@@ -160,12 +160,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.11";
-    private static final String COLLOQUIAL_PLUGIN_ID = "colloquial-core";
-    private static final String COLLOQUIAL_MANIFEST_URL =
-            "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/extension.json";
-    private static final String COLLOQUIAL_RAW_BASE =
-            "https://raw.githubusercontent.com/MHK-prog/colloquial-core/main/";
+    private static final String VERSION = "1.4.12";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -226,10 +221,10 @@ public final class MainActivity extends Activity {
     private TextView batteryPercentView;
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
-    private SharedPreferences extensionPreferences;
-    private FrameLayout readerTransformButton;
-    private NativeIconView readerTransformIcon;
-    private ProgressBar readerTransformSpinner;
+    private ExtensionManager extensionManager;
+    private FrameLayout readerExtensionButton;
+    private NativeIconView readerExtensionIcon;
+    private ProgressBar readerExtensionSpinner;
     private LinearLayout readerBottomBar;
     private String activeReorderType;
     private String activeReorderSourceId;
@@ -292,7 +287,7 @@ public final class MainActivity extends Activity {
         }
         vazir = Typeface.createFromAsset(getAssets(), "fonts/Vazirmatn-Regular.ttf");
         storage = new NovelStorage(this);
-        extensionPreferences = getSharedPreferences("extensions", MODE_PRIVATE);
+        extensionManager = new ExtensionManager(storage, getSharedPreferences("extensions", MODE_PRIVATE));
         recommendationState = getSharedPreferences("recommendations", MODE_PRIVATE);
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
@@ -954,25 +949,38 @@ public final class MainActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(16), dp(18), dp(24));
+        content.addView(textButton("افزودن افزونه", "add", PURPLE,
+                () -> showExtensionAddressDialog("")), fieldParams());
 
-        boolean installed = isColloquialPluginInstalled();
-        String version = installed ? installedColloquialVersion() : null;
+        List<ExtensionManager.Plugin> plugins = extensionManager.installed();
+        if (plugins.isEmpty()) {
+            TextView empty = text("افزونه‌ای نصب نشده است.", 14, MUTED);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, dp(28), 0, dp(20));
+            content.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        }
+        for (ExtensionManager.Plugin plugin : plugins) content.addView(extensionCard(plugin), fieldParams());
+
+        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private View extensionCard(ExtensionManager.Plugin plugin) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setPadding(dp(18), dp(16), dp(18), dp(16));
         card.setBackground(roundDrawable(SURFACE, 0xFF302A38, 16));
 
-        TextView title = text("محاوره‌ساز فارسی", 19, TEXT);
+        TextView title = text(plugin.name, 18, TEXT);
         title.setGravity(Gravity.CENTER);
         card.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView description = text("متن رسمی Chapter را با قواعد فارسی به نثر محاوره‌ای تبدیل می‌کند.", 14, MUTED);
+        TextView description = text(plugin.description, 14, MUTED);
         description.setGravity(Gravity.CENTER);
-        description.setPadding(0, dp(8), 0, dp(10));
+        description.setPadding(0, dp(7), 0, dp(5));
         card.addView(description, new LinearLayout.LayoutParams(-1, -2));
-        TextView status = text(installed ? "نصب‌شده · نسخهٔ " + version : "هنوز نصب نشده", 13,
-                installed ? GREEN : MUTED);
-        status.setGravity(Gravity.CENTER);
-        card.addView(status, new LinearLayout.LayoutParams(-1, dp(28)));
+        TextView version = text("نسخهٔ " + plugin.version, 12, MUTED);
+        version.setGravity(Gravity.CENTER);
+        card.addView(version, new LinearLayout.LayoutParams(-1, dp(26)));
 
         Switch enabled = new Switch(this);
         enabled.setText("فعال‌سازی افزونه");
@@ -981,319 +989,207 @@ public final class MainActivity extends Activity {
         enabled.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
         enabled.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         enabled.setGravity(Gravity.CENTER_VERTICAL);
-        enabled.setChecked(installed && isColloquialPluginEnabled());
-        enabled.setEnabled(installed);
+        enabled.setChecked(extensionManager.isEnabled(plugin.id));
         enabled.setOnCheckedChangeListener((button, checked) -> {
-            if (checked && !isColloquialPluginInstalled()) {
-                button.setChecked(false);
-                toast("اول افزونه را دریافت کن.");
+            extensionManager.setEnabled(plugin.id, checked);
+            if ("reader".equals(page)) showReader();
+        });
+        card.addView(enabled, new LinearLayout.LayoutParams(-1, dp(46)));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        View update = textButton("به‌روزرسانی", "undo", PURPLE,
+                () -> showExtensionAddressDialog(extensionManager.sourceUrl(plugin.id)));
+        View remove = textButton("حذف", "delete", RED, () -> confirmRemoveExtension(plugin));
+        buttons.addView(update, new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        removeParams.leftMargin = dp(8);
+        buttons.addView(remove, removeParams);
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(-1, dp(48));
+        buttonsParams.topMargin = dp(8);
+        card.addView(buttons, buttonsParams);
+        return card;
+    }
+
+    private void showExtensionAddressDialog(String initialUrl) {
+        EditText address = edit("آدرس HTTPS فایل extension.json", false);
+        address.setSingleLine(true);
+        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        address.setText(initialUrl == null ? "" : initialUrl);
+        address.setSelection(address.length());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(initialUrl == null || initialUrl.isEmpty() ? "افزودن افزونه" : "به‌روزرسانی افزونه")
+                .setView(dialogPadding(clearableInput(address)))
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("دریافت", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            String url = address.getText().toString().trim();
+            if (!url.startsWith("https://")) {
+                address.setError("آدرس باید با https:// شروع شود.");
                 return;
             }
-            extensionPreferences.edit().putBoolean("colloquial-core-enabled", checked).apply();
-        });
-        LinearLayout.LayoutParams enabledParams = new LinearLayout.LayoutParams(-1, dp(48));
-        enabledParams.topMargin = dp(5);
-        card.addView(enabled, enabledParams);
-
-        ProgressBar progress = new ProgressBar(this);
-        progress.setIndeterminate(true);
-        if (Build.VERSION.SDK_INT >= 21) {
-            progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
-        }
-        progress.setVisibility(View.GONE);
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(32), dp(32));
-        progressParams.gravity = Gravity.CENTER;
-        card.addView(progress, progressParams);
-
-        View download = textButton(installed ? "به‌روزرسانی افزونه" : "دریافت افزونه",
-                "scan_text", PURPLE, () -> { });
-        download.setOnClickListener(view -> {
-            download.setEnabled(false);
-            progress.setVisibility(View.VISIBLE);
-            installColloquialPlugin((success, error) -> {
-                if (!success) toast("دریافت افزونه ناموفق بود: " + error);
-                if ("extensions".equals(page)) showExtensions();
-            });
-        });
-        LinearLayout.LayoutParams downloadParams = new LinearLayout.LayoutParams(-1, dp(52));
-        downloadParams.topMargin = dp(10);
-        card.addView(download, downloadParams);
-
-        content.addView(card, new LinearLayout.LayoutParams(-1, -2));
-        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+            dialog.dismiss();
+            installExtension(url);
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
-    private boolean isColloquialPluginEnabled() {
-        return extensionPreferences != null
-                && extensionPreferences.getBoolean("colloquial-core-enabled", false);
-    }
-
-    private boolean isColloquialPluginInstalled() {
-        try {
-            readVerifiedColloquialRules();
-            return true;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
-
-    private String installedColloquialVersion() {
-        try {
-            JSONObject manifest = new JSONObject(storage.readExtensionFile("extension.json"));
-            return manifest.optString("version", "?");
-        } catch (Exception ignored) {
-            return "?";
-        }
-    }
-
-    private void installColloquialPlugin(ExtensionInstallHandler callback) {
+    private void installExtension(String manifestUrl) {
+        AlertDialog progressDialog = new AlertDialog.Builder(this)
+                .setMessage("در حال دریافت افزونه…").setCancelable(false).create();
+        progressDialog.show();
+        styleDialogWindow(progressDialog);
         pluginExecutor.execute(() -> {
+            ExtensionManager.Plugin installed = null;
             String errorMessage = null;
             try {
-                byte[] manifestBytes = downloadHttps(COLLOQUIAL_MANIFEST_URL, 32 * 1024);
-                String manifestText = new String(manifestBytes, StandardCharsets.UTF_8);
-                JSONObject manifest = new JSONObject(manifestText);
-                validateExtensionManifest(manifest);
-                boolean alreadyInstalled = false;
-                try {
-                    if (manifestText.equals(storage.readExtensionFile("extension.json"))) {
-                        readVerifiedColloquialRules();
-                        alreadyInstalled = true;
-                    }
-                } catch (Exception ignored) { }
-                if (!alreadyInstalled) {
-                    JSONObject files = manifest.getJSONObject("files");
-                    String engine = downloadExtensionAsset(files, "engine.kt", 128 * 1024);
-                    String rules = downloadExtensionAsset(files, "rules.json", 256 * 1024);
-                    validateRulesJson(rules, manifest.optInt("rulesSchema", 0));
-                    verifyExtensionFile(manifest, "engine.kt", engine);
-                    verifyExtensionFile(manifest, "rules.json", rules);
-                    if (!storage.writeExtensionFile("engine.kt", engine)) throw new IOException(storage.lastError());
-                    if (!storage.writeExtensionFile("rules.json", rules)) throw new IOException(storage.lastError());
-                    if (!storage.writeExtensionFile("extension.json", manifestText)) throw new IOException(storage.lastError());
-                    readVerifiedColloquialRules();
-                }
+                installed = extensionManager.install(manifestUrl);
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
+            final ExtensionManager.Plugin result = installed;
             final String resultError = errorMessage;
             runOnUiThread(() -> {
-                if (!isFinishing()) callback.onComplete(resultError == null, resultError);
+                if (isFinishing()) return;
+                progressDialog.dismiss();
+                if (resultError != null) toast("دریافت افزونه ناموفق بود: " + resultError);
+                else toast("افزونهٔ «" + result.name + "» دریافت شد.");
+                if ("extensions".equals(page)) showExtensions();
+                else if ("reader".equals(page)) showReader();
             });
         });
     }
 
-    private interface ExtensionInstallHandler {
-        void onComplete(boolean success, String error);
+    private void confirmRemoveExtension(ExtensionManager.Plugin plugin) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setMessage("افزونهٔ «" + plugin.name + "» حذف شود؟")
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("حذف", (ignored, which) -> {
+                    if (!extensionManager.remove(plugin.id)) toast("حذف افزونه انجام نشد: " + storage.lastError());
+                    showExtensions();
+                }).create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
-    private String downloadExtensionAsset(JSONObject files, String fileName, int hardLimit) throws Exception {
-        JSONObject descriptor = files.optJSONObject(fileName);
-        if (descriptor == null) throw new IOException("The extension manifest is missing " + fileName + ".");
-        long declaredLimit = descriptor.optLong("maxBytes", hardLimit);
-        int limit = (int) Math.max(1, Math.min(hardLimit, declaredLimit));
-        String url = COLLOQUIAL_RAW_BASE + fileName;
-        byte[] data = downloadHttps(url, limit);
-        String contents = new String(data, StandardCharsets.UTF_8);
-        verifyExtensionFile(files, fileName, contents);
-        return contents;
-    }
-
-    private byte[] downloadHttps(String address, int maxBytes) throws Exception {
-        if (address == null || !address.startsWith("https://")) throw new IOException("Only HTTPS extension downloads are allowed.");
-        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(20000);
-        connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "NovelReader-Android/" + VERSION);
-        connection.setRequestProperty("Accept", "application/json, text/plain, */*");
-        try {
-            int response = connection.getResponseCode();
-            if (!"https".equalsIgnoreCase(connection.getURL().getProtocol())) {
-                throw new IOException("The extension download redirected away from HTTPS.");
-            }
-            if (response < 200 || response >= 300) throw new IOException("HTTP " + response);
-            int contentLength = connection.getContentLength();
-            if (contentLength > maxBytes) throw new IOException("Downloaded extension file is too large.");
-            try (InputStream input = connection.getInputStream();
-                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                byte[] buffer = new byte[8192];
-                int count;
-                int total = 0;
-                while ((count = input.read(buffer)) != -1) {
-                    total += count;
-                    if (total > maxBytes) throw new IOException("Downloaded extension file is too large.");
-                    output.write(buffer, 0, count);
-                }
-                return output.toByteArray();
-            }
-        } finally {
-            connection.disconnect();
+    private List<ExtensionManager.Action> enabledExtensionActions() {
+        List<ExtensionManager.Action> actions = new ArrayList<>();
+        for (ExtensionManager.Plugin plugin : extensionManager.installed()) {
+            if (extensionManager.isEnabled(plugin.id)) actions.addAll(plugin.actions);
         }
+        return actions;
     }
 
-    private void validateExtensionManifest(JSONObject manifest) throws Exception {
-        int rulesSchema = manifest.optInt("rulesSchema", 0);
-        if (manifest.optInt("schema", 0) != 1
-                || !COLLOQUIAL_PLUGIN_ID.equals(manifest.optString("id"))
-                || manifest.optInt("engineApi", 0) != 2
-                || rulesSchema != 3
-                || manifest.optString("version").trim().isEmpty()) {
-            throw new IOException("Unsupported colloquial-core extension manifest.");
-        }
-        JSONObject files = manifest.optJSONObject("files");
-        if (files == null || files.optJSONObject("engine.kt") == null
-                || files.optJSONObject("rules.json") == null) {
-            throw new IOException("The extension manifest is incomplete.");
-        }
-        if (files.length() != 2) throw new IOException("The extension declares an unsupported file.");
-        for (String name : new String[]{"engine.kt", "rules.json"}) {
-            String hash = files.getJSONObject(name).optString("sha256");
-            if (!hash.matches("(?i)[0-9a-f]{64}")) throw new IOException("Invalid SHA-256 for " + name + ".");
-        }
-    }
-
-    private void verifyExtensionFile(JSONObject manifestOrFiles, String name, String contents) throws Exception {
-        JSONObject files = manifestOrFiles.has("files")
-                ? manifestOrFiles.getJSONObject("files") : manifestOrFiles;
-        String expected = files.getJSONObject(name).getString("sha256");
-        if (!expected.equalsIgnoreCase(sha256(contents))) throw new IOException("Checksum mismatch for " + name + ".");
-    }
-
-    private String sha256(String contents) throws Exception {
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(contents.getBytes(StandardCharsets.UTF_8));
-        final char[] hex = "0123456789abcdef".toCharArray();
-        char[] output = new char[digest.length * 2];
-        for (int i = 0; i < digest.length; i++) {
-            int value = digest[i] & 0xff;
-            output[i * 2] = hex[value >>> 4];
-            output[i * 2 + 1] = hex[value & 0x0f];
-        }
-        return new String(output);
-    }
-
-    private void validateRulesJson(String rulesText, int expectedSchema) throws Exception {
-        if (expectedSchema != 3) throw new IOException("Unsupported Persian rules schema.");
-        JSONArray rules = new JSONArray(rulesText);
-        for (int i = 0; i < rules.length(); i++) {
-            JSONArray pair = rules.optJSONArray(i);
-            if (pair == null || pair.length() != 2
-                    || !(pair.opt(0) instanceof String) || !(pair.opt(1) instanceof String)
-                    || pair.optString(0).isEmpty()) {
-                throw new IOException("Each rule must contain two strings and a non-empty source.");
-            }
-        }
-    }
-
-    private String readVerifiedColloquialRules() throws Exception {
-        String manifestText = storage.readExtensionFile("extension.json");
-        String engine = storage.readExtensionFile("engine.kt");
-        String rules = storage.readExtensionFile("rules.json");
-        if (manifestText == null || engine == null || rules == null) throw new IOException("The extension files are incomplete.");
-        JSONObject manifest = new JSONObject(manifestText);
-        validateExtensionManifest(manifest);
-        validateRulesJson(rules, manifest.optInt("rulesSchema", 0));
-        verifyExtensionFile(manifest, "engine.kt", engine);
-        verifyExtensionFile(manifest, "rules.json", rules);
-        ColloquialPersianTransformer.prepare(rules);
-        return rules;
-    }
-
-    private FrameLayout createColloquialButton() {
+    private FrameLayout createExtensionActionButton(List<ExtensionManager.Action> actions) {
         FrameLayout button = new FrameLayout(this);
         styleIconButton(button, false);
-        button.setContentDescription("تبدیل متن به محاوره‌ای");
+        button.setContentDescription(actions.size() == 1 ? actions.get(0).label : "اجرای افزونه‌ها");
         button.setClickable(true);
         button.setFocusable(true);
         applyPressScale(button);
-        button.setOnClickListener(v -> transformCurrentChapter());
-        readerTransformIcon = new NativeIconView(this, "scan_text", PURPLE);
-        button.addView(readerTransformIcon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
-        readerTransformSpinner = new ProgressBar(this);
-        readerTransformSpinner.setIndeterminate(true);
+        button.setOnClickListener(view -> {
+            if (actions.size() == 1) confirmExtensionAction(actions.get(0));
+            else showExtensionActionChooser(actions);
+        });
+        readerExtensionButton = button;
+        readerExtensionIcon = new NativeIconView(this,
+                actions.size() == 1 ? actions.get(0).icon : "scan_text", PURPLE);
+        button.addView(readerExtensionIcon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        readerExtensionSpinner = new ProgressBar(this);
+        readerExtensionSpinner.setIndeterminate(true);
         if (Build.VERSION.SDK_INT >= 21) {
-            readerTransformSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
+            readerExtensionSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
         }
-        readerTransformSpinner.setVisibility(View.GONE);
-        button.addView(readerTransformSpinner, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
+        readerExtensionSpinner.setVisibility(View.GONE);
+        button.addView(readerExtensionSpinner, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
         return button;
     }
 
-    private void transformCurrentChapter() {
-        if (!isColloquialPluginEnabled()) { toast("افزونهٔ محاوره‌ساز فعال نیست."); return; }
-        if (chapterEditor == null) return;
-        AlertDialog warning = new AlertDialog.Builder(this)
-                .setTitle("محاوره‌ای‌سازی متن")
-                .setMessage("متن فعلی این Chapter با نسخهٔ محاوره‌ای جایگزین می‌شود.")
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("ادامه", (dialog, which) -> applyColloquialization())
-                .create();
-        warning.show();
-        styleDialogWindow(warning);
+    private void showExtensionActionChooser(List<ExtensionManager.Action> actions) {
+        String[] labels = new String[actions.size()];
+        for (int i = 0; i < actions.size(); i++) {
+            ExtensionManager.Action action = actions.get(i);
+            labels[i] = action.label + " · " + action.pluginName;
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("انتخاب افزونه")
+                .setItems(labels, (ignored, which) -> confirmExtensionAction(actions.get(which)))
+                .setNegativeButton("لغو", null).create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
-    private void applyColloquialization() {
-        if (chapterEditor == null || !saveCurrentChapter(false)) return;
+    private void confirmExtensionAction(ExtensionManager.Action action) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(action.confirmTitle)
+                .setMessage(action.confirmMessage)
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("ادامه", (ignored, which) -> runExtensionAction(action))
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void runExtensionAction(ExtensionManager.Action action) {
+        if (chapterEditor == null || !"reader".equals(page) || !saveCurrentChapter(false)) return;
         final EditText targetEditor = chapterEditor;
         final String targetBookId = activeBookId;
         final int targetChapter = activeChapter;
         final String source = targetEditor.getText().toString();
         if (source.trim().isEmpty()) { toast("متن این Chapter خالی است."); return; }
         final int selection = Math.max(0, targetEditor.getSelectionStart());
-        final FrameLayout targetButton = readerTransformButton;
-        final NativeIconView targetIcon = readerTransformIcon;
-        final ProgressBar targetSpinner = readerTransformSpinner;
+        final FrameLayout targetButton = readerExtensionButton;
+        final NativeIconView targetIcon = readerExtensionIcon;
+        final ProgressBar targetSpinner = readerExtensionSpinner;
         final LinearLayout targetBottomBar = readerBottomBar;
         targetEditor.setEnabled(false);
         if (targetButton != null) targetButton.setEnabled(false);
         if (targetBottomBar != null) {
-            for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
-                targetBottomBar.getChildAt(i).setEnabled(false);
-            }
+            for (int i = 0; i < targetBottomBar.getChildCount(); i++) targetBottomBar.getChildAt(i).setEnabled(false);
         }
         if (targetIcon != null) targetIcon.setVisibility(View.GONE);
         if (targetSpinner != null) targetSpinner.setVisibility(View.VISIBLE);
 
         pluginExecutor.execute(() -> {
-            String transformed = null;
+            String output = null;
             String errorMessage = null;
             try {
-                String rules = readVerifiedColloquialRules();
-                transformed = ColloquialPersianTransformer.transform(source, rules);
+                ExtensionManager.Plugin plugin = extensionManager.load(action.pluginId);
+                if (plugin == null || !extensionManager.isEnabled(action.pluginId)) {
+                    throw new IOException("افزونه نصب یا فعال نیست.");
+                }
+                output = extensionManager.runTextReplacement(plugin, action, source);
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
-            final String output = transformed;
+            final String result = output;
             final String resultError = errorMessage;
             runOnUiThread(() -> {
                 if (targetSpinner != null) targetSpinner.setVisibility(View.GONE);
                 if (targetIcon != null) targetIcon.setVisibility(View.VISIBLE);
                 if (targetButton != null) targetButton.setEnabled(true);
                 if (targetBottomBar != null) {
-                    for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
-                        targetBottomBar.getChildAt(i).setEnabled(true);
-                    }
+                    for (int i = 0; i < targetBottomBar.getChildCount(); i++) targetBottomBar.getChildAt(i).setEnabled(true);
                 }
                 targetEditor.setEnabled(true);
                 if (!"reader".equals(page) || chapterEditor != targetEditor
                         || !targetBookId.equals(activeBookId) || targetChapter != activeChapter) return;
-                if (resultError != null || output == null) {
-                    toast("افزونه اجرا نشد: " + (resultError == null ? "پاسخی دریافت نشد." : resultError));
+                if (resultError != null || result == null) {
+                    toast("اجرای افزونه ناموفق بود: " + (resultError == null ? "پاسخی دریافت نشد." : resultError));
                     return;
                 }
-                if (source.equals(output)) {
-                    toast("تغییری برای اعمال پیدا نشد.");
-                    return;
-                }
-                targetEditor.setText(output);
+                if (source.equals(result)) { toast("تغییری برای اعمال پیدا نشد."); return; }
+                targetEditor.setText(result);
                 applyRuleSpans(targetEditor.getText());
                 targetEditor.setSelection(Math.min(selection, targetEditor.length()));
-                chapterText = output;
+                chapterText = result;
                 chapterDirty = true;
                 updateProgress();
                 updateTokenSuggestions();
-                if (saveCurrentChapter(false)) toast("متن محاوره‌ای جایگزین و ذخیره شد.");
+                if (saveCurrentChapter(false)) toast("متن Chapter با افزونه به‌روزرسانی شد.");
             });
         });
     }
@@ -2818,9 +2714,9 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
-        readerTransformButton = null;
-        readerTransformIcon = null;
-        readerTransformSpinner = null;
+        readerExtensionButton = null;
+        readerExtensionIcon = null;
+        readerExtensionSpinner = null;
         readerBottomBar = null;
         View readerHeaderBar = makeCompactReaderHeader(book.optString("title"),
                 chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length());
@@ -2899,10 +2795,11 @@ public final class MainActivity extends Activity {
         bottom.addView(previousChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         bottom.addView(weightedIconButton("undo", this::undoChapterEdit),
                 new LinearLayout.LayoutParams(0, dp(54), 1));
-        if (isColloquialPluginEnabled()) {
-            readerTransformButton = createColloquialButton();
+        List<ExtensionManager.Action> extensionActions = enabledExtensionActions();
+        if (!extensionActions.isEmpty()) {
+            readerExtensionButton = createExtensionActionButton(extensionActions);
             FrameLayout transformSlot = new FrameLayout(this);
-            transformSlot.addView(readerTransformButton,
+            transformSlot.addView(readerExtensionButton,
                     new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
             bottom.addView(transformSlot, new LinearLayout.LayoutParams(0, dp(54), 1));
         }
