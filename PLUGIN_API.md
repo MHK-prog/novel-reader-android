@@ -10,7 +10,7 @@ Extensions are data packages described by an HTTPS `extension.json` manifest. Th
 [["می‌روم", "میرم"], ["خانه", "خونه"]]
 ```
 
-The host applies these literal replacement rules to the open Chapter after the user confirms the action. File names and extension IDs are declared by the extension; the host has no special case for a particular extension.
+The host applies these literal replacement rules to the open Chapter after the user confirms the action. Every source matches as a complete Unicode word, with a word boundary at both ends (equivalent to Python's Unicode `\b`). A Persian ZWNJ (`\u200c`) in a source matches one ZWNJ, one ordinary space, or no separator. A normal space in a source remains literal. File names and extension IDs are declared by the extension; the host has no special case for a particular extension.
 
 ## Manifest
 

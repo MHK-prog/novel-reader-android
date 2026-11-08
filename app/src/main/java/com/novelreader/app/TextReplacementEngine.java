@@ -39,19 +39,30 @@ final class TextReplacementEngine {
         return rules;
     }
 
-    private static boolean isSeparator(char character) {
-        return character == ' ' || character == '\u200c';
-    }
-
     private static char foldCharacter(char character) {
         return character == '\u0622' ? '\u0627' : character;
+    }
+
+    private static boolean isWordCodePoint(int codePoint) {
+        if (codePoint == '_') return true;
+        int type = Character.getType(codePoint);
+        return type == Character.UPPERCASE_LETTER || type == Character.LOWERCASE_LETTER
+                || type == Character.TITLECASE_LETTER || type == Character.MODIFIER_LETTER
+                || type == Character.OTHER_LETTER || type == Character.DECIMAL_DIGIT_NUMBER
+                || type == Character.LETTER_NUMBER || type == Character.OTHER_NUMBER;
+    }
+
+    private static boolean hasWordBoundary(String text, int index) {
+        boolean beforeIsWord = index > 0 && isWordCodePoint(text.codePointBefore(index));
+        boolean afterIsWord = index < text.length() && isWordCodePoint(text.codePointAt(index));
+        return beforeIsWord != afterIsWord;
     }
 
     private static String matchKey(String source) {
         StringBuilder key = new StringBuilder(source.length());
         for (int i = 0; i < source.length(); i++) {
             char character = source.charAt(i);
-            if (!isSeparator(character)) key.append(foldCharacter(character));
+            if (character != '\u200c') key.append(foldCharacter(character));
         }
         return key.toString();
     }
@@ -60,15 +71,12 @@ final class TextReplacementEngine {
         int textIndex = start;
         for (int ruleIndex = 0; ruleIndex < source.length(); ruleIndex++) {
             char expected = source.charAt(ruleIndex);
-            if (isSeparator(expected)) {
-                int separatorStart = textIndex;
-                while (textIndex < text.length() && isSeparator(text.charAt(textIndex))) textIndex++;
-                boolean isSourceEdge = ruleIndex == 0 || ruleIndex == source.length() - 1;
-                if (isSourceEdge && textIndex == separatorStart) return -1;
+            if (expected == '\u200c') {
+                if (textIndex < text.length()
+                        && (text.charAt(textIndex) == '\u200c' || text.charAt(textIndex) == ' ')) textIndex++;
                 continue;
             }
-            if (textIndex >= text.length() || isSeparator(text.charAt(textIndex))
-                    || foldCharacter(text.charAt(textIndex)) != foldCharacter(expected)) return -1;
+            if (textIndex >= text.length() || foldCharacter(text.charAt(textIndex)) != foldCharacter(expected)) return -1;
             textIndex++;
         }
         return textIndex;
@@ -76,20 +84,16 @@ final class TextReplacementEngine {
 
     private static String transform(String text, List<Rule> rules) {
         String sourceText = text == null ? "" : text;
-        for (Rule rule : rules) {
-            if (rule.source.length() == 1) sourceText = sourceText.replace(rule.source, rule.replacement);
-        }
-        List<Rule> textRules = new ArrayList<>();
-        for (Rule rule : rules) if (rule.source.length() != 1) textRules.add(rule);
 
         StringBuilder result = new StringBuilder(sourceText.length());
         int originalCursor = 0;
         for (int index = 0; index < sourceText.length();) {
             Rule matchedRule = null;
             int matchEndIndex = -1;
-            for (Rule rule : textRules) {
+            for (Rule rule : rules) {
+                if (!hasWordBoundary(sourceText, index)) break;
                 int end = matchEnd(sourceText, index, rule.source);
-                if (end >= 0) {
+                if (end >= 0 && hasWordBoundary(sourceText, end)) {
                     matchedRule = rule;
                     matchEndIndex = end;
                     break;
