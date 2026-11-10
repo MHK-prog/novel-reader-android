@@ -25,9 +25,6 @@ import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.BatteryManager;
 import android.os.Bundle;
@@ -160,7 +157,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.13";
+    private static final String VERSION = "1.4.14";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -188,7 +185,6 @@ public final class MainActivity extends Activity {
     private final BookRecommendationEngine recommendationEngine =
             new BookRecommendationEngine(recommendationPreferences);
     private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService metadataExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService pluginExecutor = Executors.newSingleThreadExecutor();
     private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(coverCacheBudgetKb()) {
         @Override protected int sizeOf(String key, Bitmap value) { return Math.max(1, value.getByteCount() / 1024); }
@@ -197,6 +193,7 @@ public final class MainActivity extends Activity {
     private Typeface vazir;
     private JSONObject library = new JSONObject();
     private String page = "dashboard";
+    private String bookInfoReturnPage = "collectionBooks";
     private String activeBookId;
     private String activeCollectionId = "other";
     private boolean returnedFromHiddenBooks;
@@ -1048,7 +1045,15 @@ public final class MainActivity extends Activity {
             try {
                 installed = extensionManager.install(manifestUrl);
             } catch (Exception error) {
-                errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+                String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+                if (message.contains("Extension file is too large:")) {
+                    errorMessage = "فایل افزونه از سقف مجاز بزرگ‌تر است: "
+                            + message.substring(message.indexOf(':') + 1).trim();
+                } else if (message.contains("Extension rule count is too large")) {
+                    errorMessage = "فایل قوانین افزونه بیش از ۱۰٬۰۰۰ جایگزینی دارد.";
+                } else {
+                    errorMessage = message;
+                }
             }
             final ExtensionManager.Plugin result = installed;
             final String resultError = errorMessage;
@@ -1315,6 +1320,7 @@ public final class MainActivity extends Activity {
         if (systemRoot != null) systemRoot.setBackgroundColor(BG);
         if ("chapters".equals(page)) showChapters();
         else if ("reader".equals(page)) showReader();
+        else if ("bookInfo".equals(page)) showBookInfo(activeBook());
         else if ("settings".equals(page)) showSettings();
         else if ("recommendations".equals(page)) showRecommendation();
         else if ("tagSettings".equals(page)) showTagSettings();
@@ -1688,13 +1694,15 @@ public final class MainActivity extends Activity {
             JSONObject book = books.optJSONObject(i);
             if (book == null) continue;
             boolean favorite = favoriteBookIds.contains(book.optString("id"));
-            if (!favorite && !trainedBookIds.contains(book.optLong("recommendationId", -1))) continue;
+            boolean highlyRated = book.optInt("interestRating", 0) >= 4;
+            if (!favorite && !highlyRated
+                    && !trainedBookIds.contains(book.optLong("recommendationId", -1))) continue;
             JSONArray genres = book.optJSONArray("genres");
             if (genres == null) continue;
             Set<String> unique = new HashSet<>();
             for (int j = 0; j < genres.length(); j++) {
                 String key = rememberRecommendationGenre(genreNames, genres.optString(j));
-                if (favorite && key != null) unique.add(key);
+                if ((favorite || highlyRated) && key != null) unique.add(key);
             }
             preferredGenreKeys.addAll(unique);
         }
@@ -1710,7 +1718,10 @@ public final class MainActivity extends Activity {
         if (books == null) return;
         for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
-            if (book == null || !trainedBookIds.contains(book.optLong("recommendationId", -1))) continue;
+            if (book == null) continue;
+            boolean completed = trainedBookIds.contains(book.optLong("recommendationId", -1));
+            int interestRating = book.optInt("interestRating", 0);
+            if (!completed && (interestRating < 1 || interestRating > 5)) continue;
             JSONArray genres = book.optJSONArray("genres");
             if (genres == null) continue;
             Set<String> unique = new HashSet<>();
@@ -1719,8 +1730,10 @@ public final class MainActivity extends Activity {
                 if (key == null || !unique.add(key)) continue;
                 Integer savedWeight = recommendationPreferences.genreWeights.get(key);
                 int current = savedWeight == null ? 10 : savedWeight;
+                if (completed) current += COMPLETION_WEIGHT_BONUS;
+                if (interestRating >= 1 && interestRating <= 5) current += (interestRating - 3) * 4;
                 recommendationPreferences.genreWeights.put(key,
-                        Math.min(MAX_GENRE_WEIGHT, current + COMPLETION_WEIGHT_BONUS));
+                        Math.max(1, Math.min(MAX_GENRE_WEIGHT, current)));
             }
         }
     }
@@ -1776,14 +1789,15 @@ public final class MainActivity extends Activity {
             if (id <= 0 || genres == null) continue;
             String title = book.optString("title", "بدون عنوان");
             String author = book.optString("author", "");
-            double rating = book.optDouble("goodreadsRating", -1);
-            long ratingCount = book.optLong("goodreadsRatingCount", 0);
+            int savedRating = book.optInt("interestRating", 0);
+            double rating = savedRating >= 1 && savedRating <= 5
+                    ? savedRating : estimatedInterestRating(book);
             Set<String> addedGenres = new HashSet<>();
             for (int j = 0; j < genres.length(); j++) {
                 String genre = genres.optString(j).trim();
                 if (genre.isEmpty() || "Other".equalsIgnoreCase(genre)
                         || !addedGenres.add(genre.toLowerCase(Locale.ROOT))) continue;
-                result.add(new BookRecommendationEngine.Book(id, title, genre, author, rating, ratingCount));
+                result.add(new BookRecommendationEngine.Book(id, title, genre, author, rating));
             }
         }
         return result;
@@ -2297,7 +2311,202 @@ public final class MainActivity extends Activity {
 
     private void onBookCardTap(JSONObject book) {
         if (!selectedBookIds.isEmpty()) toggleBookSelection(book);
-        else openChapters(book);
+        else {
+            bookInfoReturnPage = page;
+            showBookInfo(book);
+        }
+    }
+
+    private void showBookInfo(JSONObject book) {
+        if (book == null) { showDashboard(); return; }
+        page = "bookInfo";
+        activeBookId = book.optString("id");
+        activeCollectionId = book.optString("collectionId", "other");
+        appColumn.removeAllViews();
+        appColumn.addView(makeHeader(book.optString("title"), book.optString("author"),
+                "menu", "edit", this::openDrawer, () -> showBookDialog(book), 10),
+                new LinearLayout.LayoutParams(-1, dp(62)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(18), dp(14), dp(18), dp(22));
+
+        FrameLayout coverFrame = new FrameLayout(this);
+        coverFrame.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 12));
+        coverFrame.setClipToOutline(true);
+        ImageView cover = new ImageView(this);
+        cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        cover.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 12));
+        coverFrame.addView(cover, new FrameLayout.LayoutParams(-1, -1));
+        NativeIconView coverPlaceholder = new NativeIconView(this, "book", PURPLE);
+        coverFrame.addView(coverPlaceholder,
+                new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
+        bindCover(cover, coverPlaceholder, book.optString("cover", ""));
+        LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(dp(166), dp(230));
+        coverParams.gravity = Gravity.CENTER_HORIZONTAL;
+        coverParams.bottomMargin = dp(18);
+        body.addView(coverFrame, coverParams);
+
+        JSONArray chapters = book.optJSONArray("chapters");
+        int chapterCount = chapters == null ? 0 : chapters.length();
+        int readPercent = bookReadPercent(book);
+        addBookInfoLine(body, "ژانرها", genreSummary(book.optJSONArray("genres")));
+        addBookInfoLine(body, "تعداد Chapter", String.valueOf(chapterCount));
+        addBookInfoLine(body, "میزان مطالعه", readPercent + "٪");
+        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(100);
+        progress.setProgress(readPercent);
+        if (Build.VERSION.SDK_INT >= 21) progress.setProgressTintList(
+                android.content.res.ColorStateList.valueOf(PURPLE));
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(5));
+        progressParams.bottomMargin = dp(16);
+        body.addView(progress, progressParams);
+
+        TextView descriptionLabel = text("توضیحات", 14, MUTED);
+        descriptionLabel.setGravity(Gravity.RIGHT);
+        body.addView(descriptionLabel);
+        TextView description = text(book.optString("description", "").trim().isEmpty()
+                ? "توضیحی ثبت نشده" : book.optString("description"), 15,
+                book.optString("description", "").trim().isEmpty() ? MUTED : TEXT);
+        description.setGravity(Gravity.RIGHT);
+        description.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
+        description.setPadding(0, dp(6), 0, dp(18));
+        body.addView(description, new LinearLayout.LayoutParams(-1, -2));
+
+        addBookInterestRating(body, book);
+        View chaptersButton = textButton("رفتن به فهرست Chapters", "book", PURPLE,
+                () -> openChapters(book));
+        LinearLayout.LayoutParams chaptersButtonParams = new LinearLayout.LayoutParams(-1, dp(50));
+        chaptersButtonParams.topMargin = dp(18);
+        body.addView(chaptersButton, chaptersButtonParams);
+
+        scroll.addView(body);
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void addBookInfoLine(LinearLayout body, String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        TextView heading = text(label, 13, MUTED);
+        TextView content = text(value == null || value.isEmpty() ? "—" : value, 14, TEXT);
+        row.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+        row.addView(content);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.bottomMargin = dp(5);
+        row.setBackground(roundDrawable(SURFACE, 0xFF29242F, 11));
+        body.addView(row, params);
+    }
+
+    private String genreSummary(JSONArray genres) {
+        if (genres == null || genres.length() == 0) return "—";
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < genres.length(); i++) {
+            String value = genres.optString(i).trim();
+            if (!value.isEmpty()) values.add(value);
+        }
+        return values.isEmpty() ? "—" : android.text.TextUtils.join(" · ", values);
+    }
+
+    private int bookReadPercent(JSONObject book) {
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (chapters == null || chapters.length() == 0) return 0;
+        int total = 0;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter == null) continue;
+            int percent = chapter.optBoolean("done") ? 100 : chapter.optInt("percent", 0);
+            total += Math.max(0, Math.min(100, percent));
+        }
+        return Math.round(total / (float) chapters.length());
+    }
+
+    private int estimatedInterestRating(JSONObject book) {
+        JSONArray genres = book == null ? null : book.optJSONArray("genres");
+        int totalWeight = 0;
+        int genreCount = 0;
+        if (genres != null) for (int i = 0; i < genres.length(); i++) {
+            String genre = genres.optString(i).trim();
+            if (genre.isEmpty() || "Other".equalsIgnoreCase(genre)) continue;
+            totalWeight += recommendationPreferences.weightFor(genre);
+            genreCount++;
+        }
+        int averageWeight = genreCount == 0 ? 10 : totalWeight / genreCount;
+        int rating = averageWeight >= 28 ? 5 : averageWeight >= 18 ? 4
+                : averageWeight >= 9 ? 3 : averageWeight >= 6 ? 2 : 1;
+        int progress = bookReadPercent(book);
+        boolean hasProgress = false;
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (chapters != null) for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && (chapter.optBoolean("done") || chapter.optInt("percent", 0) > 0)) {
+                hasProgress = true;
+                break;
+            }
+        }
+        if (hasProgress && progress >= BOOK_COMPLETION_THRESHOLD) rating++;
+        if (book != null && favoriteBookIds.contains(book.optString("id"))) rating++;
+        return Math.max(1, Math.min(5, rating));
+    }
+
+    private void addBookInterestRating(LinearLayout body, JSONObject book) {
+        int estimate = estimatedInterestRating(book);
+        int userRating = book.optInt("interestRating", 0);
+        int shownRating = userRating >= 1 && userRating <= 5 ? userRating : estimate;
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackground(roundDrawable(SURFACE, 0xFF29242F, 11));
+        TextView title = text(userRating > 0 ? "علاقهٔ ثبت‌شدهٔ تو" : "برآورد الگوریتم", 14, TEXT);
+        title.setGravity(Gravity.CENTER);
+        card.addView(title);
+        TextView estimateText = text("برآورد پیش‌فرض: " + estimate + " از 5", 12, MUTED);
+        estimateText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams estimateParams = new LinearLayout.LayoutParams(-1, -2);
+        estimateParams.topMargin = dp(3);
+        card.addView(estimateText, estimateParams);
+        LinearLayout stars = new LinearLayout(this);
+        stars.setGravity(Gravity.CENTER);
+        stars.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        for (int i = 1; i <= 5; i++) {
+            final int rating = i;
+            TextView star = text(i <= shownRating ? "★" : "☆", 30,
+                    i <= shownRating ? Color.rgb(255, 193, 7) : MUTED);
+            star.setGravity(Gravity.CENTER);
+            star.setPadding(dp(5), 0, dp(5), 0);
+            star.setOnClickListener(v -> saveBookInterestRating(book, rating));
+            stars.addView(star, new LinearLayout.LayoutParams(dp(42), dp(46)));
+        }
+        LinearLayout.LayoutParams starsParams = new LinearLayout.LayoutParams(-1, -2);
+        starsParams.topMargin = dp(4);
+        card.addView(stars, starsParams);
+        if (userRating > 0) {
+            TextView reset = text("استفاده از برآورد خودکار", 12, PURPLE);
+            reset.setGravity(Gravity.CENTER);
+            reset.setPadding(0, dp(5), 0, 0);
+            reset.setOnClickListener(v -> saveBookInterestRating(book, 0));
+            card.addView(reset);
+        }
+        body.addView(card, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void saveBookInterestRating(JSONObject book, int rating) {
+        int previous = book.optInt("interestRating", 0);
+        if (rating == 0) book.remove("interestRating");
+        else putJson(book, "interestRating", rating);
+        if (!saveLibrary()) {
+            if (previous == 0) book.remove("interestRating");
+            else putJson(book, "interestRating", previous);
+            toast("ذخیرهٔ امتیاز انجام نشد");
+            return;
+        }
+        rebuildRecommendationWeights();
+        persistRecommendationState();
+        showBookInfo(book);
     }
 
     private void addDashboardHeader() {
@@ -3072,190 +3281,30 @@ public final class MainActivity extends Activity {
         return candidate;
     }
 
-    private boolean hasInternetConnection() {
-        try {
-            ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (manager == null) return false;
-            Network network = manager.getActiveNetwork();
-            NetworkCapabilities capabilities = network == null ? null : manager.getNetworkCapabilities(network);
-            return capabilities != null
-                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
-        } catch (SecurityException ignored) {
-            return false;
-        }
-    }
-
-    private void showGoodreadsPreview(GoodreadsMetadataProvider.BookMetadata metadata,
-                                      Runnable applyMetadata, Runnable continueManually) {
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setGravity(Gravity.CENTER_HORIZONTAL);
-        content.setPadding(dp(18), dp(8), dp(18), dp(4));
-
-        TextView intro = text("این اطلاعات از Goodreads دریافت شد. قبل از اعمال، آن‌ها را بررسی کن.", 13, MUTED);
-        intro.setGravity(Gravity.CENTER);
-        intro.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        content.addView(intro, new LinearLayout.LayoutParams(-1, -2));
-
-        LinearLayout summary = new LinearLayout(this);
-        summary.setGravity(Gravity.CENTER_HORIZONTAL);
-        summary.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(-1, -2);
-        summaryParams.topMargin = dp(14);
-        content.addView(summary, summaryParams);
-
-        ImageView cover = new ImageView(this);
-        cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        cover.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
-        if (metadata.cover != null) cover.setImageBitmap(metadata.cover);
-        LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(dp(100), dp(146));
-        summary.addView(cover, coverParams);
-
-        LinearLayout details = new LinearLayout(this);
-        details.setOrientation(LinearLayout.VERTICAL);
-        details.setGravity(Gravity.CENTER_HORIZONTAL);
-        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(-1, -2);
-        detailsParams.topMargin = dp(8);
-        summary.addView(details, detailsParams);
-        details.addView(metadataLine("عنوان", metadata.title));
-        details.addView(metadataLine("نویسنده", metadata.author));
-        String ratingText = metadata.rating >= 0
-                ? String.format(Locale.US, "%.2f از 5", metadata.rating)
-                    + (metadata.ratingCount > 0 ? " · " + metadata.ratingCount + " رأی" : "")
-                : "ثبت نشده";
-        details.addView(metadataLine("امتیاز", ratingText));
-        details.addView(metadataLine("ژانرها", metadata.genres.isEmpty()
-                ? "پیدا نشد" : android.text.TextUtils.join("، ", metadata.genres)));
-        TextView source = text("صفحهٔ Goodreads", 12, PURPLE);
-        source.setGravity(Gravity.CENTER);
-        source.setSingleLine(true);
-        source.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        details.addView(source);
-
-        AlertDialog preview = new AlertDialog.Builder(this)
-                .setTitle("بازبینی اطلاعات کتاب")
-                .setView(dialogPadding(content))
-                .setNegativeButton("ادامه با اطلاعات فعلی", (d, which) -> continueManually.run())
-                .setPositiveButton("اعمال اطلاعات", null)
-                .create();
-        preview.setOnCancelListener(d -> continueManually.run());
-        preview.setOnShowListener(ignored -> preview.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            preview.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
-            preview.getButton(AlertDialog.BUTTON_POSITIVE).setText("در حال اعمال…");
-            applyMetadata.run();
-            preview.dismiss();
-        }));
-        preview.show();
-        styleDialogWindow(preview);
-    }
-
-    private View metadataLine(String label, String value) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setGravity(Gravity.CENTER_HORIZONTAL);
-        row.setPadding(0, dp(3), 0, dp(3));
-        TextView heading = text(label, 11, MUTED);
-        TextView body = text(value == null || value.trim().isEmpty() ? "ثبت نشده" : value, 13, TEXT);
-        heading.setGravity(Gravity.CENTER);
-        body.setGravity(Gravity.CENTER);
-        body.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        body.setMaxLines(2);
-        body.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        row.addView(heading);
-        row.addView(body);
-        return row;
-    }
-
-    private interface GoodreadsMetadataHandler {
-        void onConfirmed(GoodreadsMetadataProvider.BookMetadata metadata);
-    }
-
-    private void fetchGoodreadsMetadata(String title, String author, AlertDialog parent,
-                                       TextView submitButton, Runnable onFailure,
-                                       GoodreadsMetadataHandler onConfirmed) {
-        if (title == null || title.trim().isEmpty()) {
-            toast("اول نام کتاب را وارد کن.");
-            return;
-        }
-        AlertDialog progress = new AlertDialog.Builder(this)
-                .setTitle("دریافت از Goodreads")
-                .setMessage("در حال جست‌وجوی کتاب و دریافت جلد…")
-                .setView(new ProgressBar(this))
-                .setCancelable(true)
-                .create();
-        submitButton.setEnabled(false);
-        final boolean[] cancelled = {false};
-        progress.setOnCancelListener(ignored -> {
-            cancelled[0] = true;
-            if (parent.isShowing()) submitButton.setEnabled(true);
-        });
-        progress.show();
-        styleDialogWindow(progress);
-        metadataExecutor.execute(() -> {
-            GoodreadsMetadataProvider.BookMetadata metadata = null;
-            Exception failure = null;
-            try { metadata = GoodreadsMetadataProvider.lookup(title, author); }
-            catch (Exception error) { failure = error; }
-            GoodreadsMetadataProvider.BookMetadata result = metadata;
-            Exception error = failure;
-            runOnUiThread(() -> {
-                if (progress.isShowing()) progress.dismiss();
-                if (cancelled[0] || isFinishing() || isDestroyed() || !parent.isShowing()) {
-                    if (result != null && result.cover != null && !result.cover.isRecycled()) result.cover.recycle();
-                    return;
-                }
-                submitButton.setEnabled(true);
-                if (error != null) {
-                    android.util.Log.w("NovelReader", "Goodreads metadata lookup failed", error);
-                    onFailure.run();
-                    AlertDialog failureDialog = new AlertDialog.Builder(this)
-                            .setMessage("اطلاعات خودکار دریافت نشد. می‌توانی با اطلاعات واردشده ادامه بدهی.")
-                            .setPositiveButton("باشه", null).create();
-                    failureDialog.show();
-                    styleDialogWindow(failureDialog);
-                    return;
-                }
-                final boolean[] appliedOrSkipped = {false};
-                showGoodreadsPreview(result, () -> {
-                    if (appliedOrSkipped[0]) return;
-                    appliedOrSkipped[0] = true;
-                    onConfirmed.onConfirmed(result);
-                }, () -> {
-                    if (appliedOrSkipped[0]) return;
-                    appliedOrSkipped[0] = true;
-                    if (result.cover != null && !result.cover.isRecycled()) result.cover.recycle();
-                    onFailure.run();
-                });
-            });
-        });
-    }
-
     private void showBookDialog(JSONObject existing) {
         boolean isNew = existing == null;
         String originalCoverName = isNew ? "" : existing.optString("cover", "");
+        String sourcePage = page;
         String libraryBeforeSave = library.toString();
-        boolean internetAvailable = hasInternetConnection();
         final boolean[] coverCommitted = {false};
-        final boolean[] metadataReady = {!isNew || !internetAvailable};
-        final double[] goodreadsRating = {isNew ? -1 : existing.optDouble("goodreadsRating", -1)};
-        final long[] goodreadsRatingCount = {isNew ? 0 : existing.optLong("goodreadsRatingCount", 0)};
-        final String[] goodreadsPageUrl = {isNew ? "" : existing.optString("goodreadsUrl", "")};
-        final Runnable[] metadataLookupAction = {null};
         pendingCoverName = originalCoverName;
-        LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(dp(8), dp(4), dp(8), dp(4));
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(8), dp(4), dp(8), dp(4));
+
         LinearLayout coverRow = new LinearLayout(this);
         coverRow.setGravity(Gravity.CENTER);
         FrameLayout previewFrame = new FrameLayout(this);
         previewFrame.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
         previewFrame.setClipToOutline(true);
-        bookCoverPreview = new ImageView(this); bookCoverPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        bookCoverPreview = new ImageView(this);
+        bookCoverPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         previewFrame.addView(bookCoverPreview, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout placeholder = new LinearLayout(this);
         placeholder.setGravity(Gravity.CENTER);
         placeholder.setOrientation(LinearLayout.VERTICAL);
-        NativeIconView chooseCoverIcon = new NativeIconView(this, "image", PURPLE);
-        placeholder.addView(chooseCoverIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        placeholder.addView(new NativeIconView(this, "image", PURPLE), new LinearLayout.LayoutParams(dp(30), dp(30)));
         TextView chooseCoverLabel = text("انتخاب جلد", 13, PURPLE);
         chooseCoverLabel.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams chooseLabelParams = new LinearLayout.LayoutParams(-2, -2);
@@ -3265,8 +3314,7 @@ public final class MainActivity extends Activity {
         previewFrame.setTag(placeholder);
         previewFrame.setOnClickListener(v -> chooseBookCover());
         previewFrame.setContentDescription("انتخاب جلد کتاب");
-        FrameLayout.LayoutParams previewParams = new FrameLayout.LayoutParams(dp(128), dp(182), Gravity.CENTER);
-        coverRow.addView(previewFrame, previewParams);
+        coverRow.addView(previewFrame, new FrameLayout.LayoutParams(dp(128), dp(182), Gravity.CENTER));
         coverRemoveButton = iconButton("close", TEXT, true, () -> {
             pendingCoverName = "";
             renderCoverPreview(bookCoverPreview, pendingCoverName);
@@ -3277,23 +3325,30 @@ public final class MainActivity extends Activity {
         removeCoverParams.topMargin = dp(5);
         removeCoverParams.rightMargin = dp(5);
         previewFrame.addView(coverRemoveButton, removeCoverParams);
-        coverRemoveButton.setVisibility(pendingCoverName == null || pendingCoverName.isEmpty() ? View.GONE : View.VISIBLE);
+        coverRemoveButton.setVisibility(originalCoverName.isEmpty() ? View.GONE : View.VISIBLE);
         LinearLayout.LayoutParams coverRowParams = new LinearLayout.LayoutParams(-1, dp(194));
         coverRowParams.bottomMargin = dp(9);
         form.addView(coverRow, coverRowParams);
         renderCoverPreview(bookCoverPreview, pendingCoverName);
 
-        EditText title = edit("نام کتاب", false); title.setText(isNew ? "" : existing.optString("title"));
-        EditText author = edit("نام نویسنده", false); author.setText(isNew ? "" : existing.optString("author"));
-        EditText count = edit("تعداد Chapter", false); count.setInputType(InputType.TYPE_CLASS_NUMBER);
+        EditText title = edit("نام کتاب", false);
+        title.setText(isNew ? "" : existing.optString("title"));
+        EditText author = edit("نام نویسنده", false);
+        author.setText(isNew ? "" : existing.optString("author"));
+        EditText count = edit("تعداد Chapter", false);
+        count.setInputType(InputType.TYPE_CLASS_NUMBER);
+        EditText description = edit("توضیحات کوتاه کتاب", false);
+        description.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        description.setMinLines(3);
+        description.setMaxLines(5);
+        description.setGravity(Gravity.TOP | Gravity.RIGHT);
+        description.setText(isNew ? "" : existing.optString("description", ""));
         form.addView(clearableInput(title), fieldParams());
         form.addView(clearableInput(author), fieldParams());
-        TextView metadataLookupButton = isNew ? null : text("دریافت اطلاعات از Goodreads", 13, PURPLE);
-        if (metadataLookupButton != null) {
-            metadataLookupButton.setGravity(Gravity.CENTER);
-            metadataLookupButton.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
-            form.addView(metadataLookupButton, fieldParams());
-        }
+        form.addView(clearableInput(description), fieldParams());
+        if (isNew) form.addView(clearableInput(count), fieldParams());
+
         String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
         if (findCollectionById(initialCollection) == null) initialCollection = "other";
         final String[] chosenCollectionId = {initialCollection};
@@ -3312,119 +3367,78 @@ public final class MainActivity extends Activity {
         collectionField.addView(dropdownIcon, dropdownParams);
         Runnable refreshCollectionChoice = () -> {
             JSONObject collection = findCollectionById(chosenCollectionId[0]);
-            String name = collection == null ? "سایر" : collection.optString("title", "سایر");
-            collectionChoice.setText("مجموعه: " + name);
+            collectionChoice.setText("مجموعه: " + (collection == null ? "سایر" : collection.optString("title", "سایر")));
         };
         refreshCollectionChoice.run();
         collectionField.setOnClickListener(v -> showCollectionPicker(chosenCollectionId, refreshCollectionChoice));
         form.addView(collectionField, fieldParams());
-        if (isNew) form.addView(clearableInput(count), fieldParams());
-        TextView genreLabel = text("ژانرها", 14, MUTED); genreLabel.setPadding(0, dp(12), 0, dp(4)); form.addView(genreLabel);
-        LinearLayout genreSearchRow = new LinearLayout(this); genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
-        EditText genreSearch = edit("جستجو یا افزودن ژانر", false); genreSearch.setSingleLine(true);
+
+        TextView genreLabel = text("ژانرها", 14, MUTED);
+        genreLabel.setPadding(0, dp(12), 0, dp(4));
+        form.addView(genreLabel);
+        LinearLayout genreSearchRow = new LinearLayout(this);
+        genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
+        EditText genreSearch = edit("جستجو یا افزودن ژانرها با ,", false);
+        genreSearch.setSingleLine(true);
         genreSearchRow.addView(clearableInput(genreSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
         FrameLayout addGenre = iconButton("add", PURPLE, false, () -> { });
         LinearLayout.LayoutParams addGenreParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        addGenreParams.leftMargin = dp(7); genreSearchRow.addView(addGenre, addGenreParams);
-        GenreCloud cloud = new GenreCloud(this); Set<String> selected = new HashSet<>();
+        addGenreParams.leftMargin = dp(7);
+        genreSearchRow.addView(addGenre, addGenreParams);
+
+        GenreCloud cloud = new GenreCloud(this);
+        Set<String> selected = new HashSet<>();
         JSONArray oldGenres = isNew ? null : existing.optJSONArray("genres");
         if (oldGenres != null) for (int i = 0; i < oldGenres.length(); i++) selected.add(oldGenres.optString(i));
         ArrayList<String> availableGenres = new ArrayList<>();
         JSONArray existingGenres = allGenres();
         for (int i = 0; i < existingGenres.length(); i++) availableGenres.add(existingGenres.optString(i));
-        Runnable renderGenres = () -> cloud.showGenres(genreArray(availableGenres), selected, genreSearch.getText().toString());
-        renderGenres.run(); genreSearch.addTextChangedListener(watcher(renderGenres));
+        Runnable renderGenres = () -> {
+            String query = genreSearch.getText().toString();
+            int comma = Math.max(query.lastIndexOf(','), query.lastIndexOf('،'));
+            if (comma >= 0) query = query.substring(comma + 1);
+            cloud.showGenres(genreArray(availableGenres), selected, query.trim());
+        };
+        renderGenres.run();
+        genreSearch.addTextChangedListener(watcher(renderGenres));
         addGenre.setOnClickListener(v -> {
-            String value = titleCaseWords(genreSearch.getText().toString());
-            if (value.isEmpty()) { genreSearch.setError("نام ژانر را بنویس"); return; }
-            boolean found = false;
-            for (String existingGenre : availableGenres) if (existingGenre.equalsIgnoreCase(value)) { selected.add(existingGenre); found = true; break; }
-            if (!found) { availableGenres.add(value); selected.add(value); }
-            genreSearch.setText(""); renderGenres.run();
+            boolean any = false;
+            for (String part : genreSearch.getText().toString().split("[,،]")) {
+                String value = titleCaseWords(part);
+                if (value.isEmpty()) continue;
+                any = true;
+                String matching = null;
+                for (String available : availableGenres) {
+                    if (available.equalsIgnoreCase(value)) { matching = available; break; }
+                }
+                if (matching == null) { availableGenres.add(value); matching = value; }
+                selected.add(matching);
+            }
+            if (!any) { genreSearch.setError("نام ژانر را بنویس"); return; }
+            genreSearch.setText("");
+            renderGenres.run();
         });
-        form.addView(genreSearchRow, fieldParams()); form.addView(cloud);
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(false);
-        scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false); scroll.addView(form);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(isNew ? "افزودن کتاب" : "ویرایش کتاب")
-                .setView(dialogPadding(scroll)).setNegativeButton("لغو", null)
-                .setPositiveButton(isNew && internetAvailable ? "تکمیل خودکار اطلاعات" : "ثبت اطلاعات", null).create();
+        form.addView(genreSearchRow, fieldParams());
+        form.addView(cloud);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(form);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(isNew ? "افزودن کتاب" : "ویرایش کتاب")
+                .setView(dialogPadding(scroll))
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("ثبت اطلاعات", null)
+                .create();
         dialog.setOnDismissListener(ignored -> {
             if (!coverCommitted[0] && pendingCoverName != null && !pendingCoverName.isEmpty()
                     && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
             bookCoverPreview = null;
             coverRemoveButton = null;
         });
-        dialog.setOnShowListener(v -> {
-            TextView submitButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            metadataLookupAction[0] = () -> fetchGoodreadsMetadata(
-                    title.getText().toString(), author.getText().toString(), dialog, submitButton,
-                    () -> {
-                        metadataReady[0] = true;
-                        submitButton.setEnabled(true);
-                        submitButton.setText("ثبت اطلاعات");
-                    }, metadata -> {
-                        metadataReady[0] = true;
-                        goodreadsRating[0] = metadata.rating;
-                        goodreadsRatingCount[0] = metadata.ratingCount;
-                        goodreadsPageUrl[0] = metadata.pageUrl;
-                        Runnable updateForm = () -> {
-                            if (dialog.isShowing()) {
-                                updateBookMetadataFields(metadata, "", originalCoverName, title, author,
-                                        genreSearch, selected, availableGenres, cloud);
-                                submitButton.setEnabled(true);
-                                submitButton.setText("ثبت اطلاعات");
-                            }
-                            if (metadata.cover != null && !metadata.cover.isRecycled()) metadata.cover.recycle();
-                        };
-                        if (metadata.cover == null || metadata.cover.isRecycled()) {
-                            updateForm.run();
-                            return;
-                        }
-                        submitButton.setEnabled(false);
-                        submitButton.setText("در حال ذخیرهٔ جلد…");
-                        metadataExecutor.execute(() -> {
-                            String savedCover = "";
-                            Bitmap copy = null;
-                            try {
-                                copy = metadata.cover.copy(Bitmap.Config.ARGB_8888, false);
-                                if (copy != null) savedCover = saveCoverBitmap(copy);
-                            } catch (Exception error) {
-                                android.util.Log.w("NovelReader", "Could not save Goodreads cover", error);
-                            } finally {
-                                if (copy != null && !copy.isRecycled()) copy.recycle();
-                            }
-                            String coverName = savedCover;
-                            runOnUiThread(() -> {
-                                if (!dialog.isShowing() || isFinishing() || isDestroyed()) {
-                                    if (!coverName.isEmpty()) deleteCoverFile(coverName);
-                                    if (metadata.cover != null && !metadata.cover.isRecycled()) metadata.cover.recycle();
-                                    return;
-                                }
-                                if (coverName.isEmpty() && metadata.cover != null) {
-                                    toast("جلد دریافت شد اما ذخیره نشد؛ می‌توانی بعداً دستی انتخابش کنی.");
-                                }
-                                updateBookMetadataFields(metadata, coverName, originalCoverName, title, author,
-                                        genreSearch, selected, availableGenres, cloud);
-                                submitButton.setEnabled(true);
-                                submitButton.setText("ثبت اطلاعات");
-                                if (metadata.cover != null && !metadata.cover.isRecycled()) metadata.cover.recycle();
-                            });
-                        });
-                    });
-            if (metadataLookupButton != null) {
-                metadataLookupButton.setOnClickListener(button -> metadataLookupAction[0].run());
-                metadataLookupButton.setEnabled(internetAvailable);
-                if (!internetAvailable) metadataLookupButton.setAlpha(0.45f);
-            }
-            submitButton.setOnClickListener(b -> {
-            if (isNew && !metadataReady[0]) {
-                if (hasInternetConnection()) {
-                    metadataLookupAction[0].run();
-                    return;
-                }
-                metadataReady[0] = true;
-                submitButton.setText("ثبت اطلاعات");
-            }
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String bookTitle = titleCaseWords(title.getText().toString());
             if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
             String bookAuthor = titleCaseWords(author.getText().toString());
@@ -3439,16 +3453,17 @@ public final class MainActivity extends Activity {
                 }
             }
             LinkedHashSet<String> normalizedSelected = new LinkedHashSet<>();
-            for (String selectedGenre : selected) {
-                String normalized = titleCaseWords(selectedGenre);
+            for (String value : selected) {
+                String normalized = titleCaseWords(value);
                 if (!normalized.isEmpty()) normalizedSelected.add(normalized);
             }
             JSONArray savedGenres = new JSONArray();
-            for (String selectedGenre : normalizedSelected) savedGenres.put(selectedGenre);
+            for (String value : normalizedSelected) savedGenres.put(value);
             JSONArray globalGenres = library.optJSONArray("genres");
             if (globalGenres == null) globalGenres = new JSONArray();
-            for (String selectedGenre : normalizedSelected) appendUniqueGenre(globalGenres, selectedGenre);
-            try { library.put("genres", globalGenres); } catch (JSONException ignored) { }
+            for (String value : normalizedSelected) appendUniqueGenre(globalGenres, value);
+            try { library.put("genres", globalGenres); } catch (JSONException ignoredError) { }
+
             if (isNew) {
                 JSONArray chapters = new JSONArray();
                 for (int i = 0; i < chapterTotal; i++) {
@@ -3459,85 +3474,66 @@ public final class MainActivity extends Activity {
                     chapters.put(chapter);
                 }
                 JSONObject book = new JSONObject();
-                try { book.put("id", UUID.randomUUID().toString()).put("recommendationId", nextRecommendationId())
-                            .put("title", bookTitle).put("author", bookAuthor)
-                            .put("genres", savedGenres).put("cover", pendingCoverName == null ? "" : pendingCoverName)
-                            .put("collectionId", chosenCollectionId[0]).put("hidden", false)
-                            .put("orderIndex", nextOrderIndex(library.optJSONArray("books")))
-                            .put("chapters", chapters); library.getJSONArray("books").put(book); }
-                catch (JSONException ignored) { }
-                if (goodreadsRating[0] >= 0) putJson(book, "goodreadsRating", goodreadsRating[0]);
-                if (goodreadsRatingCount[0] > 0) putJson(book, "goodreadsRatingCount", goodreadsRatingCount[0]);
-                if (!goodreadsPageUrl[0].isEmpty()) putJson(book, "goodreadsUrl", goodreadsPageUrl[0]);
-                if (!saveLibrary()) {
-                    restoreLibrary(libraryBeforeSave);
-                    dialog.dismiss(); showBookShelf(false); return;
-                }
-                coverCommitted[0] = true;
-                activeCollectionId = chosenCollectionId[0];
-                dialog.dismiss(); activeBookId = book.optString("id"); returnedFromHiddenBooks = false; showChapters();
-            } else {
-                putJson(existing, "title", bookTitle); putJson(existing, "author", bookAuthor);
-                putJson(existing, "genres", savedGenres); putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
-                putJson(existing, "collectionId", chosenCollectionId[0]);
-                if (goodreadsRating[0] >= 0) putJson(existing, "goodreadsRating", goodreadsRating[0]);
-                if (goodreadsRatingCount[0] > 0) putJson(existing, "goodreadsRatingCount", goodreadsRatingCount[0]);
-                if (!goodreadsPageUrl[0].isEmpty()) putJson(existing, "goodreadsUrl", goodreadsPageUrl[0]);
+                try {
+                    book.put("id", UUID.randomUUID().toString());
+                    book.put("recommendationId", nextRecommendationId());
+                    book.put("title", bookTitle);
+                    book.put("author", bookAuthor);
+                    book.put("description", description.getText().toString().trim());
+                    book.put("genres", savedGenres);
+                    book.put("cover", pendingCoverName == null ? "" : pendingCoverName);
+                    book.put("collectionId", chosenCollectionId[0]);
+                    book.put("hidden", false);
+                    book.put("orderIndex", nextOrderIndex(library.optJSONArray("books")));
+                    book.put("chapters", chapters);
+                    library.getJSONArray("books").put(book);
+                } catch (JSONException ignoredError) { }
                 if (!saveLibrary()) {
                     restoreLibrary(libraryBeforeSave);
                     dialog.dismiss();
-                    if ("chapters".equals(page)) showChapters(); else showDashboard();
+                    showBookShelf(false);
                     return;
                 }
                 coverCommitted[0] = true;
-                if ("chapters".equals(page)) activeCollectionId = chosenCollectionId[0];
-                if (!originalCoverName.isEmpty() && !originalCoverName.equals(pendingCoverName)) deleteCoverFile(originalCoverName);
-                dialog.dismiss(); if (page.equals("chapters")) showChapters(); else if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
+                rebuildRecommendationWeights();
+                persistRecommendationState();
+                activeCollectionId = chosenCollectionId[0];
+                activeBookId = book.optString("id");
+                returnedFromHiddenBooks = false;
+                dialog.dismiss();
+                showChapters();
+            } else {
+                putJson(existing, "title", bookTitle);
+                putJson(existing, "author", bookAuthor);
+                putJson(existing, "description", description.getText().toString().trim());
+                putJson(existing, "genres", savedGenres);
+                putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
+                putJson(existing, "collectionId", chosenCollectionId[0]);
+                if (!saveLibrary()) {
+                    restoreLibrary(libraryBeforeSave);
+                    dialog.dismiss();
+                    if ("chapters".equals(sourcePage)) showChapters();
+                    else if ("bookInfo".equals(sourcePage)) showBookInfo(activeBook());
+                    else showDashboard();
+                    return;
+                }
+                coverCommitted[0] = true;
+                rebuildRecommendationWeights();
+                persistRecommendationState();
+                if ("chapters".equals(sourcePage)) activeCollectionId = chosenCollectionId[0];
+                if (!originalCoverName.isEmpty() && !originalCoverName.equals(pendingCoverName)) {
+                    deleteCoverFile(originalCoverName);
+                }
+                dialog.dismiss();
+                if ("chapters".equals(sourcePage)) showChapters();
+                else if ("bookInfo".equals(sourcePage)) showBookInfo(existing);
+                else if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
             }
-            });
-        });
+        }));
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
     }
-
-    private void updateBookMetadataFields(GoodreadsMetadataProvider.BookMetadata metadata, String coverName,
-                                          String originalCoverName, EditText title, EditText author,
-                                          EditText genreSearch, Set<String> selectedGenres,
-                                          List<String> availableGenres, GenreCloud cloud) {
-        if (!metadata.title.trim().isEmpty()) title.setText(titleCaseWords(metadata.title));
-        if (!metadata.author.trim().isEmpty()) author.setText(titleCaseWords(metadata.author));
-        if (!metadata.genres.isEmpty()) {
-            selectedGenres.clear();
-            for (String rawGenre : metadata.genres) {
-                String normalized = titleCaseWords(rawGenre);
-                if (normalized.isEmpty()) continue;
-                String matching = null;
-                for (String current : availableGenres) {
-                    if (current.equalsIgnoreCase(normalized)) { matching = current; break; }
-                }
-                if (matching == null) {
-                    availableGenres.add(normalized);
-                    matching = normalized;
-                }
-                selectedGenres.add(matching);
-            }
-        }
-        genreSearch.setText("");
-        cloud.showGenres(genreArray(availableGenres), selectedGenres, "");
-
-        if (coverName != null && !coverName.isEmpty()) {
-            String previousCover = pendingCoverName;
-            pendingCoverName = coverName;
-            if (bookCoverPreview != null) renderCoverPreview(bookCoverPreview, coverName);
-            if (coverRemoveButton != null) coverRemoveButton.setVisibility(View.VISIBLE);
-            if (previousCover != null && !previousCover.isEmpty()
-                    && !previousCover.equals(originalCoverName) && !previousCover.equals(coverName)) {
-                deleteCoverFile(previousCover);
-            }
-        }
-    }
-
     private void showCollectionPicker(String[] selectedId, Runnable onSelected) {
         JSONArray collections = collectionArray();
         String[] ids = new String[collections.length()];
@@ -3881,6 +3877,7 @@ public final class MainActivity extends Activity {
         }
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
         else if ("chapters".equals(page)) { if (returnedFromHiddenBooks) showHiddenBooks(); else showBookShelf(false); }
+        else if ("bookInfo".equals(page)) showBookShelf("hiddenBooks".equals(bookInfoReturnPage));
         else if ("collectionBooks".equals(page) || "hiddenBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
         else if ("settings".equals(page) || "recommendations".equals(page)
                 || "tagSettings".equals(page) || "extensions".equals(page)) showDashboard();
@@ -3924,7 +3921,6 @@ public final class MainActivity extends Activity {
             systemBackCallback = null;
         }
         imageExecutor.shutdown();
-        metadataExecutor.shutdownNow();
         pluginExecutor.shutdownNow();
         super.onDestroy();
     }

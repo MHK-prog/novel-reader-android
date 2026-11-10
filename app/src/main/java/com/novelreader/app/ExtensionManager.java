@@ -16,15 +16,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Generic manifest-based extension host. Extensions provide data and declare supported host actions. */
 final class ExtensionManager {
     static final int API_VERSION = 1;
     static final String TEXT_REPLACEMENT = "chapter.text.transform.pairs.v1";
     private static final String MANIFEST_FILE = "extension.json";
-    private static final int MAX_MANIFEST_BYTES = 32 * 1024;
-    private static final int MAX_FILE_BYTES = 1024 * 1024;
+    private static final int MAX_MANIFEST_BYTES = 256 * 1024;
+    private static final int MAX_FILE_BYTES = 10 * 1024 * 1024;
     private static final int MAX_FILES = 24;
     private static final int MAX_ACTIONS = 32;
 
@@ -102,12 +104,13 @@ final class ExtensionManager {
     }
 
     Plugin install(String manifestUrl) throws Exception {
-        URL source = checkedHttpsUrl(manifestUrl);
-        String manifestText = new String(download(source.toString(), MAX_MANIFEST_BYTES), StandardCharsets.UTF_8);
+        URL source = checkedManifestUrl(manifestUrl);
+        String manifestText = new String(download(source.toString(), MAX_MANIFEST_BYTES, MANIFEST_FILE), StandardCharsets.UTF_8);
         JSONObject manifest = new JSONObject(manifestText);
         validateManifest(manifest);
         String id = manifest.getString("id");
         JSONObject files = manifest.getJSONObject("files");
+        Map<String, String> downloadedFiles = new LinkedHashMap<>();
 
         for (int i = 0; i < files.length(); i++) {
             String fileName = files.names().getString(i);
@@ -118,15 +121,20 @@ final class ExtensionManager {
                     || !"https".equalsIgnoreCase(fileUrl.getProtocol())) {
                 throw new IOException("Extension files must use the manifest's HTTPS host.");
             }
-            byte[] fileBytes = download(fileUrl.toString(), maxBytes);
+            byte[] fileBytes = download(fileUrl.toString(), maxBytes, fileName);
             if (!descriptor.getString("sha256").equalsIgnoreCase(sha256(fileBytes))) {
                 throw new IOException("Checksum mismatch for " + fileName + ".");
             }
             String fileContents = new String(fileBytes, StandardCharsets.UTF_8);
             validateActionData(manifest, fileName, fileContents);
-            if (!storage.writePluginFile(id, fileName, fileContents)) throw new IOException(storage.lastError());
+            downloadedFiles.put(fileName, fileContents);
         }
 
+        for (Map.Entry<String, String> file : downloadedFiles.entrySet()) {
+            if (!storage.writePluginFile(id, file.getKey(), file.getValue())) {
+                throw new IOException(storage.lastError());
+            }
+        }
         if (!storage.writePluginFile(id, MANIFEST_FILE, manifestText)) throw new IOException(storage.lastError());
         preferences.edit().putString(sourceKey(id), source.toString()).apply();
         return new Plugin(manifest, manifestText);
@@ -210,7 +218,7 @@ final class ExtensionManager {
         }
     }
 
-    private byte[] download(String address, int maxBytes) throws Exception {
+    private byte[] download(String address, int maxBytes, String fileName) throws Exception {
         URL url = checkedHttpsUrl(address);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setConnectTimeout(15000);
@@ -226,14 +234,18 @@ final class ExtensionManager {
                 throw new IOException("Extension download redirected away from its HTTPS host.");
             }
             if (response < 200 || response >= 300) throw new IOException("HTTP " + response);
-            if (connection.getContentLength() > maxBytes) throw new IOException("Extension file is too large.");
+            if (connection.getContentLength() > maxBytes) {
+                throw new IOException("Extension file is too large: " + fileName + " (limit " + maxBytes + " bytes).");
+            }
             try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[8192];
                 int count;
                 int total = 0;
                 while ((count = input.read(buffer)) != -1) {
                     total += count;
-                    if (total > maxBytes) throw new IOException("Extension file is too large.");
+                    if (total > maxBytes) {
+                        throw new IOException("Extension file is too large: " + fileName + " (limit " + maxBytes + " bytes).");
+                    }
                     output.write(buffer, 0, count);
                 }
                 return output.toByteArray();
@@ -241,6 +253,33 @@ final class ExtensionManager {
         } finally {
             connection.disconnect();
         }
+    }
+
+    private URL checkedManifestUrl(String value) throws Exception {
+        URL url = checkedHttpsUrl(value);
+        if (!"github.com".equalsIgnoreCase(url.getHost())) return url;
+        String[] parts = url.getPath().replaceAll("^/+|/+$", "").split("/");
+        if (parts.length < 2) return url;
+        String owner = parts[0];
+        String repository = parts[1];
+        String branch;
+        String filePath;
+        if (parts.length >= 5 && "blob".equals(parts[2])) {
+            branch = parts[3];
+            filePath = String.join("/", java.util.Arrays.copyOfRange(parts, 4, parts.length));
+        } else if (parts.length >= 4 && "tree".equals(parts[2])) {
+            branch = parts[3];
+            String directory = parts.length > 4
+                    ? String.join("/", java.util.Arrays.copyOfRange(parts, 4, parts.length)) : "";
+            filePath = directory.isEmpty() ? MANIFEST_FILE : directory + "/" + MANIFEST_FILE;
+        } else if (parts.length == 2) {
+            branch = "main";
+            filePath = MANIFEST_FILE;
+        } else {
+            return url;
+        }
+        return new URL("https://raw.githubusercontent.com/" + owner + "/" + repository
+                + "/" + branch + "/" + filePath);
     }
 
     private URL checkedHttpsUrl(String value) throws Exception {
