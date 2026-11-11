@@ -177,6 +177,7 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedCollectionIds = new LinkedHashSet<>();
     private final Set<String> selectedChapterKeys = new LinkedHashSet<>();
     private final Deque<String> chapterUndoStack = new ArrayDeque<>();
+    private final Deque<String> chapterRedoStack = new ArrayDeque<>();
     private final Set<Long> seenRecommendationIds = new HashSet<>();
     private final Set<Long> trainedBookIds = new HashSet<>();
     private final Set<String> favoriteGenrePreferences = new LinkedHashSet<>();
@@ -3289,6 +3290,8 @@ public final class MainActivity extends Activity {
                     new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
             bottom.addView(transformSlot, new LinearLayout.LayoutParams(0, dp(54), 1));
         }
+        bottom.addView(weightedIconButton("redo", this::redoChapterEdit),
+                new LinearLayout.LayoutParams(0, dp(54), 1));
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
         nextChapterButton.setTranslationX(dp(8));
         bottom.addView(nextChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
@@ -3443,6 +3446,7 @@ public final class MainActivity extends Activity {
         if (chapterEditor == null) return;
         chapterUndoStack.addLast(chapterEditor.getText().toString());
         while (chapterUndoStack.size() > 80) chapterUndoStack.removeFirst();
+        chapterRedoStack.clear();
         chapterEditor.setText(updated);
         chapterEditor.setSelection(Math.max(0, Math.min(selection, updated.length())));
         chapterText = updated;
@@ -3473,6 +3477,7 @@ public final class MainActivity extends Activity {
 
     private void rememberChapterUndo(CharSequence text, int start, int count, int after) {
         if (restoringChapterUndo || pairingPercent) return;
+        chapterRedoStack.clear();
         long now = android.os.SystemClock.uptimeMillis();
         boolean typing = count == 0 && after == 1;
         boolean coalesce = typing && lastUndoWasTyping && start == lastUndoEnd && now - lastUndoAt < 850;
@@ -3490,6 +3495,7 @@ public final class MainActivity extends Activity {
             toast("تغییری برای بازگردانی نیست");
             return;
         }
+        pushChapterHistory(chapterRedoStack, chapterEditor.getText().toString());
         String previous = chapterUndoStack.removeLast();
         int selection = Math.max(0, chapterEditor.getSelectionStart());
         restoringChapterUndo = true;
@@ -3503,6 +3509,32 @@ public final class MainActivity extends Activity {
         updateTokenSuggestions();
         scheduleSave();
         updateProgress();
+    }
+
+    private void redoChapterEdit() {
+        if (chapterEditor == null || chapterRedoStack.isEmpty()) {
+            toast("تغییری برای بازانجام نیست");
+            return;
+        }
+        pushChapterHistory(chapterUndoStack, chapterEditor.getText().toString());
+        String next = chapterRedoStack.removeLast();
+        int selection = Math.max(0, chapterEditor.getSelectionStart());
+        restoringChapterUndo = true;
+        chapterEditor.setText(next);
+        chapterEditor.setSelection(Math.min(selection, next.length()));
+        restoringChapterUndo = false;
+        lastUndoWasTyping = false;
+        chapterText = next;
+        chapterDirty = true;
+        applyRuleSpans(chapterEditor.getText());
+        updateTokenSuggestions();
+        scheduleSave();
+        updateProgress();
+    }
+
+    private void pushChapterHistory(Deque<String> history, String text) {
+        if (history.isEmpty() || !history.peekLast().equals(text)) history.addLast(text);
+        while (history.size() > 80) history.removeFirst();
     }
 
     private void setReaderImeVisible(boolean visible) {
@@ -3549,6 +3581,7 @@ public final class MainActivity extends Activity {
         activeChapter = index;
         rememberRecentReading();
         chapterUndoStack.clear();
+        chapterRedoStack.clear();
         lastUndoWasTyping = false;
         lastUndoEnd = -1;
         chapterText = loadedText == null ? "" : loadedText;
@@ -4565,6 +4598,7 @@ public final class MainActivity extends Activity {
             case "back": return "بازگشت"; case "next": return "بعدی";
             case "help": return "راهنمای توالی‌های ویژه";
             case "undo": return "بازگردانی ویرایش";
+            case "redo": return "بازانجام ویرایش";
             case "edit": return "ویرایش";
             case "hide": return "مخفی کردن کتاب"; case "show": return "نمایش کتاب";
             case "delete": return "حذف"; case "image": return "تصویر جلد"; case "settings": return "تنظیمات";
