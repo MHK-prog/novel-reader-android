@@ -158,7 +158,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.15";
+    private static final String VERSION = "1.4.18";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -635,6 +635,12 @@ public final class MainActivity extends Activity {
         banner.setBackground(roundDrawable(SURFACE, 0x665D4775, 16));
         banner.setElevation(dp(10));
 
+        FrameLayout dismissButton = plainIconButton("close", MUTED, this::dismissResumePrompt);
+        dismissButton.setContentDescription("بستن پیام ادامهٔ مطالعه");
+        LinearLayout.LayoutParams dismissParams = new LinearLayout.LayoutParams(dp(38), dp(38));
+        dismissParams.rightMargin = dp(8);
+        banner.addView(dismissButton, dismissParams);
+
         LinearLayout message = new LinearLayout(this);
         message.setOrientation(LinearLayout.VERTICAL);
         message.setGravity(Gravity.CENTER_VERTICAL);
@@ -939,6 +945,12 @@ public final class MainActivity extends Activity {
             closeDrawer();
             showDashboard();
         }), new LinearLayout.LayoutParams(-1, dp(52)));
+        drawerPanel.addView(textButton("ادامهٔ مطالعه", "book", PURPLE, () -> {
+            ResumeTarget target = findResumeTarget();
+            closeDrawer();
+            if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
+            else openResumeTarget(target);
+        }), new LinearLayout.LayoutParams(-1, dp(52)));
         drawerPanel.addView(textButton("تنظیمات", "settings", PURPLE, () -> { closeDrawer(); showSettings(); }),
                 new LinearLayout.LayoutParams(-1, dp(52)));
         drawerPanel.addView(textButton("محاوره‌ای‌ساز", "scan_text", PURPLE, () -> {
@@ -971,27 +983,39 @@ public final class MainActivity extends Activity {
     private void showColloquializer() {
         page = "colloquializer";
         appColumn.removeAllViews();
-        appColumn.addView(makeHeader("محاوره‌ای‌ساز", "", "menu", null, this::openDrawer, null));
+        appColumn.addView(makeHeader("محاوره‌ای‌ساز", "", "menu", "help", this::openDrawer,
+                this::showColloquializerHelp, 0, 68, true));
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(12), dp(18), dp(5));
+        content.setPadding(dp(18), dp(8), dp(18), dp(3));
         boolean installed = extensionManager.colloquializerInstalled();
-        content.addView(text("فایل JSON قوانین جایگزینی را انتخاب کن.", 14, MUTED), fieldParams());
         content.addView(textButton("انتخاب فایل JSON", "scan_text", PURPLE,
                 this::chooseColloquializerRules), fieldParams());
         if (installed) {
             try {
                 ArrayList<ColloquializerRule> rules = readColloquializerRules(
                         new JSONArray(extensionManager.colloquializerRules()));
+                LinearLayout ruleActions = new LinearLayout(this);
+                ruleActions.setOrientation(LinearLayout.HORIZONTAL);
+                ruleActions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+                ruleActions.addView(textButton("افزودن جفت", "add", PURPLE,
+                        this::showAddColloquializerRuleDialog), new LinearLayout.LayoutParams(0, dp(50), 1f));
+                LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(50), 1f);
+                deleteParams.leftMargin = dp(7);
+                ruleActions.addView(textButton("حذف قوانین", "delete", RED, () -> {
+                    if (extensionManager.removeColloquializer()) {
+                        toast("قوانین محاوره‌ای‌ساز حذف شد");
+                        showColloquializer();
+                    } else toast("حذف قوانین انجام نشد: " + storage.lastError());
+                }), deleteParams);
+                content.addView(ruleActions, new LinearLayout.LayoutParams(-1, dp(50)));
+                addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
+                        "enabled.colloquializer", true);
                 TextView count = text("", 12, MUTED);
                 count.setGravity(Gravity.CENTER);
                 EditText search = edit("جستجو در قانون‌ها", false);
                 search.setSingleLine(true);
                 content.addView(count, new LinearLayout.LayoutParams(-1, dp(27)));
-                TextView wildcardHelp = text("یک x در کلید یعنی رشتهٔ پیوسته‌ای از حروف فارسی؛ در جایگزین، x همان رشته را برمی‌گرداند. نمونه: xهایم ← xهام", 12, MUTED);
-                wildcardHelp.setGravity(Gravity.CENTER);
-                wildcardHelp.setPadding(dp(4), 0, dp(4), dp(6));
-                content.addView(wildcardHelp, new LinearLayout.LayoutParams(-1, -2));
                 content.addView(clearableInput(search), fieldParams());
 
                 List<Integer> visible = new ArrayList<>();
@@ -1027,9 +1051,11 @@ public final class MainActivity extends Activity {
                             sourceText = text("", 14, TEXT);
                             sourceText.setMaxLines(1);
                             sourceText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                            setColloquializerTextAlignment(sourceText);
                             replacementText = text("", 13, MUTED);
                             replacementText.setMaxLines(1);
                             replacementText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                            setColloquializerTextAlignment(replacementText);
                             labels.addView(sourceText, new LinearLayout.LayoutParams(-1, 0, 1));
                             labels.addView(replacementText, new LinearLayout.LayoutParams(-1, 0, 1));
                             row.addView(labels, new LinearLayout.LayoutParams(0, -1, 1));
@@ -1083,30 +1109,39 @@ public final class MainActivity extends Activity {
                 ruleList.setEmptyView(empty);
                 appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
                 appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
-
-                LinearLayout footer = new LinearLayout(this);
-                footer.setOrientation(LinearLayout.VERTICAL);
-                footer.setPadding(dp(18), dp(5), dp(18), dp(5));
-                addPreferenceSwitch(footer, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
-                        "enabled.colloquializer", true);
-                footer.addView(textButton("حذف قوانین", "delete", RED, () -> {
-                    if (extensionManager.removeColloquializer()) {
-                        toast("قوانین محاوره‌ای‌ساز حذف شد");
-                        showColloquializer();
-                    } else toast("حذف قوانین انجام نشد: " + storage.lastError());
-                }), fieldParams());
-                appColumn.addView(footer, new LinearLayout.LayoutParams(-1, -2));
             } catch (Exception error) {
                 content.addView(text("فایل قوانین قابل خواندن نیست.", 14, RED), fieldParams());
                 appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
             }
         } else {
+            content.addView(textButton("افزودن جفت", "add", PURPLE,
+                    this::showAddColloquializerRuleDialog), fieldParams());
             TextView empty = text("هنوز فایل قوانینی انتخاب نشده است.", 14, MUTED);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(0, dp(24), 0, dp(20));
             appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
             appColumn.addView(empty, new LinearLayout.LayoutParams(-1, 0, 1));
         }
+    }
+
+    private void showColloquializerHelp() {
+        TextView help = text("هر جفت، عبارت مبدأ را با عبارت مقصد جایگزین می‌کند. در الگو می‌توانی یک x بگذاری تا یک رشتهٔ پیوسته از حروف فارسی را بگیرد؛ اگر در مقصد هم x باشد همان رشته برمی‌گردد، مثل xهایم ← xهام.\n\nدر صفحهٔ خواندن، عبارت انتخاب‌شده خودکار به‌عنوان مبدأ می‌آید. اگر گزینهٔ «فقط همین Chapter» روشن باشد، جفت فقط روی متن همان Chapter اعمال می‌شود و در JSON نمی‌رود. در غیر این صورت جفت در JSON ذخیره و فقط همان جفت روی متن فعلی اعمال می‌شود.", 14, TEXT);
+        help.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        help.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
+        help.setPadding(dp(8), dp(10), dp(8), dp(10));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("راهنمای محاوره‌ای‌ساز")
+                .setView(dialogPadding(help))
+                .setPositiveButton("بستن", null)
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void setColloquializerTextAlignment(TextView view) {
+        view.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        view.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
+        view.setTextDirection(View.TEXT_DIRECTION_RTL);
     }
 
     private ArrayList<ColloquializerRule> readColloquializerRules(JSONArray json) {
@@ -1130,12 +1165,15 @@ public final class MainActivity extends Activity {
                                                    int index, Runnable refresh) {
         if (index < 0 || index >= rules.size()) return;
         ColloquializerRule current = rules.get(index);
-        EditText source = edit("الگو؛ x یعنی رشتهٔ فارسی", false);
-        EditText replacement = edit("جایگزین؛ x همان رشته است", false);
+        EditText source = edit("عبارت مبدأ", false);
+        EditText replacement = edit("عبارت مقصد", false);
+        setColloquializerTextAlignment(source);
+        setColloquializerTextAlignment(replacement);
         source.setText(current.source);
         replacement.setText(current.replacement);
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
+        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         form.addView(clearableInput(source), fieldParams());
         form.addView(clearableInput(replacement), fieldParams());
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -1170,6 +1208,50 @@ public final class MainActivity extends Activity {
                 toast("قانون به‌روزرسانی شد.");
             } catch (Exception error) {
                 toast("ذخیرهٔ قانون ناموفق بود: " + (error.getMessage() == null ? "" : error.getMessage()));
+            }
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void showAddColloquializerRuleDialog() {
+        EditText source = edit("عبارت مبدأ", false);
+        EditText replacement = edit("عبارت مقصد", false);
+        setColloquializerTextAlignment(source);
+        setColloquializerTextAlignment(replacement);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        form.addView(clearableInput(source), fieldParams());
+        form.addView(clearableInput(replacement), fieldParams());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("افزودن جفت جایگزینی")
+                .setView(dialogPadding(form))
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String newSource = source.getText().toString();
+            String newReplacement = replacement.getText().toString();
+            if (newSource.isEmpty()) { toast("عبارت مبدأ خالی است."); return; }
+            try {
+                JSONArray current = extensionManager.colloquializerInstalled()
+                        ? new JSONArray(extensionManager.colloquializerRules()) : new JSONArray();
+                for (int i = 0; i < current.length(); i++) {
+                    JSONArray pair = current.optJSONArray(i);
+                    if (pair != null && newSource.equals(pair.optString(0))) {
+                        toast("این عبارت مبدأ از قبل وجود دارد.");
+                        return;
+                    }
+                }
+                current.put(new JSONArray().put(newSource).put(newReplacement));
+                extensionManager.saveColloquializerRules(current.toString());
+                dialog.dismiss();
+                showColloquializer();
+                toast("جفت جایگزینی ذخیره شد.");
+            } catch (Exception error) {
+                toast("ذخیرهٔ جفت ناموفق بود: " + (error.getMessage() == null ? "" : error.getMessage()));
             }
         }));
         dialog.show();
@@ -2852,6 +2934,10 @@ public final class MainActivity extends Activity {
             titleView.setContentDescription("کپی نام کتاب و نویسنده");
             titleView.setOnClickListener(v -> copyBookCredits(book));
         }
+        if (subtitleView != null) {
+            subtitleView.setContentDescription("کپی نام کتاب و نویسنده");
+            subtitleView.setOnClickListener(v -> copyBookCredits(book));
+        }
 
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
@@ -2879,7 +2965,9 @@ public final class MainActivity extends Activity {
         JSONArray chapters = book.optJSONArray("chapters");
         int chapterCount = chapters == null ? 0 : chapters.length();
         int readPercent = bookReadPercent(book);
-        addBookInfoLine(body, "ژانرها", genreSummary(book.optJSONArray("genres")));
+        LinearLayout genresRow = addBookInfoLine(body, "ژانرها", genreSummary(book.optJSONArray("genres")));
+        genresRow.setContentDescription("کپی همهٔ ژانرها");
+        genresRow.setOnClickListener(v -> copyBookGenres(book));
         addBookSeriesNumberLine(body, book);
         addBookInfoLine(body, "تعداد Chapter", String.valueOf(chapterCount));
         addBookInfoLine(body, "میزان مطالعه", readPercent + "٪");
@@ -2914,7 +3002,7 @@ public final class MainActivity extends Activity {
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     }
 
-    private void addBookInfoLine(LinearLayout body, String label, String value) {
+    private LinearLayout addBookInfoLine(LinearLayout body, String label, String value) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -2926,6 +3014,7 @@ public final class MainActivity extends Activity {
         params.bottomMargin = dp(5);
         row.setBackground(roundDrawable(SURFACE, 0xFF29242F, 11));
         body.addView(row, params);
+        return row;
     }
 
     private void addBookSeriesNumberLine(LinearLayout body, JSONObject book) {
@@ -2936,45 +3025,11 @@ public final class MainActivity extends Activity {
         row.setBackground(roundDrawable(SURFACE, 0xFF29242F, 11));
         TextView label = text("شمارهٔ کتاب در مجموعه", 13, MUTED);
         TextView value = text(numbered ? Integer.toString(seriesBookNumber(book)) : "—", 14, TEXT);
-        NativeIconView edit = new NativeIconView(this, "edit", PURPLE);
         row.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
         row.addView(value, new LinearLayout.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(20), dp(20));
-        iconParams.leftMargin = dp(8);
-        row.addView(edit, iconParams);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(48));
         params.bottomMargin = dp(5);
         body.addView(row, params);
-        row.setOnClickListener(v -> {
-            if (!numbered) {
-                toast("برای شماره‌گذاری، کتاب را به یک مجموعه منتقل کن.");
-                return;
-            }
-            showSeriesNumberDialog(book);
-        });
-    }
-
-    private void showSeriesNumberDialog(JSONObject book) {
-        EditText number = edit("شمارهٔ کتاب در مجموعه", false);
-        number.setInputType(InputType.TYPE_CLASS_NUMBER);
-        number.setText(Integer.toString(seriesBookNumber(book)));
-        number.setSelection(number.length());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("شمارهٔ کتاب در مجموعه")
-                .setView(dialogPadding(clearableInput(number))).setNegativeButton("لغو", null)
-                .setPositiveButton("ذخیره", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            int value;
-            try { value = Integer.parseInt(number.getText().toString().trim()); }
-            catch (NumberFormatException error) { number.setError("شمارهٔ معتبر وارد کن"); return; }
-            if (value < 1 || value > 9999) { number.setError("شماره باید بین 1 تا 9999 باشد"); return; }
-            String before = library.toString();
-            putJson(book, "seriesNumber", value);
-            if (!saveLibrary()) { restoreLibrary(before); return; }
-            dialog.dismiss();
-            showBookInfo(book);
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
     }
 
     private String genreSummary(JSONArray genres) {
@@ -3192,10 +3247,21 @@ public final class MainActivity extends Activity {
     }
 
     private void copyBookCredits(JSONObject book) {
-        String title = displayBookTitle(book).trim();
+        String title = book.optString("title").trim();
         String author = book.optString("author").trim();
         String credits = title.isEmpty() ? author : author.isEmpty() ? title : title + " by " + author;
         if (!credits.isEmpty()) copyToClipboard("book", credits);
+    }
+
+    private void copyBookGenres(JSONObject book) {
+        JSONArray genres = book == null ? null : book.optJSONArray("genres");
+        if (genres == null || genres.length() == 0) return;
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < genres.length(); i++) {
+            String genre = genres.optString(i).trim();
+            if (!genre.isEmpty()) values.add(genre);
+        }
+        if (!values.isEmpty()) copyToClipboard("genres", android.text.TextUtils.join(", ", values));
     }
 
     private void copyToClipboard(String label, String value) {
@@ -3523,7 +3589,7 @@ public final class MainActivity extends Activity {
                 int start = Math.max(0, chapterEditor.getSelectionStart());
                 int end = Math.max(start, chapterEditor.getSelectionEnd());
                 if (start < end && end <= chapterEditor.length()) {
-                    showSelectedPhraseRuleDialog(start, end,
+                    showSelectedPhraseRuleDialog(start,
                             chapterEditor.getText().subSequence(start, end).toString());
                 }
                 mode.finish();
@@ -3587,35 +3653,76 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void showSelectedPhraseRuleDialog(int start, int end, String source) {
-        EditText replacement = edit("جایگزین بشه با:", false);
+    private void showSelectedPhraseRuleDialog(int start, String source) {
+        TextView sourceField = text(source, 15, TEXT);
+        sourceField.setSingleLine(true);
+        sourceField.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        sourceField.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 12));
+        sourceField.setPadding(dp(13), dp(9), dp(13), dp(9));
+        setColloquializerTextAlignment(sourceField);
+
+        EditText replacement = edit("عبارت مقصد", false);
+        setColloquializerTextAlignment(replacement);
+        LinearLayout phraseFields = new LinearLayout(this);
+        phraseFields.setOrientation(LinearLayout.HORIZONTAL);
+        phraseFields.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        LinearLayout sourceColumn = new LinearLayout(this);
+        sourceColumn.setOrientation(LinearLayout.VERTICAL);
+        TextView sourceLabel = text("عبارت مبدأ", 12, MUTED);
+        setColloquializerTextAlignment(sourceLabel);
+        sourceColumn.addView(sourceLabel, new LinearLayout.LayoutParams(-1, dp(22)));
+        sourceColumn.addView(sourceField, new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout replacementColumn = new LinearLayout(this);
+        replacementColumn.setOrientation(LinearLayout.VERTICAL);
+        TextView replacementLabel = text("عبارت مقصد", 12, MUTED);
+        setColloquializerTextAlignment(replacementLabel);
+        replacementColumn.addView(replacementLabel, new LinearLayout.LayoutParams(-1, dp(22)));
+        replacementColumn.addView(clearableInput(replacement), new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout.LayoutParams sourceParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        sourceParams.leftMargin = dp(8);
+        phraseFields.addView(sourceColumn, sourceParams);
+        phraseFields.addView(replacementColumn, new LinearLayout.LayoutParams(0, -2, 1f));
+
         android.widget.CheckBox onlyThisChapter = new android.widget.CheckBox(this);
-        onlyThisChapter.setText("فقط همین Chapter؛ در فایل JSON ذخیره نشود");
+        onlyThisChapter.setText("فقط همین Chapter؛ در JSON ذخیره نشود");
         onlyThisChapter.setTextColor(TEXT);
         onlyThisChapter.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+        onlyThisChapter.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        form.addView(phraseFields, fieldParams());
+        form.addView(onlyThisChapter, fieldParams());
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("افزودن قانون جایگزینی")
-                .setView(dialogPadding(verticalLayout(clearableInput(replacement), onlyThisChapter)))
+                .setView(dialogPadding(form))
                 .setNegativeButton("لغو", null)
                 .setPositiveButton("ذخیره", null)
                 .create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String value = replacement.getText().toString();
             if (chapterEditor == null || !"reader".equals(page)) { dialog.dismiss(); return; }
+            if (source == null || source.isEmpty()) { toast("عبارت مبدأ خالی است."); return; }
             String current = chapterEditor.getText().toString();
             int safeStart = Math.max(0, Math.min(start, current.length()));
-            int safeEnd = Math.max(safeStart, Math.min(end, current.length()));
             String updated;
+            JSONArray singlePair = new JSONArray().put(new JSONArray().put(source).put(value));
             if (onlyThisChapter.isChecked()) {
-                updated = current.substring(0, safeStart) + value + current.substring(safeEnd);
-                applyChapterText(updated, safeStart + value.length());
+                try {
+                    updated = TextReplacementEngine.transform(current, singlePair.toString());
+                    applyChapterText(updated, safeStart + value.length());
+                } catch (Exception error) {
+                    toast("اعمال جفت روی Chapter ناموفق بود: "
+                            + (error.getMessage() == null ? "" : error.getMessage()));
+                    return;
+                }
             } else {
                 try {
                     JSONArray rules = extensionManager.colloquializerInstalled()
                             ? new JSONArray(extensionManager.colloquializerRules()) : new JSONArray();
                     putReplacementPair(rules, source, value);
                     extensionManager.saveColloquializerRules(rules.toString());
-                    updated = extensionManager.transformColloquializer(current);
+                    updated = TextReplacementEngine.transform(current, singlePair.toString());
                     applyChapterText(updated, Math.min(safeStart + value.length(), updated.length()));
                 } catch (Exception error) {
                     toast("ذخیرهٔ قانون ناموفق بود: " + (error.getMessage() == null ? "" : error.getMessage()));
@@ -3627,14 +3734,6 @@ public final class MainActivity extends Activity {
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
-    }
-
-    private LinearLayout verticalLayout(View first, View second) {
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.addView(first, fieldParams());
-        layout.addView(second, fieldParams());
-        return layout;
     }
 
     private void putReplacementPair(JSONArray rules, String source, String replacement) throws JSONException {

@@ -48,7 +48,7 @@ final class TextReplacementEngine {
     }
 
     private static boolean isWordCodePoint(int codePoint) {
-        if (codePoint == '_') return true;
+        if (codePoint == '_' || codePoint == 0x200c) return true;
         int type = Character.getType(codePoint);
         return type == Character.UPPERCASE_LETTER || type == Character.LOWERCASE_LETTER
                 || type == Character.TITLECASE_LETTER || type == Character.MODIFIER_LETTER
@@ -65,8 +65,7 @@ final class TextReplacementEngine {
     private static String matchKey(String source) {
         StringBuilder key = new StringBuilder(source.length());
         for (int i = 0; i < source.length(); i++) {
-            char character = source.charAt(i);
-            if (character != '\u200c') key.append(foldCharacter(character));
+            key.append(foldCharacter(source.charAt(i)));
         }
         return key.toString();
     }
@@ -75,11 +74,6 @@ final class TextReplacementEngine {
         int textIndex = start;
         for (int ruleIndex = 0; ruleIndex < source.length(); ruleIndex++) {
             char expected = source.charAt(ruleIndex);
-            if (expected == '\u200c') {
-                if (textIndex < text.length()
-                        && (text.charAt(textIndex) == '\u200c' || text.charAt(textIndex) == ' ')) textIndex++;
-                continue;
-            }
             if (textIndex >= text.length() || foldCharacter(text.charAt(textIndex)) != foldCharacter(expected)) return -1;
             textIndex++;
         }
