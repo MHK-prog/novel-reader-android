@@ -140,6 +140,67 @@ final class ExtensionManager {
         return new Plugin(manifest, manifestText);
     }
 
+    boolean colloquializerInstalled() {
+        try { return load("colloquializer") != null; }
+        catch (Exception ignored) { return false; }
+    }
+
+    boolean colloquializerEnabled() { return isEnabled("colloquializer"); }
+
+    void setColloquializerEnabled(boolean enabled) { setEnabled("colloquializer", enabled); }
+
+    String colloquializerRules() throws Exception {
+        String content = storage.readPluginFile("colloquializer", "rules.json");
+        if (content == null) throw new IOException("Colloquializer rules are missing.");
+        validatePairs(content);
+        return content;
+    }
+
+    String transformColloquializer(String input) throws Exception {
+        Plugin plugin = load("colloquializer");
+        if (plugin == null || plugin.actions.isEmpty()) throw new IOException("محاوره‌ای‌ساز نصب نشده است.");
+        return runTextReplacement(plugin, plugin.actions.get(0), input);
+    }
+
+    void saveColloquializerRules(String rulesJson) throws Exception {
+        validatePairs(rulesJson);
+        byte[] bytes = rulesJson.getBytes(StandardCharsets.UTF_8);
+        JSONObject descriptor = new JSONObject();
+        descriptor.put("sha256", sha256(bytes));
+        descriptor.put("maxBytes", MAX_FILE_BYTES);
+        JSONObject files = new JSONObject().put("rules.json", descriptor);
+        JSONObject action = new JSONObject();
+        action.put("id", "colloquialize");
+        action.put("label", "محاوره‌ای‌سازی");
+        action.put("icon", "scan_text");
+        action.put("placement", "chapter_bottom");
+        action.put("capability", TEXT_REPLACEMENT);
+        action.put("dataFile", "rules.json");
+        action.put("confirmTitle", "محاوره‌ای‌سازی متن");
+        action.put("confirmMessage", "متن فعلی Chapter با قوانین محاوره‌ای‌ساز تغییر می‌کند.");
+        JSONArray actions = new JSONArray().put(action);
+        JSONObject manifest = new JSONObject();
+        manifest.put("schema", 1);
+        manifest.put("apiVersion", API_VERSION);
+        manifest.put("id", "colloquializer");
+        manifest.put("name", "محاوره‌ای‌ساز");
+        manifest.put("version", "1.0.0");
+        manifest.put("description", "قوانین جایگزینی متن فارسی.");
+        manifest.put("files", files);
+        manifest.put("actions", actions);
+        validateManifest(manifest);
+        if (!storage.writePluginFile("colloquializer", "rules.json", rulesJson)) {
+            throw new IOException(storage.lastError());
+        }
+        if (!storage.writePluginFile("colloquializer", MANIFEST_FILE, manifest.toString())) {
+            throw new IOException(storage.lastError());
+        }
+        setEnabled("colloquializer", true);
+        preferences.edit().remove(sourceKey("colloquializer")).apply();
+    }
+
+    boolean removeColloquializer() { return remove("colloquializer"); }
+
     String runTextReplacement(Plugin plugin, Action action, String input) throws Exception {
         if (plugin == null || action == null || !TEXT_REPLACEMENT.equals(action.capability)) {
             throw new IOException("Unsupported extension action.");

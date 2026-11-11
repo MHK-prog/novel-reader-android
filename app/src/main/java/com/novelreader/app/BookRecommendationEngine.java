@@ -2,35 +2,36 @@ package com.novelreader.app;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
-/** Small weighted-by-genre recommendation helper; Android-free and dependency-free. */
+/** Small dependency-free recommendation helper. One candidate represents one book. */
 final class BookRecommendationEngine {
     private static final int DEFAULT_WEIGHT = 10;
-    private static final double EXPLORATION_RATE = 0.20;
+    private static final double EXPLORATION_RATE = 0.15;
 
     static final class Book {
         final long id;
         final String title;
-        final String genre;
+        final List<String> genres;
         final String author;
-        final double interestRating;
+        final int interestRating;
+        final boolean favorite;
+        final boolean favoriteAuthor;
 
-        Book(long id, String title, String genre, String author) {
-            this(id, title, genre, author, -1);
-        }
-
-        Book(long id, String title, String genre, String author, double interestRating) {
+        Book(long id, String title, List<String> genres, String author,
+             int interestRating, boolean favorite, boolean favoriteAuthor) {
             this.id = id;
             this.title = title == null ? "" : title;
-            this.genre = normalizeGenre(genre);
+            this.genres = genres == null ? new ArrayList<>() : new ArrayList<>(genres);
             this.author = author == null ? "" : author;
             this.interestRating = interestRating;
+            this.favorite = favorite;
+            this.favoriteAuthor = favoriteAuthor;
         }
     }
 
@@ -38,7 +39,7 @@ final class BookRecommendationEngine {
         final Map<String, Integer> genreWeights = new HashMap<>();
 
         int weightFor(String genre) {
-            String key = normalizeGenre(genre).toLowerCase(Locale.ROOT);
+            String key = normalize(genre);
             Integer weight = genreWeights.get(key);
             if (weight == null) {
                 genreWeights.put(key, DEFAULT_WEIGHT);
@@ -59,66 +60,51 @@ final class BookRecommendationEngine {
 
     Book recommendBook(List<Book> books, Set<Long> seenBookIds) {
         if (books == null || books.isEmpty()) return null;
-        Map<String, List<Book>> byGenre = new LinkedHashMap<>();
-        Map<Long, Book> unseenBooks = new LinkedHashMap<>();
+        List<Book> candidates = new ArrayList<>();
+        Set<Long> ids = new HashSet<>();
         for (Book book : books) {
-            if (book == null || book.genre.isEmpty() || "Other".equalsIgnoreCase(book.genre)) continue;
-            if (seenBookIds != null && seenBookIds.contains(book.id)) continue;
-            List<Book> genreBooks = byGenre.get(book.genre);
-            if (genreBooks == null) {
-                genreBooks = new ArrayList<>();
-                byGenre.put(book.genre, genreBooks);
-            }
-            genreBooks.add(book);
-            if (!unseenBooks.containsKey(book.id)) unseenBooks.put(book.id, book);
-            preferences.weightFor(book.genre);
+            if (book == null || !ids.add(book.id)) continue;
+            if (seenBookIds == null || !seenBookIds.contains(book.id)) candidates.add(book);
         }
-        if (unseenBooks.isEmpty()) {
-            return seenBookIds == null || seenBookIds.isEmpty() ? null : recommendBook(books, null);
+        // Start a fresh recommendation cycle after every eligible book has appeared once.
+        if (candidates.isEmpty()) {
+            for (Book book : books) if (book != null) candidates.add(book);
+            if (candidates.isEmpty()) return null;
         }
-
-        if (random.nextDouble() < EXPLORATION_RATE) {
-            List<Book> candidates = new ArrayList<>(unseenBooks.values());
+        if (candidates.size() == 1 || random.nextDouble() < EXPLORATION_RATE) {
             return candidates.get(random.nextInt(candidates.size()));
         }
 
-        double totalWeight = 0;
-        for (String genre : byGenre.keySet()) totalWeight += preferences.weightFor(genre);
-        double selection = random.nextDouble() * totalWeight;
-        String selectedGenre = null;
-        for (String genre : byGenre.keySet()) {
-            selection -= preferences.weightFor(genre);
-            if (selection < 0) {
-                selectedGenre = genre;
-                break;
-            }
-        }
-        if (selectedGenre == null) selectedGenre = byGenre.keySet().iterator().next();
-
-        List<Book> candidates = byGenre.get(selectedGenre);
-        return chooseByInterestRating(candidates);
-    }
-
-    private Book chooseByInterestRating(List<Book> books) {
-        if (books == null || books.isEmpty()) return null;
-        double totalWeight = 0;
-        for (Book book : books) totalWeight += interestWeight(book);
-        double selection = random.nextDouble() * totalWeight;
-        for (Book book : books) {
-            selection -= interestWeight(book);
+        double total = 0;
+        for (Book book : candidates) total += bookWeight(book);
+        if (total <= 0) return candidates.get(random.nextInt(candidates.size()));
+        double selection = random.nextDouble() * total;
+        for (Book book : candidates) {
+            selection -= bookWeight(book);
             if (selection < 0) return book;
         }
-        return books.get(books.size() - 1);
+        return candidates.get(candidates.size() - 1);
     }
 
-    private double interestWeight(Book book) {
-        if (book.interestRating < 1 || Double.isNaN(book.interestRating)
-                || Double.isInfinite(book.interestRating)) return 1.0;
-        double normalized = (Math.max(1.0, Math.min(5.0, book.interestRating)) - 1.0) / 4.0;
-        return 0.55 + normalized * 0.9;
+    private double bookWeight(Book book) {
+        Set<String> uniqueGenres = new HashSet<>();
+        double totalGenreWeight = 0;
+        for (String genre : book.genres) {
+            String key = normalize(genre);
+            if (key.isEmpty() || "other".equals(key) || !uniqueGenres.add(key)) continue;
+            totalGenreWeight += preferences.weightFor(key);
+        }
+        // Averaging prevents books with many tags from receiving extra lottery tickets.
+        double genreWeight = uniqueGenres.isEmpty() ? DEFAULT_WEIGHT
+                : totalGenreWeight / uniqueGenres.size();
+        double ratingWeight = book.interestRating < 1 || book.interestRating > 5
+                ? 1.0 : new double[]{0, 0.35, 0.60, 1.0, 1.50, 2.10}[book.interestRating];
+        double personalWeight = (book.favorite ? 1.12 : 1.0)
+                * (book.favoriteAuthor ? 1.12 : 1.0);
+        return Math.max(0.05, genreWeight * ratingWeight * personalWeight);
     }
 
-    private static String normalizeGenre(String genre) {
-        return genre == null ? "" : genre.trim();
+    private static String normalize(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 }
