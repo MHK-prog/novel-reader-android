@@ -277,6 +277,7 @@ final class ExtensionManager {
                 throw new IOException("Text replacement data must be an array of [source, replacement] pairs.");
             }
         }
+        TextReplacementEngine.transform("", pairs.toString());
     }
 
     private byte[] download(String address, int maxBytes, String fileName) throws Exception {

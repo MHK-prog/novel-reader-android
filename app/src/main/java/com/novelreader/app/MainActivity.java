@@ -972,40 +972,245 @@ public final class MainActivity extends Activity {
         page = "colloquializer";
         appColumn.removeAllViews();
         appColumn.addView(makeHeader("محاوره‌ای‌ساز", "", "menu", null, this::openDrawer, null));
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(16), dp(18), dp(24));
+        content.setPadding(dp(18), dp(12), dp(18), dp(5));
         boolean installed = extensionManager.colloquializerInstalled();
         content.addView(text("فایل JSON قوانین جایگزینی را انتخاب کن.", 14, MUTED), fieldParams());
         content.addView(textButton("انتخاب فایل JSON", "scan_text", PURPLE,
                 this::chooseColloquializerRules), fieldParams());
         if (installed) {
             try {
-                JSONArray rules = new JSONArray(extensionManager.colloquializerRules());
-                TextView count = text(rules.length() + " قانون بارگذاری شده", 14, TEXT);
+                ArrayList<ColloquializerRule> rules = readColloquializerRules(
+                        new JSONArray(extensionManager.colloquializerRules()));
+                TextView count = text("", 12, MUTED);
                 count.setGravity(Gravity.CENTER);
-                content.addView(count, fieldParams());
+                EditText search = edit("جستجو در قانون‌ها", false);
+                search.setSingleLine(true);
+                content.addView(count, new LinearLayout.LayoutParams(-1, dp(27)));
+                TextView wildcardHelp = text("یک x در کلید یعنی رشتهٔ پیوسته‌ای از حروف فارسی؛ در جایگزین، x همان رشته را برمی‌گرداند. نمونه: xهایم ← xهام", 12, MUTED);
+                wildcardHelp.setGravity(Gravity.CENTER);
+                wildcardHelp.setPadding(dp(4), 0, dp(4), dp(6));
+                content.addView(wildcardHelp, new LinearLayout.LayoutParams(-1, -2));
+                content.addView(clearableInput(search), fieldParams());
+
+                List<Integer> visible = new ArrayList<>();
+                ListView ruleList = new ListView(this);
+                ruleList.setDivider(null);
+                ruleList.setDividerHeight(dp(7));
+                ruleList.setPadding(dp(18), dp(5), dp(18), dp(8));
+                ruleList.setClipToPadding(false);
+                ruleList.setVerticalScrollBarEnabled(false);
+                ruleList.setBackgroundColor(BG);
+                final BaseAdapter[] adapterRef = new BaseAdapter[1];
+                final Runnable[] filterRules = new Runnable[1];
+                adapterRef[0] = new BaseAdapter() {
+                    @Override public int getCount() { return visible.size(); }
+                    @Override public Object getItem(int position) { return rules.get(visible.get(position)); }
+                    @Override public long getItemId(int position) { return visible.get(position); }
+                    @Override public View getView(int position, View convertView, ViewGroup parent) {
+                        LinearLayout row;
+                        TextView sourceText;
+                        TextView replacementText;
+                        FrameLayout editButton;
+                        FrameLayout deleteButton;
+                        if (convertView == null) {
+                            row = new LinearLayout(MainActivity.this);
+                            row.setGravity(Gravity.CENTER_VERTICAL);
+                            row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+                            row.setPadding(dp(10), dp(5), dp(8), dp(5));
+                            row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 13));
+
+                            LinearLayout labels = new LinearLayout(MainActivity.this);
+                            labels.setOrientation(LinearLayout.VERTICAL);
+                            labels.setGravity(Gravity.CENTER_VERTICAL);
+                            sourceText = text("", 14, TEXT);
+                            sourceText.setMaxLines(1);
+                            sourceText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                            replacementText = text("", 13, MUTED);
+                            replacementText.setMaxLines(1);
+                            replacementText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                            labels.addView(sourceText, new LinearLayout.LayoutParams(-1, 0, 1));
+                            labels.addView(replacementText, new LinearLayout.LayoutParams(-1, 0, 1));
+                            row.addView(labels, new LinearLayout.LayoutParams(0, -1, 1));
+
+                            editButton = iconButton("edit", PURPLE, false, null);
+                            deleteButton = iconButton("delete", RED, false, null);
+                            row.addView(editButton, new LinearLayout.LayoutParams(dp(44), dp(48)));
+                            row.addView(deleteButton, new LinearLayout.LayoutParams(dp(44), dp(48)));
+                            row.setTag(new View[]{sourceText, replacementText, editButton, deleteButton});
+                        } else {
+                            row = (LinearLayout) convertView;
+                            View[] views = (View[]) row.getTag();
+                            sourceText = (TextView) views[0];
+                            replacementText = (TextView) views[1];
+                            editButton = (FrameLayout) views[2];
+                            deleteButton = (FrameLayout) views[3];
+                        }
+
+                        int ruleIndex = visible.get(position);
+                        ColloquializerRule rule = rules.get(ruleIndex);
+                        sourceText.setText(rule.source);
+                        replacementText.setText("←  " + rule.replacement);
+                        editButton.setContentDescription("ویرایش قانون " + rule.source);
+                        deleteButton.setContentDescription("حذف قانون " + rule.source);
+                        editButton.setOnClickListener(v -> showEditColloquializerRuleDialog(
+                                rules, ruleIndex, filterRules[0]));
+                        deleteButton.setOnClickListener(v -> confirmDeleteColloquializerRule(
+                                rules, ruleIndex, filterRules[0]));
+                        return row;
+                    }
+                };
+                ruleList.setAdapter(adapterRef[0]);
+                filterRules[0] = () -> {
+                    String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+                    visible.clear();
+                    for (int i = 0; i < rules.size(); i++) {
+                        ColloquializerRule rule = rules.get(i);
+                        if (query.isEmpty() || rule.source.toLowerCase(Locale.ROOT).contains(query)
+                                || rule.replacement.toLowerCase(Locale.ROOT).contains(query)) visible.add(i);
+                    }
+                    count.setText(visible.size() + " از " + rules.size() + " قانون");
+                    adapterRef[0].notifyDataSetChanged();
+                };
+                search.addTextChangedListener(watcher(filterRules[0]));
+                filterRules[0].run();
+
+                FrameLayout listFrame = new FrameLayout(this);
+                listFrame.addView(ruleList, new FrameLayout.LayoutParams(-1, -1));
+                TextView empty = emptyLabel("قانونی پیدا نشد.");
+                listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
+                ruleList.setEmptyView(empty);
+                appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
+                appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
+
+                LinearLayout footer = new LinearLayout(this);
+                footer.setOrientation(LinearLayout.VERTICAL);
+                footer.setPadding(dp(18), dp(5), dp(18), dp(5));
+                addPreferenceSwitch(footer, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
+                        "enabled.colloquializer", true);
+                footer.addView(textButton("حذف قوانین", "delete", RED, () -> {
+                    if (extensionManager.removeColloquializer()) {
+                        toast("قوانین محاوره‌ای‌ساز حذف شد");
+                        showColloquializer();
+                    } else toast("حذف قوانین انجام نشد: " + storage.lastError());
+                }), fieldParams());
+                appColumn.addView(footer, new LinearLayout.LayoutParams(-1, -2));
             } catch (Exception error) {
                 content.addView(text("فایل قوانین قابل خواندن نیست.", 14, RED), fieldParams());
+                appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
             }
-            addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
-                    "enabled.colloquializer", true);
-            content.addView(textButton("حذف قوانین", "delete", RED, () -> {
-                if (extensionManager.removeColloquializer()) {
-                    toast("قوانین محاوره‌ای‌ساز حذف شد");
-                    showColloquializer();
-                } else toast("حذف قوانین انجام نشد: " + storage.lastError());
-            }), fieldParams());
         } else {
             TextView empty = text("هنوز فایل قوانینی انتخاب نشده است.", 14, MUTED);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(0, dp(24), 0, dp(20));
-            content.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
+            appColumn.addView(empty, new LinearLayout.LayoutParams(-1, 0, 1));
         }
-        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private ArrayList<ColloquializerRule> readColloquializerRules(JSONArray json) {
+        ArrayList<ColloquializerRule> rules = new ArrayList<>(json.length());
+        for (int i = 0; i < json.length(); i++) {
+            JSONArray pair = json.optJSONArray(i);
+            if (pair != null && pair.length() == 2) {
+                rules.add(new ColloquializerRule(pair.optString(0), pair.optString(1)));
+            }
+        }
+        return rules;
+    }
+
+    private JSONArray writeColloquializerRules(List<ColloquializerRule> rules) throws JSONException {
+        JSONArray json = new JSONArray();
+        for (ColloquializerRule rule : rules) json.put(new JSONArray().put(rule.source).put(rule.replacement));
+        return json;
+    }
+
+    private void showEditColloquializerRuleDialog(ArrayList<ColloquializerRule> rules,
+                                                   int index, Runnable refresh) {
+        if (index < 0 || index >= rules.size()) return;
+        ColloquializerRule current = rules.get(index);
+        EditText source = edit("الگو؛ x یعنی رشتهٔ فارسی", false);
+        EditText replacement = edit("جایگزین؛ x همان رشته است", false);
+        source.setText(current.source);
+        replacement.setText(current.replacement);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.addView(clearableInput(source), fieldParams());
+        form.addView(clearableInput(replacement), fieldParams());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("ویرایش قانون جایگزینی")
+                .setView(dialogPadding(form))
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String newSource = source.getText().toString();
+            String newReplacement = replacement.getText().toString();
+            if (newSource.isEmpty()) { toast("الگوی جایگزینی خالی است."); return; }
+            int wildcardIndex = newSource.indexOf('x');
+            if (wildcardIndex >= 0 && newSource.indexOf('x', wildcardIndex + 1) >= 0) {
+                toast("هر الگو فقط می‌تواند یک x داشته باشد.");
+                return;
+            }
+            for (int i = 0; i < rules.size(); i++) {
+                if (i != index && rules.get(i).source.equals(newSource)) {
+                    toast("این الگو از قبل در فهرست وجود دارد.");
+                    return;
+                }
+            }
+            ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
+            updated.set(index, new ColloquializerRule(newSource, newReplacement));
+            try {
+                extensionManager.saveColloquializerRules(writeColloquializerRules(updated).toString());
+                rules.clear();
+                rules.addAll(updated);
+                dialog.dismiss();
+                refresh.run();
+                toast("قانون به‌روزرسانی شد.");
+            } catch (Exception error) {
+                toast("ذخیرهٔ قانون ناموفق بود: " + (error.getMessage() == null ? "" : error.getMessage()));
+            }
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void confirmDeleteColloquializerRule(ArrayList<ColloquializerRule> rules,
+                                                   int index, Runnable refresh) {
+        if (index < 0 || index >= rules.size()) return;
+        ColloquializerRule rule = rules.get(index);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("حذف قانون؟")
+                .setMessage(rule.source + "  ←  " + rule.replacement)
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("حذف", (ignored, which) -> {
+                    ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
+                    updated.remove(index);
+                    try {
+                        extensionManager.saveColloquializerRules(writeColloquializerRules(updated).toString());
+                        rules.clear();
+                        rules.addAll(updated);
+                        refresh.run();
+                        toast("قانون حذف شد.");
+                    } catch (Exception error) {
+                        toast("حذف قانون ناموفق بود: " + (error.getMessage() == null ? "" : error.getMessage()));
+                    }
+                })
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private static final class ColloquializerRule {
+        final String source;
+        final String replacement;
+
+        ColloquializerRule(String source, String replacement) {
+            this.source = source;
+            this.replacement = replacement;
+        }
     }
 
     private void chooseColloquializerRules() {
