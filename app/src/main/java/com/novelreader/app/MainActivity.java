@@ -157,11 +157,11 @@ public final class MainActivity extends Activity {
             GradientDrawable.Orientation.BL_TR, GradientDrawable.Orientation.TOP_BOTTOM,
             GradientDrawable.Orientation.TL_BR, GradientDrawable.Orientation.TL_BR
     };
-    private static final int THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
+    private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.24";
+    private static final String VERSION = "1.4.25";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -299,12 +299,15 @@ public final class MainActivity extends Activity {
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
         lightTheme = appearance.getBoolean("light", false);
-        accentIndex = Math.max(0, Math.min(THEME_COUNT - 1, appearance.getInt("accent", 0)));
-        if (appearance.getBoolean("random_each_launch", false) && THEME_COUNT > 1) {
-            int previousAccent = accentIndex;
-            java.util.Random random = new java.util.Random();
-            do { accentIndex = random.nextInt(THEME_COUNT); } while (accentIndex == previousAccent);
-            appearance.edit().putInt("accent", accentIndex).apply();
+        accentIndex = Math.max(0, Math.min(themeCount() - 1, appearance.getInt("accent", 0)));
+        if (appearance.getBoolean("random_each_launch", false)) {
+            List<Integer> favorites = favoriteThemeIndices();
+            if (!favorites.isEmpty()) {
+                int previousAccent = accentIndex;
+                if (favorites.size() > 1) favorites.remove(Integer.valueOf(previousAccent));
+                accentIndex = favorites.get(new java.util.Random().nextInt(favorites.size()));
+                appearance.edit().putInt("accent", accentIndex).apply();
+            }
         }
         applyThemeColors();
         configureSystemBars();
@@ -350,13 +353,88 @@ public final class MainActivity extends Activity {
 
     private int themeAccentColor(int index) {
         if (index < FLAT_ACCENT_COLORS.length) return FLAT_ACCENT_COLORS[index];
-        int[] colors = GRADIENT_COLORS[index - FLAT_ACCENT_COLORS.length];
-        return colors[colors.length / 2];
+        if (index < BUILTIN_THEME_COUNT) {
+            int[] colors = GRADIENT_COLORS[index - FLAT_ACCENT_COLORS.length];
+            return colors[colors.length / 2];
+        }
+        JSONArray colors = customTheme(index).optJSONArray("colors");
+        return colors == null || colors.length() == 0 ? FLAT_ACCENT_COLORS[0]
+                : colors.optInt(colors.length() / 2, FLAT_ACCENT_COLORS[0]);
     }
 
     private String themeName(int index) {
-        return index < FLAT_ACCENT_NAMES.length ? FLAT_ACCENT_NAMES[index]
-                : GRADIENT_NAMES[index - FLAT_ACCENT_COLORS.length];
+        if (index < FLAT_ACCENT_NAMES.length) return FLAT_ACCENT_NAMES[index];
+        if (index < BUILTIN_THEME_COUNT) return GRADIENT_NAMES[index - FLAT_ACCENT_COLORS.length];
+        return customTheme(index).optString("name", "تم سفارشی");
+    }
+
+    private int themeCount() {
+        return BUILTIN_THEME_COUNT + customThemes().length();
+    }
+
+    private JSONArray customThemes() {
+        try {
+            return new JSONArray(getSharedPreferences("appearance", MODE_PRIVATE)
+                    .getString("custom_themes", "[]"));
+        } catch (JSONException ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private JSONObject customTheme(int index) {
+        JSONArray themes = customThemes();
+        JSONObject theme = themes.optJSONObject(index - BUILTIN_THEME_COUNT);
+        return theme == null ? new JSONObject() : theme;
+    }
+
+    private boolean isGradientTheme(int index) {
+        if (index >= FLAT_ACCENT_COLORS.length && index < BUILTIN_THEME_COUNT) return true;
+        if (index < BUILTIN_THEME_COUNT) return false;
+        JSONArray colors = customTheme(index).optJSONArray("colors");
+        return colors != null && colors.length() > 1;
+    }
+
+    private boolean isThemeFavorite(int index) {
+        if (index >= BUILTIN_THEME_COUNT) return customTheme(index).optBoolean("favorite", false);
+        Set<Integer> favorites = new HashSet<>();
+        String saved = getSharedPreferences("appearance", MODE_PRIVATE).getString("favorite_builtin_themes", "");
+        for (String item : saved.split(",")) {
+            try { if (!item.isEmpty()) favorites.add(Integer.parseInt(item)); }
+            catch (NumberFormatException ignored) { }
+        }
+        return favorites.contains(index);
+    }
+
+    private List<Integer> favoriteThemeIndices() {
+        List<Integer> result = new ArrayList<>();
+        for (int i = 0; i < themeCount(); i++) if (isThemeFavorite(i)) result.add(i);
+        return result;
+    }
+
+    private void setThemeFavorite(int index, boolean favorite) {
+        SharedPreferences preferences = getSharedPreferences("appearance", MODE_PRIVATE);
+        if (index >= BUILTIN_THEME_COUNT) {
+            JSONArray themes = customThemes();
+            JSONObject theme = themes.optJSONObject(index - BUILTIN_THEME_COUNT);
+            if (theme == null) return;
+            try { theme.put("favorite", favorite); }
+            catch (JSONException ignored) { return; }
+            preferences.edit().putString("custom_themes", themes.toString()).apply();
+            return;
+        }
+        Set<Integer> favorites = new java.util.TreeSet<>();
+        String saved = preferences.getString("favorite_builtin_themes", "");
+        for (String item : saved.split(",")) {
+            try { if (!item.isEmpty()) favorites.add(Integer.parseInt(item)); }
+            catch (NumberFormatException ignored) { }
+        }
+        if (favorite) favorites.add(index); else favorites.remove(index);
+        StringBuilder value = new StringBuilder();
+        for (Integer item : favorites) {
+            if (value.length() > 0) value.append(',');
+            value.append(item);
+        }
+        preferences.edit().putString("favorite_builtin_themes", value.toString()).apply();
     }
 
     private void applyGradientTheme(GradientDrawable drawable, int index) {
@@ -364,6 +442,15 @@ public final class MainActivity extends Activity {
     }
 
     private void applyGradientTheme(GradientDrawable drawable, int index, int radialRadiusDp) {
+        if (index >= BUILTIN_THEME_COUNT) {
+            JSONArray storedColors = customTheme(index).optJSONArray("colors");
+            if (storedColors == null || storedColors.length() < 2) return;
+            int[] colors = new int[storedColors.length()];
+            for (int i = 0; i < storedColors.length(); i++) colors[i] = storedColors.optInt(i, PURPLE);
+            drawable.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+            drawable.setColors(colors);
+            return;
+        }
         int gradientIndex = index - FLAT_ACCENT_COLORS.length;
         drawable.setOrientation(GRADIENT_ORIENTATIONS[gradientIndex]);
         drawable.setColors(GRADIENT_COLORS[gradientIndex]);
@@ -980,17 +1067,21 @@ public final class MainActivity extends Activity {
         drawerSettingsOptions.setVisibility(drawerSettingsExpanded ? View.VISIBLE : View.GONE);
         drawerPanel.addView(drawerSettingsOptions, new LinearLayout.LayoutParams(-1,
                 drawerSettingsExpanded ? ViewGroup.LayoutParams.WRAP_CONTENT : 0));
-        addDrawerAction(drawerSettingsOptions, "تنظیمات عمومی", "settings", 0xFFB69AFF, () -> {
+        addDrawerAction(drawerSettingsOptions, "عمومی", "settings", 0xFFB69AFF, () -> {
             closeDrawer();
             showSettings();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "تنظیمات محاوره‌ای‌ساز", "scan_text", 0xFF61C7D2, () -> {
+        addDrawerAction(drawerSettingsOptions, "محاوره‌ای‌ساز", "scan_text", 0xFF61C7D2, () -> {
             closeDrawer();
             showColloquializer();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "تنظیمات تگ‌ها", "tag", 0xFF82CF8B, () -> {
+        addDrawerAction(drawerSettingsOptions, "تگ‌ها", "tag", 0xFF82CF8B, () -> {
             closeDrawer();
             showTagSettings();
+        }, true);
+        addDrawerAction(drawerSettingsOptions, "تم‌ها", "settings", 0xFFE6A7FF, () -> {
+            closeDrawer();
+            showThemes();
         }, true);
 
         addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", 0xFF69D2A0, () -> {
@@ -1769,60 +1860,156 @@ public final class MainActivity extends Activity {
         body.addView(readerDisplayTitle);
         addReaderDisplaySwitch(body, "نمایش درصد باتری", "show_battery");
         addReaderDisplaySwitch(body, "نمایش ساعت", "show_clock");
+        scroll.addView(body);
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
 
-        TextView appearance = text("ظاهر", 15, MUTED);
-        appearance.setPadding(0, dp(15), 0, dp(7));
-        body.addView(appearance);
+    private void showThemes() {
+        page = "themes";
+        appColumn.removeAllViews();
+        animatePageTransition();
+        appColumn.addView(makeHeader("تم‌ها", "", "menu", null, this::openDrawer, null));
+        ScrollView scroll = new ScrollView(this);
+        settingsScroll = scroll;
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(18), dp(14), dp(18), dp(24));
+
+        TextView modeTitle = text("حالت نمایش", 15, MUTED);
+        modeTitle.setPadding(0, 0, 0, dp(7));
+        body.addView(modeTitle);
         LinearLayout modes = new LinearLayout(this);
         modes.setOrientation(LinearLayout.HORIZONTAL);
         modes.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         modes.addView(themeChoice("سیاه", !lightTheme, false), new LinearLayout.LayoutParams(0, dp(48), 1));
-        View modeGap = new View(this);
-        modes.addView(modeGap, new LinearLayout.LayoutParams(dp(10), 1));
-        modes.addView(themeChoice("سفید", lightTheme, true), new LinearLayout.LayoutParams(0, dp(48), 1));
+        modes.addView(new View(this), new LinearLayout.LayoutParams(dp(10), 1));
+        modes.addView(themeChoice("روشن", lightTheme, true), new LinearLayout.LayoutParams(0, dp(48), 1));
         body.addView(modes, fieldParams());
-        addPreferenceSwitch(body, "تغییر رنگ تم در هر بار ورود", "appearance", "random_each_launch", false);
+        addPreferenceSwitch(body, "انتخاب تصادفی از تم‌های پسندیده هنگام ورود", "appearance",
+                "random_each_launch", false);
 
-        TextView accentTitle = text("تم رنگی", 15, MUTED);
-        accentTitle.setPadding(0, dp(13), 0, dp(7));
-        body.addView(accentTitle);
-        GridLayout swatches = new GridLayout(this);
-        swatches.setColumnCount(5);
-        swatches.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
-        swatches.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        for (int i = 0; i < THEME_COUNT; i++) {
-            final int colorIndex = i;
-            FrameLayout cell = new FrameLayout(this);
-            cell.setContentDescription(themeName(i));
-            GradientDrawable swatch = new GradientDrawable();
-            swatch.setShape(GradientDrawable.OVAL);
-            if (i < FLAT_ACCENT_COLORS.length) swatch.setColor(FLAT_ACCENT_COLORS[i]);
-            else applyGradientTheme(swatch, i, 19);
-            swatch.setStroke(dp(i == accentIndex ? 3 : 1), i == accentIndex ? TEXT : 0x55777777);
-            FrameLayout dot = new FrameLayout(this);
-            dot.setBackground(swatch);
-            FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER);
-            cell.addView(dot, dotParams);
-            cell.setClickable(true);
-            cell.setOnClickListener(v -> {
-                accentIndex = colorIndex;
-                getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
-                applyThemeColors();
-                rerenderCurrentPage();
-            });
-            GridLayout.LayoutParams cellParams = new GridLayout.LayoutParams();
-            cellParams.width = dp(48);
-            cellParams.height = dp(48);
-            swatches.addView(cell, cellParams);
+        TextView themesTitle = text("همهٔ تم‌ها", 15, MUTED);
+        themesTitle.setPadding(0, dp(9), 0, dp(7));
+        body.addView(themesTitle);
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(2);
+        grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
+        grid.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        for (int i = 0; i < themeCount(); i++) {
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+            int screenWidthDp = (int) (getResources().getDisplayMetrics().widthPixels
+                    / getResources().getDisplayMetrics().density);
+            int widthDp = Math.max(132, (screenWidthDp - 48) / 2);
+            params.width = dp(widthDp);
+            params.height = dp(56);
+            params.setMargins(dp(3), dp(3), dp(3), dp(3));
+            grid.addView(themeCard(i), params);
         }
-        LinearLayout swatchGridContainer = new LinearLayout(this);
-        swatchGridContainer.setGravity(Gravity.CENTER_HORIZONTAL);
-        swatchGridContainer.addView(swatches, new LinearLayout.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams swatchGridParams = new LinearLayout.LayoutParams(-1, -2);
-        swatchGridParams.bottomMargin = dp(9);
-        body.addView(swatchGridContainer, swatchGridParams);
+        body.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, dp(50));
+        addParams.topMargin = dp(11);
+        body.addView(textButton("افزودن تم جدید", "add", PURPLE, this::showAddThemeDialog), addParams);
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private View themeCard(int index) {
+        LinearLayout card = new LinearLayout(this);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        card.setPadding(dp(8), dp(5), dp(8), dp(5));
+        card.setBackground(roundDrawable(SURFACE, index == accentIndex ? PURPLE : 0xFF40384A, 12));
+        card.setClickable(true);
+        card.setFocusable(true);
+
+        FrameLayout favorite = new FrameLayout(this);
+        NativeIconView heart = new NativeIconView(this, isThemeFavorite(index) ? "heart_filled" : "heart_outline",
+                isThemeFavorite(index) ? RED : MUTED);
+        favorite.addView(heart, new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
+        favorite.setContentDescription("پسندیدن تم");
+        favorite.setClickable(true);
+        favorite.setFocusable(true);
+        favorite.setOnClickListener(v -> {
+            setThemeFavorite(index, !isThemeFavorite(index));
+            rerenderCurrentPage();
+        });
+        card.addView(favorite, new LinearLayout.LayoutParams(dp(30), dp(40)));
+
+        GradientDrawable preview = new GradientDrawable();
+        preview.setCornerRadius(dp(9));
+        if (isGradientTheme(index)) applyGradientTheme(preview, index, 19);
+        else preview.setColor(themeAccentColor(index));
+        FrameLayout swatch = new FrameLayout(this);
+        swatch.setBackground(preview);
+        card.addView(swatch, new LinearLayout.LayoutParams(dp(30), dp(30)));
+
+        TextView label = text(themeName(index), 12, TEXT);
+        label.setMaxLines(2);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, -1, 1);
+        labelParams.rightMargin = dp(4);
+        card.addView(label, labelParams);
+        card.setOnClickListener(v -> {
+            accentIndex = index;
+            getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
+            applyThemeColors();
+            rerenderCurrentPage();
+        });
+        applyPressScale(card, .97f);
+        return card;
+    }
+
+    private void showAddThemeDialog() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(4), dp(4), dp(4), dp(4));
+        EditText name = edit("نام تم", false);
+        EditText colors = edit("#B69AFF یا #B69AFF, #7046C8", false);
+        colors.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        form.addView(name, fieldParams());
+        form.addView(colors, fieldParams());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تم جدید")
+                .setView(dialogPadding(form)).setPositiveButton("افزودن", null)
+                .setNegativeButton("لغو", null).create();
+        dialog.setOnShowListener(ignored -> {
+            styleDialogWindow(dialog);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String themeName = name.getText().toString().trim();
+                String[] rawColors = colors.getText().toString().split(",");
+                if (themeName.isEmpty() || rawColors.length < 1 || rawColors.length > 2) {
+                    toast("نام تم و یک یا دو رنگ وارد کن.");
+                    return;
+                }
+                JSONArray parsedColors = new JSONArray();
+                try {
+                    for (String raw : rawColors) {
+                        String value = raw.trim();
+                        if (!value.startsWith("#")) value = "#" + value;
+                        parsedColors.put(Color.parseColor(value));
+                    }
+                    JSONArray themes = customThemes();
+                    JSONObject theme = new JSONObject();
+                    theme.put("name", themeName);
+                    theme.put("colors", parsedColors);
+                    theme.put("favorite", false);
+                    themes.put(theme);
+                    getSharedPreferences("appearance", MODE_PRIVATE).edit()
+                            .putString("custom_themes", themes.toString()).apply();
+                    accentIndex = BUILTIN_THEME_COUNT + themes.length() - 1;
+                    getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
+                    dialog.dismiss();
+                    applyThemeColors();
+                    rerenderCurrentPage();
+                } catch (IllegalArgumentException | JSONException error) {
+                    toast("رنگ را با قالب #RRGGBB وارد کن.");
+                }
+            });
+        });
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void addReaderDisplaySwitch(LinearLayout body, String label, String key) {
@@ -1893,13 +2080,15 @@ public final class MainActivity extends Activity {
     }
 
     private void rerenderCurrentPage() {
-        int settingsScrollY = "settings".equals(page) && settingsScroll != null
+        boolean settingsPage = "settings".equals(page) || "themes".equals(page);
+        int settingsScrollY = settingsPage && settingsScroll != null
                 ? settingsScroll.getScrollY() : 0;
         if (systemRoot != null) systemRoot.setBackgroundColor(BG);
         if ("chapters".equals(page)) showChapters();
         else if ("reader".equals(page)) showReader();
         else if ("bookInfo".equals(page)) showBookInfo(activeBook());
         else if ("settings".equals(page)) showSettings();
+        else if ("themes".equals(page)) showThemes();
         else if ("recommendations".equals(page)) showRecommendation();
         else if ("tagSettings".equals(page)) showTagSettings();
         else if ("extensions".equals(page) || "colloquializer".equals(page)) showColloquializer();
@@ -1907,7 +2096,7 @@ public final class MainActivity extends Activity {
         else if ("collectionBooks".equals(page)) showBookShelf();
         else if ("collections".equals(page)) showCollections();
         else showDashboard();
-        if ("settings".equals(page) && settingsScroll != null) {
+        if (settingsPage && settingsScroll != null) {
             settingsScroll.post(() -> settingsScroll.scrollTo(0, settingsScrollY));
         }
     }
@@ -2037,11 +2226,16 @@ public final class MainActivity extends Activity {
         TextView author = text(book.author, 16, MUTED);
         author.setGravity(Gravity.CENTER);
         body.addView(author, new LinearLayout.LayoutParams(-1, -2));
-        TextView genre = text("ژانر: " + android.text.TextUtils.join(" · ", book.genres), 14, PURPLE);
-        genre.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams genreParams = new LinearLayout.LayoutParams(-1, -2);
-        genreParams.topMargin = dp(12);
-        body.addView(genre, genreParams);
+        String descriptionText = recommendedRecord == null ? "" : recommendedRecord.optString("description", "").trim();
+        TextView description = text(descriptionText.isEmpty() ? "توضیحی برای این کتاب ثبت نشده است." : descriptionText,
+                14, MUTED);
+        description.setGravity(Gravity.CENTER);
+        description.setMaxLines(5);
+        description.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        description.setPadding(dp(8), 0, dp(8), 0);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2);
+        descriptionParams.topMargin = dp(12);
+        body.addView(description, descriptionParams);
 
         View spacer = new View(this);
         body.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
@@ -3334,10 +3528,7 @@ public final class MainActivity extends Activity {
         stars.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         for (int i = 1; i <= 5; i++) {
             final int rating = i;
-            TextView star = text(i <= shownRating ? "★" : "☆", 30,
-                    i <= shownRating ? Color.rgb(255, 193, 7) : MUTED);
-            star.setGravity(Gravity.CENTER);
-            star.setPadding(dp(5), 0, dp(5), 0);
+            View star = ratingStar(i <= shownRating, rating, book);
             star.setOnClickListener(v -> saveBookInterestRating(book, rating));
             stars.addView(star, new LinearLayout.LayoutParams(dp(42), dp(46)));
         }
@@ -3352,6 +3543,50 @@ public final class MainActivity extends Activity {
             card.addView(reset);
         }
         body.addView(card, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private View ratingStar(boolean selected, int rating, JSONObject book) {
+        View star = new View(this) {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float outer = Math.min(getWidth(), getHeight()) * .39f;
+                float inner = outer * .48f;
+                float centerX = getWidth() / 2f;
+                float centerY = getHeight() / 2f;
+                float[] xs = new float[10], ys = new float[10];
+                for (int i = 0; i < 10; i++) {
+                    double angle = -Math.PI / 2 + i * Math.PI / 5;
+                    float radius = (i % 2 == 0) ? outer : inner;
+                    xs[i] = centerX + (float) Math.cos(angle) * radius;
+                    ys[i] = centerY + (float) Math.sin(angle) * radius;
+                }
+                Path path = new Path();
+                float startX = xs[0] + (xs[9] - xs[0]) * .18f;
+                float startY = ys[0] + (ys[9] - ys[0]) * .18f;
+                path.moveTo(startX, startY);
+                for (int i = 0; i < 10; i++) {
+                    int next = (i + 1) % 10;
+                    float beforeX = xs[i] + (xs[(i + 9) % 10] - xs[i]) * .18f;
+                    float beforeY = ys[i] + (ys[(i + 9) % 10] - ys[i]) * .18f;
+                    float afterX = xs[i] + (xs[next] - xs[i]) * .18f;
+                    float afterY = ys[i] + (ys[next] - ys[i]) * .18f;
+                    path.lineTo(beforeX, beforeY);
+                    path.quadTo(xs[i], ys[i], afterX, afterY);
+                }
+                path.close();
+                paint.setColor(selected ? Color.rgb(255, 193, 7) : MUTED);
+                paint.setStyle(selected ? Paint.Style.FILL : Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(1.8f));
+                paint.setStrokeJoin(Paint.Join.ROUND);
+                canvas.drawPath(path, paint);
+            }
+        };
+        star.setContentDescription(rating + " از 5");
+        star.setClickable(true);
+        star.setFocusable(true);
+        applyPressScale(star, .92f);
+        return star;
     }
 
     private void saveBookInterestRating(JSONObject book, int rating) {
@@ -4980,7 +5215,7 @@ public final class MainActivity extends Activity {
         }
         else if ("bookInfo".equals(page)) showBookShelfForPage(bookInfoReturnPage);
         else if ("collectionBooks".equals(page) || "allBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
-        else if ("settings".equals(page) || "recommendations".equals(page)
+        else if ("settings".equals(page) || "themes".equals(page) || "recommendations".equals(page)
                 || "tagSettings".equals(page) || "extensions".equals(page) || "colloquializer".equals(page)) showDashboard();
         else super.onBackPressed();
     }
@@ -5206,7 +5441,8 @@ public final class MainActivity extends Activity {
 
     private void styleIconButton(FrameLayout button, boolean selected) {
         GradientDrawable bg = new GradientDrawable(); bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(selected ? 0xFF30203D : SURFACE); bg.setStroke(dp(1), selected ? PURPLE : 0xFF302A38); button.setBackground(bg);
+        bg.setColor(selected ? 0xFF30203D : SURFACE);
+        bg.setStroke(dp(1), selected ? PURPLE : themedStrokeColor(0xFF302A38)); button.setBackground(bg);
     }
 
     private View textButton(String label, String icon, int color, Runnable action) {
@@ -5303,11 +5539,20 @@ public final class MainActivity extends Activity {
 
     private GradientDrawable roundDrawable(int color, int stroke, int radiusDp) {
         GradientDrawable drawable = new GradientDrawable();
-        if (color == PURPLE && accentIndex >= FLAT_ACCENT_COLORS.length) applyGradientTheme(drawable, accentIndex);
+        if (color == PURPLE && isGradientTheme(accentIndex)) applyGradientTheme(drawable, accentIndex);
         else drawable.setColor(color);
         drawable.setCornerRadius(dp(radiusDp));
-        if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), stroke);
+        if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), themedStrokeColor(stroke));
         return drawable;
+    }
+
+    private int themedStrokeColor(int color) {
+        if (!lightTheme || color == PURPLE) return color;
+        int red = Color.red(color), green = Color.green(color), blue = Color.blue(color);
+        int maximum = Math.max(red, Math.max(green, blue));
+        int minimum = Math.min(red, Math.min(green, blue));
+        if (maximum < 115 && maximum - minimum < 75) return Color.rgb(216, 213, 221);
+        return color;
     }
 
     private LinearLayout.LayoutParams fieldParams() {
