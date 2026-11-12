@@ -158,7 +158,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.18";
+    private static final String VERSION = "1.4.19";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -3654,11 +3654,10 @@ public final class MainActivity extends Activity {
     }
 
     private void showSelectedPhraseRuleDialog(int start, String source) {
-        TextView sourceField = text(source, 15, TEXT);
+        EditText sourceField = edit("عبارت مبدأ", false);
+        sourceField.setText(source);
+        sourceField.setSelection(sourceField.length());
         sourceField.setSingleLine(true);
-        sourceField.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        sourceField.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 12));
-        sourceField.setPadding(dp(13), dp(9), dp(13), dp(9));
         setColloquializerTextAlignment(sourceField);
 
         EditText replacement = edit("عبارت مقصد", false);
@@ -3691,7 +3690,9 @@ public final class MainActivity extends Activity {
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        form.addView(phraseFields, fieldParams());
+        LinearLayout.LayoutParams phraseFieldsParams = new LinearLayout.LayoutParams(-1, -2);
+        phraseFieldsParams.bottomMargin = dp(9);
+        form.addView(phraseFields, phraseFieldsParams);
         form.addView(onlyThisChapter, fieldParams());
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("افزودن قانون جایگزینی")
