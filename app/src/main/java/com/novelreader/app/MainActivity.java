@@ -158,7 +158,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.22";
+    private static final String VERSION = "1.4.23";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -2831,6 +2831,45 @@ public final class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
     }
 
+    private void showEditCollectionDialog(JSONObject collection) {
+        if (collection == null || "other".equals(collection.optString("id"))) return;
+        String collectionId = collection.optString("id");
+        EditText name = edit("نام سری", false);
+        name.setText(collection.optString("title", ""));
+        name.setSelection(name.length());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ویرایش سری")
+                .setView(dialogPadding(clearableInput(name))).setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String title = titleCaseWords(name.getText().toString());
+            if (title.isEmpty()) { name.setError("نام سری را وارد کن"); return; }
+            JSONObject current = findCollectionById(collectionId);
+            if (current == null) { dialog.dismiss(); return; }
+            String before = library.toString();
+            putJson(current, "title", title);
+            if (!saveLibrary()) {
+                restoreLibrary(before);
+                dialog.dismiss();
+                refreshCollectionUi();
+                return;
+            }
+            dialog.dismiss();
+            refreshCollectionUi();
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void refreshCollectionUi() {
+        if ("collections".equals(page)) {
+            refreshCollectionSelection();
+        } else if ("collectionBooks".equals(page) && appColumn != null) {
+            if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
+            addDashboardHeader();
+        }
+    }
+
     private FrameLayout selectionBookRow(String title, boolean selected, String unselectedIcon, int iconSize) {
         FrameLayout row = new FrameLayout(this);
         row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
@@ -2902,6 +2941,11 @@ public final class MainActivity extends Activity {
         if (selectedCollectionIds.isEmpty()) {
             header = makeHeader("کتابخانه مجموعه‌ها", "", "menu", "add",
                     this::openDrawer, this::showCreateCollectionDialog);
+        } else if (selectedCollectionIds.size() == 1
+                && !"other".equals(selectedCollectionIds.iterator().next())) {
+            JSONObject selected = findCollectionById(selectedCollectionIds.iterator().next());
+            header = makeHeader(selectedCollectionIds.size() + " انتخاب‌شده", "", "close", "edit",
+                    this::clearCollectionSelection, () -> showEditCollectionDialog(selected), 10, 118);
         } else {
             header = makeHeader(selectedCollectionIds.size() + " انتخاب‌شده", "", "close", null,
                     this::clearCollectionSelection, null);
@@ -3199,8 +3243,21 @@ public final class MainActivity extends Activity {
         String shelfTitle = collection == null ? "سایر" : collection.optString("title", "سایر");
         if (showingAllBooks()) shelfTitle = "کتابخانهٔ همهٔ کتاب‌ها";
         if (selectedBookIds.isEmpty()) {
-            header = makeHeader(shelfTitle, "", "menu", "add", this::openDrawer,
-                    () -> showBookDialog(null), 10);
+            boolean canEditSeries = !showingAllBooks() && !"other".equals(activeCollectionId) && collection != null;
+            header = canEditSeries
+                    ? makeHeader(shelfTitle, "", "menu", "add", this::openDrawer,
+                            () -> showBookDialog(null), 10, 118)
+                    : makeHeader(shelfTitle, "", "menu", "add", this::openDrawer,
+                            () -> showBookDialog(null), 10);
+            if (canEditSeries && header instanceof FrameLayout) {
+                View editSeries = iconButton("edit", PURPLE, false,
+                        () -> showEditCollectionDialog(findCollectionById(activeCollectionId)));
+                editSeries.setContentDescription("ویرایش سری");
+                FrameLayout.LayoutParams editParams = new FrameLayout.LayoutParams(dp(50), dp(50),
+                        Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                editParams.leftMargin = dp(64);
+                ((FrameLayout) header).addView(editSeries, editParams);
+            }
         } else {
             String label = selectedBookIds.size() + " انتخاب‌شده";
             if (selectedBookIds.size() == 1) {
