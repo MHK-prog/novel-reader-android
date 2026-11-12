@@ -3,6 +3,9 @@ package com.novelreader.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.animation.ObjectAnimator;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.BroadcastReceiver;
@@ -158,7 +161,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.23";
+    private static final String VERSION = "1.4.24";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -241,6 +244,10 @@ public final class MainActivity extends Activity {
     private FrameLayout drawerLayer;
     private View drawerScrim;
     private LinearLayout drawerPanel;
+    private LinearLayout drawerSettingsOptions;
+    private NativeIconView drawerSettingsChevron;
+    private ValueAnimator drawerSettingsAnimator;
+    private boolean drawerSettingsExpanded;
     private TextView titleView;
     private TextView subtitleView;
     private EditText searchField;
@@ -732,6 +739,8 @@ public final class MainActivity extends Activity {
         if (position < 0) return;
         activeBookId = target.bookId;
         activeCollectionId = book.optString("collectionId", target.collectionId);
+        bookInfoReturnPage = "collectionBooks";
+        chaptersReturnPage = "collectionBooks";
         openReader(position);
     }
 
@@ -938,43 +947,166 @@ public final class MainActivity extends Activity {
     }
 
     private void buildDrawer() {
+        if (drawerSettingsAnimator != null) drawerSettingsAnimator.cancel();
         drawerPanel.removeAllViews();
-        drawerPanel.addView(text("فهرست", 20, TEXT), new LinearLayout.LayoutParams(-1, dp(56)));
-        drawerPanel.addView(textButton("کتابخانه مجموعه‌ها", "folder", PURPLE, () -> {
+        TextView heading = text("فهرست", 20, TEXT);
+        LinearLayout.LayoutParams headingParams = new LinearLayout.LayoutParams(-1, dp(56));
+        headingParams.bottomMargin = dp(10);
+        drawerPanel.addView(heading, headingParams);
+        addDrawerAction(drawerPanel, "کتابخانه مجموعه‌ها", "folder", PURPLE, () -> {
             selectedBookIds.clear();
             activeGenreFilter.clear();
             closeDrawer();
             showDashboard();
-        }), new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("ادامهٔ مطالعه", "book", PURPLE, () -> {
-            ResumeTarget target = findResumeTarget();
-            closeDrawer();
-            if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
-            else openResumeTarget(target);
-        }), new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("تنظیمات", "settings", PURPLE, () -> { closeDrawer(); showSettings(); }),
-                new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("محاوره‌ای‌ساز", "scan_text", PURPLE, () -> {
-            closeDrawer();
-            showColloquializer();
-        }), new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("کتابخانه همهٔ کتاب‌ها", "book", PURPLE, () -> {
+        }, false);
+        addDrawerAction(drawerPanel, "کتابخانه همهٔ کتاب‌ها", "book", 0xFF65B5F2, () -> {
             selectedBookIds.clear();
             activeGenreFilter.clear();
             closeDrawer();
             showAllBooks();
-        }), new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("پیشنهاد کتاب", "book", PURPLE, () -> {
+        }, false);
+        addDrawerAction(drawerPanel, "پیشنهاد کتاب", "book", 0xFFFFB45E, () -> {
             closeDrawer();
             showRecommendation();
-        }), new LinearLayout.LayoutParams(-1, dp(52)));
-        drawerPanel.addView(textButton("تنظیمات تگ‌ها", "tag", PURPLE, () -> {
+        }, false);
+
+        LinearLayout settingsToggle = drawerSettingsButton();
+        LinearLayout.LayoutParams settingsParams = drawerActionParams(false);
+        drawerPanel.addView(settingsToggle, settingsParams);
+
+        drawerSettingsOptions = new LinearLayout(this);
+        drawerSettingsOptions.setOrientation(LinearLayout.VERTICAL);
+        drawerSettingsOptions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        drawerSettingsOptions.setVisibility(drawerSettingsExpanded ? View.VISIBLE : View.GONE);
+        drawerPanel.addView(drawerSettingsOptions, new LinearLayout.LayoutParams(-1,
+                drawerSettingsExpanded ? ViewGroup.LayoutParams.WRAP_CONTENT : 0));
+        addDrawerAction(drawerSettingsOptions, "تنظیمات عمومی", "settings", 0xFFB69AFF, () -> {
+            closeDrawer();
+            showSettings();
+        }, true);
+        addDrawerAction(drawerSettingsOptions, "تنظیمات محاوره‌ای‌ساز", "scan_text", 0xFF61C7D2, () -> {
+            closeDrawer();
+            showColloquializer();
+        }, true);
+        addDrawerAction(drawerSettingsOptions, "تنظیمات تگ‌ها", "tag", 0xFF82CF8B, () -> {
             closeDrawer();
             showTagSettings();
-        }), new LinearLayout.LayoutParams(-1, dp(52)));
+        }, true);
+
+        addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", 0xFF69D2A0, () -> {
+            ResumeTarget target = findResumeTarget();
+            closeDrawer();
+            if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
+            else openResumeTarget(target);
+        }, false);
         View spacer = new View(this);
         drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
         drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
+    }
+
+    private LinearLayout drawerSettingsButton() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        row.setPadding(dp(14), 0, dp(14), 0);
+        row.setBackground(drawerActionBackground(PURPLE));
+        NativeIconView icon = new NativeIconView(this, "settings", PURPLE);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        TextView label = text("تنظیمات", 15, TEXT);
+        label.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, -1, 1);
+        labelParams.leftMargin = dp(12);
+        row.addView(label, labelParams);
+        drawerSettingsChevron = new NativeIconView(this, "dropdown", PURPLE);
+        row.addView(drawerSettingsChevron, new LinearLayout.LayoutParams(dp(18), dp(18)));
+        drawerSettingsChevron.setRotation(drawerSettingsExpanded ? 180f : 0f);
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setContentDescription("تنظیمات، باز و بسته کردن زیرمنو");
+        row.setOnClickListener(v -> toggleDrawerSettings());
+        applyPressScale(row);
+        return row;
+    }
+
+    private void addDrawerAction(LinearLayout parent, String label, String icon, int accent,
+                                 Runnable action, boolean nested) {
+        LinearLayout button = (LinearLayout) textButton(label, icon, accent, action);
+        button.setBackground(drawerActionBackground(accent));
+        parent.addView(button, drawerActionParams(nested));
+    }
+
+    private LinearLayout.LayoutParams drawerActionParams(boolean nested) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1,
+                dp(nested ? 48 : 52));
+        params.bottomMargin = dp(nested ? 7 : 10);
+        if (nested) params.rightMargin = dp(12);
+        return params;
+    }
+
+    private GradientDrawable drawerActionBackground(int accent) {
+        int fillAlpha = lightTheme ? 18 : 24;
+        int strokeAlpha = lightTheme ? 65 : 85;
+        int fill = Color.argb(fillAlpha, Color.red(accent), Color.green(accent), Color.blue(accent));
+        int stroke = Color.argb(strokeAlpha, Color.red(accent), Color.green(accent), Color.blue(accent));
+        return roundDrawable(fill, stroke, 14);
+    }
+
+    private void toggleDrawerSettings() {
+        if (drawerSettingsOptions == null) return;
+        if (drawerSettingsAnimator != null) drawerSettingsAnimator.cancel();
+        boolean expand = !drawerSettingsExpanded;
+        drawerSettingsExpanded = expand;
+        if (drawerSettingsChevron != null) {
+            drawerSettingsChevron.animate().rotation(expand ? 180f : 0f).setDuration(200)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        }
+
+        LinearLayout options = drawerSettingsOptions;
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) options.getLayoutParams();
+        int startHeight;
+        int endHeight;
+        if (expand) {
+            options.setVisibility(View.VISIBLE);
+            options.setAlpha(0f);
+            options.setTranslationY(-dp(5));
+            int width = Math.max(1, drawerWidth() - drawerPanel.getPaddingLeft() - drawerPanel.getPaddingRight());
+            options.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            endHeight = options.getMeasuredHeight();
+            startHeight = 0;
+            params.height = 0;
+            options.setLayoutParams(params);
+            options.animate().alpha(1f).translationY(0f).setDuration(210)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        } else {
+            startHeight = options.getHeight();
+            if (startHeight <= 0) startHeight = options.getMeasuredHeight();
+            endHeight = 0;
+            options.animate().alpha(0f).translationY(-dp(5)).setDuration(190)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        }
+        drawerSettingsAnimator = ValueAnimator.ofInt(startHeight, endHeight);
+        drawerSettingsAnimator.setDuration(expand ? 210 : 190);
+        drawerSettingsAnimator.setInterpolator(new DecelerateInterpolator());
+        drawerSettingsAnimator.addUpdateListener(animation -> {
+            LinearLayout.LayoutParams current = (LinearLayout.LayoutParams) options.getLayoutParams();
+            current.height = (int) animation.getAnimatedValue();
+            options.setLayoutParams(current);
+        });
+        drawerSettingsAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator animation) {
+                if (!expand) {
+                    options.setVisibility(View.GONE);
+                    options.setAlpha(1f);
+                    options.setTranslationY(0f);
+                }
+                LinearLayout.LayoutParams finalParams = (LinearLayout.LayoutParams) options.getLayoutParams();
+                finalParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                options.setLayoutParams(finalParams);
+            }
+        });
+        drawerSettingsAnimator.start();
     }
 
     private void showExtensions() {
@@ -4436,7 +4568,8 @@ public final class MainActivity extends Activity {
                 persistRecommendationState();
                 activeCollectionId = chosenCollectionId[0];
                 activeBookId = book.optString("id");
-                chaptersReturnPage = "allBooks".equals(sourcePage) ? "allBooks" : "collectionBooks";
+                bookInfoReturnPage = "allBooks".equals(sourcePage) ? "allBooks" : "collectionBooks";
+                chaptersReturnPage = bookInfoReturnPage;
                 dialog.dismiss();
                 showChapters();
             } else {
@@ -4841,7 +4974,10 @@ public final class MainActivity extends Activity {
             return;
         }
         if ("reader".equals(page)) { saveCurrentChapter(true); chapterEditor = null; showChapters(); }
-        else if ("chapters".equals(page)) showBookShelfForPage(chaptersReturnPage);
+        else if ("chapters".equals(page)) {
+            bookInfoReturnPage = chaptersReturnPage;
+            showBookInfo(activeBook());
+        }
         else if ("bookInfo".equals(page)) showBookShelfForPage(bookInfoReturnPage);
         else if ("collectionBooks".equals(page) || "allBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
         else if ("settings".equals(page) || "recommendations".equals(page)
