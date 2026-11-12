@@ -158,7 +158,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.20";
+    private static final String VERSION = "1.4.21";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -1051,11 +1051,11 @@ public final class MainActivity extends Activity {
                             sourceText = text("", 14, TEXT);
                             sourceText.setMaxLines(1);
                             sourceText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                            setColloquializerTextAlignment(sourceText);
+                            setRtlTextAlignment(sourceText);
                             replacementText = text("", 13, MUTED);
                             replacementText.setMaxLines(1);
                             replacementText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                            setColloquializerTextAlignment(replacementText);
+                            setRtlTextAlignment(replacementText);
                             labels.addView(sourceText, new LinearLayout.LayoutParams(-1, 0, 1));
                             labels.addView(replacementText, new LinearLayout.LayoutParams(-1, 0, 1));
                             row.addView(labels, new LinearLayout.LayoutParams(0, -1, 1));
@@ -1138,9 +1138,11 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private void setColloquializerTextAlignment(TextView view) {
-        view.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        view.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
+    private void setRtlTextAlignment(TextView view) {
+        view.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        int vertical = view.getGravity() & Gravity.VERTICAL_GRAVITY_MASK;
+        view.setGravity(Gravity.RIGHT | (vertical == 0 ? Gravity.CENTER_VERTICAL : vertical));
+        view.setTextAlignment(View.TEXT_ALIGNMENT_GRAVITY);
         view.setTextDirection(View.TEXT_DIRECTION_RTL);
     }
 
@@ -1191,7 +1193,7 @@ public final class MainActivity extends Activity {
         field.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         field.setBackground(roundDrawable(SURFACE_ALT, PURPLE, 15));
         field.setPadding(dp(14), dp(9), dp(14), dp(9));
-        setColloquializerTextAlignment(field);
+        setRtlTextAlignment(field);
         return field;
     }
 
@@ -1223,6 +1225,8 @@ public final class MainActivity extends Activity {
         EditText replacement = colloquializerField("عبارت مقصد");
         source.setText(initialSource == null ? "" : initialSource);
         source.setSelection(source.length());
+        setRtlTextAlignment(source);
+        setRtlTextAlignment(replacement);
 
         LinearLayout fields = new LinearLayout(this);
         fields.setOrientation(LinearLayout.HORIZONTAL);
@@ -1283,7 +1287,7 @@ public final class MainActivity extends Activity {
         column.setOrientation(LinearLayout.VERTICAL);
         column.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         TextView labelView = text(label, 12, MUTED);
-        setColloquializerTextAlignment(labelView);
+        setRtlTextAlignment(labelView);
         column.addView(labelView, new LinearLayout.LayoutParams(-1, dp(22)));
         column.addView(clearableInput(field), new LinearLayout.LayoutParams(-1, dp(48)));
         return column;
@@ -3967,6 +3971,170 @@ public final class MainActivity extends Activity {
         return candidate;
     }
 
+    private interface BookTextEntryAction { void save(String value); }
+
+    private interface BookGenreSelectionAction {
+        void save(LinkedHashSet<String> selected, ArrayList<String> available);
+    }
+
+    private View bookDialogEntryButton(String title, String summary, String icon, Runnable action) {
+        LinearLayout button = new LinearLayout(this);
+        button.setGravity(Gravity.CENTER_VERTICAL);
+        button.setOrientation(LinearLayout.HORIZONTAL);
+        button.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        button.setPadding(dp(13), dp(7), dp(13), dp(7));
+        button.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
+
+        NativeIconView glyph = new NativeIconView(this, icon, PURPLE);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(23), dp(23));
+        iconParams.leftMargin = dp(11);
+        button.addView(glyph, iconParams);
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        labels.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        TextView titleView = text(title, 12, MUTED);
+        setRtlTextAlignment(titleView);
+        labels.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
+        TextView summaryView = text(summary, 14, TEXT);
+        summaryView.setSingleLine(true);
+        summaryView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        setRtlTextAlignment(summaryView);
+        labels.addView(summaryView, new LinearLayout.LayoutParams(-1, -2));
+        button.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        button.setTag(summaryView);
+        button.setContentDescription(title);
+        button.setMinimumHeight(dp(58));
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setOnClickListener(v -> action.run());
+        applyPressScale(button);
+        return button;
+    }
+
+    private void updateBookDialogEntryButton(View button, String summary) {
+        if (button != null && button.getTag() instanceof TextView) {
+            ((TextView) button.getTag()).setText(summary);
+        }
+    }
+
+    private String genreButtonSummary(Set<String> selected) {
+        if (selected.isEmpty()) return "هیچ ژانری انتخاب نشده";
+        return android.text.TextUtils.join(" · ", selected);
+    }
+
+    private String descriptionButtonSummary(String value) {
+        String summary = value == null ? "" : value.replace('\n', ' ').trim();
+        return summary.isEmpty() ? "برای نوشتن توضیحات بزنید" : summary;
+    }
+
+    private void showBookTextEntryDialog(String title, String hint, String initialValue,
+                                         BookTextEntryAction action) {
+        EditText input = edit(hint, false);
+        input.setSingleLine(false);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setMinLines(6);
+        input.setMaxLines(9);
+        input.setHorizontallyScrolling(false);
+        input.setVerticalScrollBarEnabled(false);
+        input.setGravity(Gravity.TOP | Gravity.RIGHT);
+        input.setPadding(dp(14), dp(12), dp(14), dp(12));
+        input.setBackground(roundDrawable(SURFACE_ALT, PURPLE, 15));
+        setRtlTextAlignment(input);
+        input.setText(initialValue == null ? "" : initialValue);
+        input.setSelection(input.length());
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        form.addView(input, new LinearLayout.LayoutParams(-1, dp(210)));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(dialogPadding(form))
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    action.save(input.getText().toString().trim());
+                    dialog.dismiss();
+                }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void showBookGenreSelectionDialog(List<String> availableGenres, Set<String> selectedGenres,
+                                              BookGenreSelectionAction action) {
+        ArrayList<String> draftAvailable = new ArrayList<>(availableGenres);
+        LinkedHashSet<String> draftSelected = new LinkedHashSet<>(selectedGenres);
+        EditText search = edit("جستجو یا افزودن ژانرها با ،", false);
+        setRtlTextAlignment(search);
+        LinearLayout searchRow = new LinearLayout(this);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        searchRow.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        searchRow.addView(clearableInput(search), new LinearLayout.LayoutParams(0, dp(48), 1));
+        FrameLayout addGenre = iconButton("add", PURPLE, false, null);
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        addParams.leftMargin = dp(7);
+        searchRow.addView(addGenre, addParams);
+
+        GenreCloud cloud = new GenreCloud(this);
+        Runnable render = () -> {
+            String query = search.getText().toString();
+            int comma = Math.max(query.lastIndexOf(','), query.lastIndexOf('،'));
+            if (comma >= 0) query = query.substring(comma + 1);
+            cloud.showGenres(genreArray(draftAvailable), draftSelected, query.trim());
+        };
+        render.run();
+        search.addTextChangedListener(watcher(render));
+        addGenre.setOnClickListener(v -> {
+            boolean any = false;
+            for (String part : search.getText().toString().split("[,،]")) {
+                String value = titleCaseWords(part);
+                if (value.isEmpty()) continue;
+                any = true;
+                String matching = null;
+                for (String available : draftAvailable) {
+                    if (available.equalsIgnoreCase(value)) { matching = available; break; }
+                }
+                if (matching == null) { draftAvailable.add(value); matching = value; }
+                draftSelected.add(matching);
+            }
+            if (!any) { search.setError("نام ژانر را بنویس"); return; }
+            search.setText("");
+            render.run();
+        });
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        content.addView(searchRow, fieldParams());
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+        scroll.addView(cloud);
+        content.addView(scroll, new LinearLayout.LayoutParams(-1, dp(270)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("ژانرهای کتاب")
+                .setView(dialogPadding(content))
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    action.save(new LinkedHashSet<>(draftSelected), new ArrayList<>(draftAvailable));
+                    dialog.dismiss();
+                }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
     private void showBookDialog(JSONObject existing) {
         boolean isNew = existing == null;
         String originalCoverName = isNew ? "" : existing.optString("cover", "");
@@ -4021,18 +4189,22 @@ public final class MainActivity extends Activity {
         title.setText(isNew ? "" : existing.optString("title"));
         EditText author = edit("نام نویسنده", false);
         author.setText(isNew ? "" : existing.optString("author"));
+        final String[] descriptionValue = {isNew ? "" : existing.optString("description", "")};
+        final View[] descriptionEntry = new View[1];
+        descriptionEntry[0] = bookDialogEntryButton("توضیحات کوتاه",
+                descriptionButtonSummary(descriptionValue[0]), "edit", () ->
+                        showBookTextEntryDialog("توضیحات کوتاه کتاب", "توضیحات کوتاه کتاب",
+                                descriptionValue[0], value -> {
+                                    descriptionValue[0] = value;
+                                    updateBookDialogEntryButton(descriptionEntry[0], descriptionButtonSummary(value));
+                                }));
         EditText count = edit("تعداد Chapter", false);
         count.setInputType(InputType.TYPE_CLASS_NUMBER);
-        EditText description = edit("توضیحات کوتاه کتاب", false);
-        description.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        description.setMinLines(3);
-        description.setMaxLines(5);
-        description.setGravity(Gravity.TOP | Gravity.RIGHT);
-        description.setText(isNew ? "" : existing.optString("description", ""));
         form.addView(clearableInput(title), fieldParams());
         form.addView(clearableInput(author), fieldParams());
-        form.addView(clearableInput(description), fieldParams());
+        LinearLayout.LayoutParams descriptionEntryParams = new LinearLayout.LayoutParams(-1, dp(58));
+        descriptionEntryParams.bottomMargin = dp(9);
+        form.addView(descriptionEntry[0], descriptionEntryParams);
         if (isNew) form.addView(clearableInput(count), fieldParams());
 
         String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
@@ -4072,53 +4244,24 @@ public final class MainActivity extends Activity {
         form.addView(collectionField, fieldParams());
         form.addView(clearableInput(seriesNumber), fieldParams());
 
-        TextView genreLabel = text("ژانرها", 14, MUTED);
-        genreLabel.setPadding(0, dp(12), 0, dp(4));
-        form.addView(genreLabel);
-        LinearLayout genreSearchRow = new LinearLayout(this);
-        genreSearchRow.setGravity(Gravity.CENTER_VERTICAL);
-        EditText genreSearch = edit("جستجو یا افزودن ژانرها با ,", false);
-        genreSearch.setSingleLine(true);
-        genreSearchRow.addView(clearableInput(genreSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
-        FrameLayout addGenre = iconButton("add", PURPLE, false, () -> { });
-        LinearLayout.LayoutParams addGenreParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        addGenreParams.leftMargin = dp(7);
-        genreSearchRow.addView(addGenre, addGenreParams);
-
-        GenreCloud cloud = new GenreCloud(this);
-        Set<String> selected = new HashSet<>();
+        final LinkedHashSet<String> selected = new LinkedHashSet<>();
         JSONArray oldGenres = isNew ? null : existing.optJSONArray("genres");
         if (oldGenres != null) for (int i = 0; i < oldGenres.length(); i++) selected.add(oldGenres.optString(i));
-        ArrayList<String> availableGenres = new ArrayList<>();
+        final ArrayList<String> availableGenres = new ArrayList<>();
         JSONArray existingGenres = allGenres();
         for (int i = 0; i < existingGenres.length(); i++) availableGenres.add(existingGenres.optString(i));
-        Runnable renderGenres = () -> {
-            String query = genreSearch.getText().toString();
-            int comma = Math.max(query.lastIndexOf(','), query.lastIndexOf('،'));
-            if (comma >= 0) query = query.substring(comma + 1);
-            cloud.showGenres(genreArray(availableGenres), selected, query.trim());
-        };
-        renderGenres.run();
-        genreSearch.addTextChangedListener(watcher(renderGenres));
-        addGenre.setOnClickListener(v -> {
-            boolean any = false;
-            for (String part : genreSearch.getText().toString().split("[,،]")) {
-                String value = titleCaseWords(part);
-                if (value.isEmpty()) continue;
-                any = true;
-                String matching = null;
-                for (String available : availableGenres) {
-                    if (available.equalsIgnoreCase(value)) { matching = available; break; }
-                }
-                if (matching == null) { availableGenres.add(value); matching = value; }
-                selected.add(matching);
-            }
-            if (!any) { genreSearch.setError("نام ژانر را بنویس"); return; }
-            genreSearch.setText("");
-            renderGenres.run();
-        });
-        form.addView(genreSearchRow, fieldParams());
-        form.addView(cloud);
+        final View[] genreEntry = new View[1];
+        genreEntry[0] = bookDialogEntryButton("ژانرها", genreButtonSummary(selected), "tag", () ->
+                showBookGenreSelectionDialog(availableGenres, selected, (newSelected, newAvailable) -> {
+                    selected.clear();
+                    selected.addAll(newSelected);
+                    availableGenres.clear();
+                    availableGenres.addAll(newAvailable);
+                    updateBookDialogEntryButton(genreEntry[0], genreButtonSummary(selected));
+                }));
+        LinearLayout.LayoutParams genreEntryParams = new LinearLayout.LayoutParams(-1, dp(58));
+        genreEntryParams.bottomMargin = dp(9);
+        form.addView(genreEntry[0], genreEntryParams);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -4188,7 +4331,7 @@ public final class MainActivity extends Activity {
                     book.put("recommendationId", nextRecommendationId());
                     book.put("title", bookTitle);
                     book.put("author", bookAuthor);
-                    book.put("description", description.getText().toString().trim());
+                    book.put("description", descriptionValue[0]);
                     book.put("genres", savedGenres);
                     book.put("cover", pendingCoverName == null ? "" : pendingCoverName);
                     book.put("collectionId", chosenCollectionId[0]);
@@ -4214,7 +4357,7 @@ public final class MainActivity extends Activity {
             } else {
                 putJson(existing, "title", bookTitle);
                 putJson(existing, "author", bookAuthor);
-                putJson(existing, "description", description.getText().toString().trim());
+                putJson(existing, "description", descriptionValue[0]);
                 putJson(existing, "genres", savedGenres);
                 putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
                 putJson(existing, "collectionId", chosenCollectionId[0]);
@@ -4913,6 +5056,7 @@ public final class MainActivity extends Activity {
 
     private View clearableInput(EditText input) {
         FrameLayout field = new FrameLayout(this);
+        field.setLayoutDirection(input.getLayoutDirection());
         input.setPadding(dp(46), input.getPaddingTop(), input.getPaddingRight(), input.getPaddingBottom());
         field.addView(input, new FrameLayout.LayoutParams(-1, -1));
 
