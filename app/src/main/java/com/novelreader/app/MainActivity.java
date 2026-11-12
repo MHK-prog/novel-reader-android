@@ -158,7 +158,7 @@ public final class MainActivity extends Activity {
     private static final int BOOK_COMPLETION_THRESHOLD = 70;
     private static final int COMPLETION_WEIGHT_BONUS = 2;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.21";
+    private static final String VERSION = "1.4.22";
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
@@ -527,6 +527,7 @@ public final class MainActivity extends Activity {
         gate.addView(textButton("انتخاب پوشه", "folder", PURPLE, this::chooseFolder),
                 new LinearLayout.LayoutParams(-2, dp(54)));
         appColumn.removeAllViews();
+        animatePageTransition();
         appColumn.addView(gate, new LinearLayout.LayoutParams(-1, -1));
     }
 
@@ -983,6 +984,7 @@ public final class MainActivity extends Activity {
     private void showColloquializer() {
         page = "colloquializer";
         appColumn.removeAllViews();
+        animatePageTransition();
         appColumn.addView(makeHeader("محاوره‌ای‌ساز", "", "menu", "help", this::openDrawer,
                 this::showColloquializerHelp, 0, 68, true));
         LinearLayout content = new LinearLayout(this);
@@ -1615,6 +1617,7 @@ public final class MainActivity extends Activity {
     private void showSettings() {
         page = "settings";
         appColumn.removeAllViews();
+        animatePageTransition();
         appColumn.addView(makeHeader("تنظیمات", "", "menu", null, this::openDrawer, null));
         ScrollView scroll = new ScrollView(this);
         settingsScroll = scroll;
@@ -1835,6 +1838,17 @@ public final class MainActivity extends Activity {
 
     private void showDashboard() { showCollections(); }
 
+    private void animatePageTransition() {
+        if (appColumn == null) return;
+        appColumn.animate().cancel();
+        appColumn.setAlpha(0.78f);
+        appColumn.setTranslationY(dp(7));
+        appColumn.animate().alpha(1f).translationY(0f)
+                .setDuration(190)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+    }
+
     private boolean showingAllBooks() { return "allBooks".equals(page); }
 
     private void showAllBooks() {
@@ -1847,6 +1861,7 @@ public final class MainActivity extends Activity {
     private void showRecommendation() {
         page = "recommendations";
         appColumn.removeAllViews();
+        animatePageTransition();
         appColumn.addView(makeHeader("پیشنهاد کتاب", "", "menu", null, this::openDrawer, null));
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
@@ -1919,6 +1934,7 @@ public final class MainActivity extends Activity {
         page = "tagSettings";
         ensureFavoriteTagsDefined();
         appColumn.removeAllViews();
+        animatePageTransition();
         appColumn.addView(makeHeader("تنظیمات تگ‌ها", "", "menu", "help",
                 this::openDrawer, this::showTagSettingsHelp, 0, 68, true));
         ScrollView scroll = new ScrollView(this);
@@ -2835,6 +2851,7 @@ public final class MainActivity extends Activity {
         page = "collections";
         selectedCollectionIds.clear();
         appColumn.removeAllViews();
+        animatePageTransition();
         addCollectionsHeader();
         collectionsGrid = new GridView(this);
         collectionsGrid.setNumColumns(2);
@@ -2918,6 +2935,7 @@ public final class MainActivity extends Activity {
     private void showBookShelfPage(boolean allBooks) {
         page = allBooks ? "allBooks" : "collectionBooks";
         appColumn.removeAllViews();
+        animatePageTransition();
         addDashboardHeader();
         LinearLayout filters = new LinearLayout(this);
         filters.setGravity(Gravity.CENTER_VERTICAL);
@@ -2961,6 +2979,7 @@ public final class MainActivity extends Activity {
         activeBookId = book.optString("id");
         activeCollectionId = book.optString("collectionId", "other");
         appColumn.removeAllViews();
+        animatePageTransition();
         appColumn.addView(makeHeader(displayBookTitle(book), book.optString("author"),
                 "menu", "edit", this::openDrawer, () -> showBookDialog(book), 10),
                 new LinearLayout.LayoutParams(-1, dp(62)));
@@ -3193,6 +3212,13 @@ public final class MainActivity extends Activity {
             }
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
+        if (selectedBookIds.isEmpty() && !showingAllBooks()
+                && !"other".equals(activeCollectionId) && collection != null && titleView != null) {
+            String collectionTitle = collection.optString("title", "");
+            titleView.setContentDescription("کپی نام سری");
+            titleView.setOnClickListener(v -> copyToClipboard("series", collectionTitle));
+            applyPressScale(titleView, .98f);
+        }
     }
 
     private void refreshDashboardSelection() {
@@ -3252,6 +3278,7 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
+        animatePageTransition();
         addChaptersHeader(book);
         View header = appColumn.getChildAt(0);
         updateChapterFavoriteIcon(header, favoriteBookIds.contains(book.optString("id")));
@@ -3506,6 +3533,7 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
+        animatePageTransition();
         readerExtensionButton = null;
         readerExtensionIcon = null;
         readerExtensionSpinner = null;
@@ -4998,11 +5026,19 @@ public final class MainActivity extends Activity {
     }
 
     private void applyPressScale(View view) {
+        applyPressScale(view, .92f);
+    }
+
+    private void applyPressScale(View view, float pressedScale) {
         view.setOnTouchListener((v, event) -> {
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                v.animate().scaleX(.92f).scaleY(.92f).setDuration(75).start();
+                v.animate().cancel();
+                v.animate().scaleX(pressedScale).scaleY(pressedScale)
+                        .setDuration(80).setInterpolator(new DecelerateInterpolator()).start();
             } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                v.animate().scaleX(1f).scaleY(1f).setDuration(105).start();
+                v.animate().cancel();
+                v.animate().scaleX(1f).scaleY(1f).setDuration(150)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.15f)).start();
             }
             return false;
         });
@@ -5445,6 +5481,7 @@ public final class MainActivity extends Activity {
             card.setPadding(dp(12), dp(12), dp(12), dp(10));
             card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF503C68, 20));
+            applyPressScale(card, .96f);
             card.setLayoutParams(new AbsListView.LayoutParams(-1, dp(154)));
             card.setTag(collection.optString("id"));
             FrameLayout iconFrame = new FrameLayout(MainActivity.this);
@@ -5521,6 +5558,7 @@ public final class MainActivity extends Activity {
             card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF29242F, 13));
             card.setClickable(true); card.setFocusable(true);
+            applyPressScale(card, .96f);
             card.setOnClickListener(v -> onBookCardTap(book));
             card.setOnLongClickListener(v -> {
                 String id = book.optString("id");
