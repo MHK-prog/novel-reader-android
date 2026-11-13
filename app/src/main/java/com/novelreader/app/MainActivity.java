@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.27";
+    private static final String VERSION = "1.4.28";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -1337,7 +1337,11 @@ public final class MainActivity extends Activity {
                         int ruleIndex = visible.get(position);
                         ColloquializerRule rule = rules.get(ruleIndex);
                         sourceText.setText(rule.source);
-                        replacementText.setText("←  " + rule.replacement);
+                        String replacementSummary = "←  " + rule.replacement;
+                        if (!rule.exceptions.isEmpty()) {
+                            replacementSummary += " · بجز " + android.text.TextUtils.join("، ", rule.exceptions);
+                        }
+                        replacementText.setText(replacementSummary);
                         editButton.setContentDescription("ویرایش قانون " + rule.source);
                         deleteButton.setContentDescription("حذف قانون " + rule.source);
                         editButton.setOnClickListener(v -> showEditColloquializerRuleDialog(
@@ -1354,7 +1358,8 @@ public final class MainActivity extends Activity {
                     for (int i = 0; i < rules.size(); i++) {
                         ColloquializerRule rule = rules.get(i);
                         if (query.isEmpty() || rule.source.toLowerCase(Locale.ROOT).contains(query)
-                                || rule.replacement.toLowerCase(Locale.ROOT).contains(query)) visible.add(i);
+                                || rule.replacement.toLowerCase(Locale.ROOT).contains(query)
+                                || android.text.TextUtils.join(" ", rule.exceptions).toLowerCase(Locale.ROOT).contains(query)) visible.add(i);
                     }
                     count.setText(visible.size() + " از " + rules.size() + " قانون");
                     adapterRef[0].notifyDataSetChanged();
@@ -1385,7 +1390,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showColloquializerHelp() {
-        TextView help = text("هر جفت، عبارت مبدأ را با عبارت مقصد جایگزین می‌کند. در الگو می‌توانی یک x بگذاری تا یک رشتهٔ پیوسته از حروف فارسی را بگیرد؛ اگر در مقصد هم x باشد همان رشته برمی‌گردد، مثل xهایم ← xهام.\n\nدر صفحهٔ خواندن، عبارت انتخاب‌شده خودکار به‌عنوان مبدأ می‌آید. اگر گزینهٔ «فقط همین Chapter» روشن باشد، جفت فقط روی متن همان Chapter اعمال می‌شود و در JSON نمی‌رود. در غیر این صورت جفت در JSON ذخیره و فقط همان جفت روی متن فعلی اعمال می‌شود.", 14, TEXT);
+        TextView help = text("هر جفت، عبارت مبدأ را با عبارت مقصد جایگزین می‌کند. در الگو می‌توانی یک x بگذاری تا یک رشتهٔ پیوسته از حروف فارسی را بگیرد؛ اگر در مقصد هم x باشد همان رشته برمی‌گردد، مثل xهایم ← xهام.\n\nدر کادر «استثناها» واژه یا عبارت‌های نزدیک به مبدأ را با ویرگول جدا کن. اگر یکی از آن‌ها بلافاصله قبل یا بعد از مبدأ باشد، آن مورد تغییر نمی‌کند؛ مثلاً برای «کند» استثنای «شدن» را بنویس تا «کند شدن» دست‌نخورده بماند.\n\nدر صفحهٔ خواندن، عبارت انتخاب‌شده خودکار به‌عنوان مبدأ می‌آید. اگر گزینهٔ «فقط همین Chapter» روشن باشد، جفت و استثناهایش فقط روی متن همان Chapter اعمال می‌شوند و در JSON ذخیره نمی‌شوند.", 14, TEXT);
         help.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         help.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
         help.setPadding(dp(8), dp(10), dp(8), dp(10));
@@ -1410,8 +1415,16 @@ public final class MainActivity extends Activity {
         ArrayList<ColloquializerRule> rules = new ArrayList<>(json.length());
         for (int i = 0; i < json.length(); i++) {
             JSONArray pair = json.optJSONArray(i);
-            if (pair != null && pair.length() == 2) {
-                rules.add(new ColloquializerRule(pair.optString(0), pair.optString(1)));
+            if (pair != null && pair.length() >= 2) {
+                ArrayList<String> exceptions = new ArrayList<>();
+                JSONArray exceptionArray = pair.optJSONArray(2);
+                if (exceptionArray != null) {
+                    for (int j = 0; j < exceptionArray.length(); j++) {
+                        String exception = exceptionArray.optString(j).trim();
+                        if (!exception.isEmpty()) exceptions.add(exception);
+                    }
+                }
+                rules.add(new ColloquializerRule(pair.optString(0), pair.optString(1), exceptions));
             }
         }
         return rules;
@@ -1419,7 +1432,15 @@ public final class MainActivity extends Activity {
 
     private JSONArray writeColloquializerRules(List<ColloquializerRule> rules) throws JSONException {
         JSONArray json = new JSONArray();
-        for (ColloquializerRule rule : rules) json.put(new JSONArray().put(rule.source).put(rule.replacement));
+        for (ColloquializerRule rule : rules) {
+            JSONArray pair = new JSONArray().put(rule.source).put(rule.replacement);
+            if (!rule.exceptions.isEmpty()) {
+                JSONArray exceptions = new JSONArray();
+                for (String exception : rule.exceptions) exceptions.put(exception);
+                pair.put(exceptions);
+            }
+            json.put(pair);
+        }
         return json;
     }
 
@@ -1427,8 +1448,8 @@ public final class MainActivity extends Activity {
                                                    int index, Runnable refresh) {
         if (index < 0 || index >= rules.size()) return;
         ColloquializerRule current = rules.get(index);
-        showColloquializerPairDialog("ویرایش قانون جایگزینی", current.source, false,
-                (newSource, newReplacement, ignored) -> {
+        showColloquializerPairDialog("ویرایش قانون جایگزینی", current.source, current.exceptions, false,
+                (newSource, newReplacement, exceptions, ignored) -> {
                     int wildcardIndex = newSource.indexOf('x');
                     if (wildcardIndex >= 0 && newSource.indexOf('x', wildcardIndex + 1) >= 0) {
                         throw new IllegalArgumentException("هر الگو فقط می‌تواند یک x داشته باشد.");
@@ -1439,7 +1460,7 @@ public final class MainActivity extends Activity {
                         }
                     }
                     ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
-                    updated.set(index, new ColloquializerRule(newSource, newReplacement));
+                    updated.set(index, new ColloquializerRule(newSource, newReplacement, exceptions));
                     extensionManager.saveColloquializerRules(writeColloquializerRules(updated).toString());
                     rules.clear();
                     rules.addAll(updated);
@@ -1458,12 +1479,13 @@ public final class MainActivity extends Activity {
     }
 
     private interface ColloquializerPairAction {
-        void save(String source, String replacement, boolean onlyThisChapter) throws Exception;
+        void save(String source, String replacement, List<String> exceptions,
+                  boolean onlyThisChapter) throws Exception;
     }
 
     private void showAddColloquializerRuleDialog() {
-        showColloquializerPairDialog("افزودن جفت جایگزینی", "", false,
-                (newSource, newReplacement, ignored) -> {
+        showColloquializerPairDialog("افزودن جفت جایگزینی", "", Collections.emptyList(), false,
+                (newSource, newReplacement, exceptions, ignored) -> {
                     JSONArray current = extensionManager.colloquializerInstalled()
                             ? new JSONArray(extensionManager.colloquializerRules()) : new JSONArray();
                     for (int i = 0; i < current.length(); i++) {
@@ -1472,14 +1494,17 @@ public final class MainActivity extends Activity {
                             throw new IllegalArgumentException("این عبارت مبدأ از قبل وجود دارد.");
                         }
                     }
-                    current.put(new JSONArray().put(newSource).put(newReplacement));
+                    JSONArray pair = new JSONArray().put(newSource).put(newReplacement);
+                    if (!exceptions.isEmpty()) pair.put(new JSONArray(exceptions));
+                    current.put(pair);
                     extensionManager.saveColloquializerRules(current.toString());
                     showColloquializer();
                     toast("جفت جایگزینی ذخیره شد.");
                 });
     }
 
-    private void showColloquializerPairDialog(String title, String initialSource, boolean showChapterOption,
+    private void showColloquializerPairDialog(String title, String initialSource,
+                                               List<String> initialExceptions, boolean showChapterOption,
                                                ColloquializerPairAction saveAction) {
         EditText source = colloquializerField("عبارت مبدأ");
         EditText replacement = colloquializerField("عبارت مقصد");
@@ -1504,6 +1529,15 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams fieldsParams = new LinearLayout.LayoutParams(-1, -2);
         fieldsParams.bottomMargin = showChapterOption ? dp(9) : 0;
         form.addView(fields, fieldsParams);
+
+        EditText exceptionsField = colloquializerField("مثلاً شدن، داشته باشد");
+        exceptionsField.setSingleLine(true);
+        exceptionsField.setText(android.text.TextUtils.join("، ", initialExceptions));
+        LinearLayout exceptionsColumn = colloquializerFieldColumn("استثناها (با ویرگول جدا کن)", exceptionsField);
+        LinearLayout.LayoutParams exceptionsParams = new LinearLayout.LayoutParams(-1, -2);
+        exceptionsParams.bottomMargin = showChapterOption ? dp(9) : 0;
+        form.addView(exceptionsColumn, exceptionsParams);
+
         final android.widget.CheckBox onlyThisChapter = showChapterOption
                 ? new android.widget.CheckBox(this) : null;
         if (showChapterOption) {
@@ -1529,6 +1563,7 @@ public final class MainActivity extends Activity {
             }
             try {
                 saveAction.save(newSource, newReplacement,
+                        parseColloquializerExceptions(exceptionsField.getText().toString()),
                         onlyThisChapter != null && onlyThisChapter.isChecked());
                 dialog.dismiss();
             } catch (Exception error) {
@@ -1540,6 +1575,16 @@ public final class MainActivity extends Activity {
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private ArrayList<String> parseColloquializerExceptions(String text) {
+        LinkedHashSet<String> exceptions = new LinkedHashSet<>();
+        if (text == null) return new ArrayList<>();
+        for (String value : text.split("[,،\\n]")) {
+            String exception = value.trim();
+            if (!exception.isEmpty()) exceptions.add(exception);
+        }
+        return new ArrayList<>(exceptions);
     }
 
     private LinearLayout colloquializerFieldColumn(String label, EditText field) {
@@ -1582,10 +1627,12 @@ public final class MainActivity extends Activity {
     private static final class ColloquializerRule {
         final String source;
         final String replacement;
+        final ArrayList<String> exceptions;
 
-        ColloquializerRule(String source, String replacement) {
+        ColloquializerRule(String source, String replacement, List<String> exceptions) {
             this.source = source;
             this.replacement = replacement;
+            this.exceptions = new ArrayList<>(exceptions);
         }
     }
 
@@ -4601,18 +4648,21 @@ public final class MainActivity extends Activity {
     }
 
     private void showSelectedPhraseRuleDialog(int start, String source) {
-        showColloquializerPairDialog("افزودن قانون جایگزینی", source, true,
-                (ruleSource, replacement, onlyThisChapter) -> {
+        showColloquializerPairDialog("افزودن قانون جایگزینی", source, Collections.emptyList(), true,
+                (ruleSource, replacement, exceptions, onlyThisChapter) -> {
                     if (chapterEditor == null || !"reader".equals(page)) {
                         throw new IllegalStateException("متن Chapter در دسترس نیست.");
                     }
                     String current = chapterEditor.getText().toString();
                     int safeStart = Math.max(0, Math.min(start, current.length()));
-                    JSONArray singlePair = new JSONArray().put(new JSONArray().put(ruleSource).put(replacement));
+                    JSONArray singlePair = new JSONArray();
+                    JSONArray chapterPair = new JSONArray().put(ruleSource).put(replacement);
+                    if (!exceptions.isEmpty()) chapterPair.put(new JSONArray(exceptions));
+                    singlePair.put(chapterPair);
                     if (!onlyThisChapter) {
                         JSONArray rules = extensionManager.colloquializerInstalled()
                                 ? new JSONArray(extensionManager.colloquializerRules()) : new JSONArray();
-                        putReplacementPair(rules, ruleSource, replacement);
+                        putReplacementPair(rules, ruleSource, replacement, exceptions);
                         extensionManager.saveColloquializerRules(rules.toString());
                     }
                     String updated = TextReplacementEngine.transform(current, singlePair.toString());
@@ -4622,13 +4672,15 @@ public final class MainActivity extends Activity {
                 });
     }
 
-    private void putReplacementPair(JSONArray rules, String source, String replacement) throws JSONException {
+    private void putReplacementPair(JSONArray rules, String source, String replacement,
+                                    List<String> exceptions) throws JSONException {
         int found = -1;
         for (int i = 0; i < rules.length(); i++) {
             JSONArray pair = rules.optJSONArray(i);
             if (pair != null && source.equals(pair.optString(0))) { found = i; break; }
         }
         JSONArray pair = new JSONArray().put(source).put(replacement);
+        if (!exceptions.isEmpty()) pair.put(new JSONArray(exceptions));
         if (found >= 0) rules.put(found, pair); else rules.put(pair);
     }
 

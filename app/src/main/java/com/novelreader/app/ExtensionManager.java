@@ -272,9 +272,19 @@ final class ExtensionManager {
         if (pairs.length() > 10000) throw new IOException("Extension rule count is too large.");
         for (int i = 0; i < pairs.length(); i++) {
             JSONArray pair = pairs.optJSONArray(i);
-            if (pair == null || pair.length() != 2 || !(pair.opt(0) instanceof String)
+            if (pair == null || pair.length() < 2 || pair.length() > 3 || !(pair.opt(0) instanceof String)
                     || !(pair.opt(1) instanceof String) || pair.optString(0).isEmpty()) {
-                throw new IOException("Text replacement data must be an array of [source, replacement] pairs.");
+                throw new IOException("Each text rule must contain source, replacement, and optional exceptions.");
+            }
+            if (pair.length() == 3) {
+                JSONArray exceptions = pair.optJSONArray(2);
+                if (exceptions == null) throw new IOException("Text rule exceptions must be an array.");
+                for (int j = 0; j < exceptions.length(); j++) {
+                    Object exception = exceptions.opt(j);
+                    if (!(exception instanceof String) || ((String) exception).trim().isEmpty()) {
+                        throw new IOException("Text rule exceptions must be non-empty strings.");
+                    }
+                }
             }
         }
         TextReplacementEngine.transform("", pairs.toString());

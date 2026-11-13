@@ -23,9 +23,9 @@ final class TextReplacementEngine {
         List<Rule> rules = new ArrayList<>(input.length());
         for (int i = 0; i < input.length(); i++) {
             JSONArray pair = input.optJSONArray(i);
-            if (pair == null || pair.length() != 2
+            if (pair == null || pair.length() < 2 || pair.length() > 3
                     || !(pair.opt(0) instanceof String) || !(pair.opt(1) instanceof String)) {
-                throw new JSONException("Each rule must contain two strings.");
+                throw new JSONException("Each rule must contain source, replacement, and optional exceptions.");
             }
             String source = pair.optString(0);
             if (source.isEmpty()) throw new JSONException("Rule source cannot be empty.");
@@ -34,6 +34,19 @@ final class TextReplacementEngine {
                 throw new JSONException("A rule can contain only one x wildcard.");
             }
             Rule rule = new Rule(source, pair.optString(1), wildcardIndex);
+            JSONArray exceptionArray = pair.optJSONArray(2);
+            if (pair.length() == 3 && exceptionArray == null) {
+                throw new JSONException("Rule exceptions must be an array of strings.");
+            }
+            if (exceptionArray != null) {
+                for (int j = 0; j < exceptionArray.length(); j++) {
+                    Object exception = exceptionArray.opt(j);
+                    if (!(exception instanceof String) || ((String) exception).trim().isEmpty()) {
+                        throw new JSONException("Rule exceptions must be non-empty strings.");
+                    }
+                    rule.exceptions.add(((String) exception).trim());
+                }
+            }
             if (rule.matchSource.isEmpty()) throw new JSONException("Rule source must contain a matchable character.");
             rules.add(rule);
         }
@@ -78,6 +91,39 @@ final class TextReplacementEngine {
             textIndex++;
         }
         return textIndex;
+    }
+
+    private static boolean isContextSeparator(int codePoint) {
+        return codePoint == 0x200c || Character.isWhitespace(codePoint);
+    }
+
+    private static boolean matchesAdjacentException(String text, int start, int end, String exception) {
+        int after = end;
+        while (after < text.length()) {
+            int codePoint = text.codePointAt(after);
+            if (!isContextSeparator(codePoint)) break;
+            after += Character.charCount(codePoint);
+        }
+        int afterEnd = matchLiteralEnd(text, after, exception);
+        if (afterEnd >= 0 && hasWordBoundary(text, after) && hasWordBoundary(text, afterEnd)) return true;
+
+        int before = start;
+        while (before > 0) {
+            int codePoint = text.codePointBefore(before);
+            if (!isContextSeparator(codePoint)) break;
+            before -= Character.charCount(codePoint);
+        }
+        int beforeStart = before - exception.length();
+        if (beforeStart < 0) return false;
+        int beforeEnd = matchLiteralEnd(text, beforeStart, exception);
+        return beforeEnd == before && hasWordBoundary(text, beforeStart) && hasWordBoundary(text, beforeEnd);
+    }
+
+    private static boolean hasAdjacentException(String text, int start, int end, List<String> exceptions) {
+        for (String exception : exceptions) {
+            if (matchesAdjacentException(text, start, end, exception)) return true;
+        }
+        return false;
     }
 
     private static Match matchAt(String text, int start, Rule rule) {
@@ -137,7 +183,8 @@ final class TextReplacementEngine {
             for (Rule rule : rules) {
                 if (!hasWordBoundary(sourceText, index)) break;
                 Match candidate = matchAt(sourceText, index, rule);
-                if (candidate != null && hasWordBoundary(sourceText, candidate.end)) {
+                if (candidate != null && hasWordBoundary(sourceText, candidate.end)
+                        && !hasAdjacentException(sourceText, index, candidate.end, rule.exceptions)) {
                     matchedRule = rule;
                     matched = candidate;
                     break;
@@ -173,6 +220,7 @@ final class TextReplacementEngine {
         final String replacement;
         final String matchSource;
         final int wildcardIndex;
+        final List<String> exceptions = new ArrayList<>();
 
         Rule(String source, String replacement, int wildcardIndex) {
             this.source = source;
