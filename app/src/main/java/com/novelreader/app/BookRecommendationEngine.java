@@ -22,9 +22,12 @@ final class BookRecommendationEngine {
         final int interestRating;
         final boolean favorite;
         final boolean favoriteAuthor;
+        final long wordsRead;
+        final long totalWordsRead;
 
         Book(long id, String title, List<String> genres, String author,
-             int interestRating, boolean favorite, boolean favoriteAuthor) {
+             int interestRating, boolean favorite, boolean favoriteAuthor,
+             long wordsRead, long totalWordsRead) {
             this.id = id;
             this.title = title == null ? "" : title;
             this.genres = genres == null ? new ArrayList<>() : new ArrayList<>(genres);
@@ -32,6 +35,8 @@ final class BookRecommendationEngine {
             this.interestRating = interestRating;
             this.favorite = favorite;
             this.favoriteAuthor = favoriteAuthor;
+            this.wordsRead = Math.max(0, wordsRead);
+            this.totalWordsRead = Math.max(0, totalWordsRead);
         }
     }
 
@@ -101,7 +106,9 @@ final class BookRecommendationEngine {
                 ? 1.0 : new double[]{0, 0.35, 0.60, 1.0, 1.50, 2.10}[book.interestRating];
         double personalWeight = (book.favorite ? 1.12 : 1.0)
                 * (book.favoriteAuthor ? 1.12 : 1.0);
-        return Math.max(0.05, genreWeight * ratingWeight * personalWeight);
+        double readingShareWeight = book.totalWordsRead == 0 ? 1.0
+                : Math.max(0.05, Math.min(1.0, book.wordsRead / (double) book.totalWordsRead));
+        return Math.max(0.05, genreWeight * ratingWeight * personalWeight * readingShareWeight);
     }
 
     private static String normalize(String value) {
