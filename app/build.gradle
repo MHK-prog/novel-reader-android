@@ -16,8 +16,8 @@ android {
         applicationId 'com.novelreader.app'
         minSdk 23
         targetSdk 36
-        versionCode 166
-        versionName '1.4.32'
+        versionCode 167
+        versionName '1.4.33'
     }
 
     compileOptions {

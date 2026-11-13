@@ -24,10 +24,11 @@ final class BookRecommendationEngine {
         final boolean favoriteAuthor;
         final long wordsRead;
         final long totalWordsRead;
+        final boolean useReadingShare;
 
         Book(long id, String title, List<String> genres, String author,
              int interestRating, boolean favorite, boolean favoriteAuthor,
-             long wordsRead, long totalWordsRead) {
+             long wordsRead, long totalWordsRead, boolean useReadingShare) {
             this.id = id;
             this.title = title == null ? "" : title;
             this.genres = genres == null ? new ArrayList<>() : new ArrayList<>(genres);
@@ -37,6 +38,23 @@ final class BookRecommendationEngine {
             this.favoriteAuthor = favoriteAuthor;
             this.wordsRead = Math.max(0, wordsRead);
             this.totalWordsRead = Math.max(0, totalWordsRead);
+            this.useReadingShare = useReadingShare;
+        }
+    }
+
+    static final class WeightBreakdown {
+        final double genre;
+        final double rating;
+        final double personal;
+        final double reading;
+        final double total;
+
+        WeightBreakdown(double genre, double rating, double personal, double reading) {
+            this.genre = genre;
+            this.rating = rating;
+            this.personal = personal;
+            this.reading = reading;
+            this.total = Math.max(0.05, genre * rating * personal * reading);
         }
     }
 
@@ -91,7 +109,11 @@ final class BookRecommendationEngine {
         return candidates.get(candidates.size() - 1);
     }
 
-    private double bookWeight(Book book) {
+    double bookWeight(Book book) {
+        return weightBreakdown(book).total;
+    }
+
+    WeightBreakdown weightBreakdown(Book book) {
         Set<String> uniqueGenres = new HashSet<>();
         double totalGenreWeight = 0;
         for (String genre : book.genres) {
@@ -106,9 +128,9 @@ final class BookRecommendationEngine {
                 ? 1.0 : new double[]{0, 0.35, 0.60, 1.0, 1.50, 2.10}[book.interestRating];
         double personalWeight = (book.favorite ? 1.12 : 1.0)
                 * (book.favoriteAuthor ? 1.12 : 1.0);
-        double readingShareWeight = book.totalWordsRead == 0 ? 1.0
+        double readingShareWeight = !book.useReadingShare || book.totalWordsRead == 0 ? 1.0
                 : Math.max(0.05, Math.min(1.0, book.wordsRead / (double) book.totalWordsRead));
-        return Math.max(0.05, genreWeight * ratingWeight * personalWeight * readingShareWeight);
+        return new WeightBreakdown(genreWeight, ratingWeight, personalWeight, readingShareWeight);
     }
 
     private static String normalize(String value) {
