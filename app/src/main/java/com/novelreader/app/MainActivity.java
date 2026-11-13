@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.31";
+    private static final String VERSION = "1.4.32";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -202,6 +202,7 @@ public final class MainActivity extends Activity {
     private String chaptersReturnPage = "collectionBooks";
     private String activeBookId;
     private String activeCollectionId = "other";
+    private String activeAuthor = "";
     private int activeChapter;
     private String chapterText = "";
     private long chapterWordCount;
@@ -259,6 +260,9 @@ public final class MainActivity extends Activity {
     private ListView chaptersList;
     private BookAdapter bookAdapter;
     private CollectionAdapter collectionAdapter;
+    private AuthorAdapter authorAdapter;
+    private GridView authorsGrid;
+    private EditText authorSearchField;
     private ChapterAdapter chapterAdapter;
     private EditText chapterEditor;
     private ScrollView readerScroll;
@@ -1085,6 +1089,10 @@ public final class MainActivity extends Activity {
             closeDrawer();
             showAllBooks();
         }, false);
+        addDrawerAction(drawerPanel, "کتابخانه نویسندگان", "person", 0xFFFF9CBD, () -> {
+            closeDrawer();
+            showAuthors();
+        }, false);
         addDrawerAction(drawerPanel, "پیشنهاد کتاب", "book", 0xFFFFB45E, () -> {
             closeDrawer();
             showRecommendation();
@@ -1112,7 +1120,7 @@ public final class MainActivity extends Activity {
             closeDrawer();
             showColloquializer();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "تگ‌ها", "tag", 0xFF82CF8B, () -> {
+        addDrawerAction(drawerSettingsOptions, "ژانرها", "tag", 0xFF82CF8B, () -> {
             closeDrawer();
             showTagSettings();
         }, true);
@@ -2177,6 +2185,8 @@ public final class MainActivity extends Activity {
         else if ("statistics".equals(page)) showStatistics();
         else if ("tagSettings".equals(page)) showTagSettings();
         else if ("extensions".equals(page) || "colloquializer".equals(page)) showColloquializer();
+        else if ("authors".equals(page)) showAuthors();
+        else if ("authorBooks".equals(page)) showBookShelfContent(true, activeAuthor);
         else if ("allBooks".equals(page)) showBookShelfPage(true);
         else if ("collectionBooks".equals(page)) showBookShelf();
         else if ("collections".equals(page)) showCollections();
@@ -2244,6 +2254,123 @@ public final class MainActivity extends Activity {
 
     private void showDashboard() { showCollections(); }
 
+    private void showAuthors() {
+        page = "authors";
+        appColumn.removeAllViews();
+        animatePageTransition();
+        appColumn.addView(makeHeader("کتابخانه نویسندگان", "", "menu", "help",
+                this::openDrawer, this::showAuthorLibraryHelp, 0, 68, true),
+                new LinearLayout.LayoutParams(-1, dp(62)));
+        EditText authorSearch = edit("جستجوی نویسنده", false);
+        authorSearch.setSingleLine(true);
+        authorSearchField = authorSearch;
+        LinearLayout filters = new LinearLayout(this);
+        filters.setGravity(Gravity.CENTER_VERTICAL);
+        filters.setPadding(dp(14), dp(7), dp(14), dp(7));
+        filters.addView(clearableInput(authorSearch), new LinearLayout.LayoutParams(-1, dp(48)));
+        appColumn.addView(filters);
+
+        authorsGrid = new GridView(this);
+        authorsGrid.setNumColumns(2);
+        authorsGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        authorsGrid.setVerticalScrollBarEnabled(false);
+        authorsGrid.setHorizontalScrollBarEnabled(false);
+        authorsGrid.setHorizontalSpacing(dp(10));
+        authorsGrid.setVerticalSpacing(dp(10));
+        authorsGrid.setSelector(android.R.color.transparent);
+        authorsGrid.setCacheColorHint(Color.TRANSPARENT);
+        authorsGrid.setBackgroundColor(BG);
+        authorsGrid.setPadding(dp(12), dp(4), dp(12), dp(8));
+        authorsGrid.setClipToPadding(false);
+        authorAdapter = new AuthorAdapter();
+        authorsGrid.setAdapter(authorAdapter);
+        authorsGrid.setOnItemClickListener((parent, view, position, id) ->
+                showAuthorBooks(authorAdapter.getAuthor(position)));
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(authorsGrid, new FrameLayout.LayoutParams(-1, -1));
+        TextView empty = emptyLabel("کتابی با نام نویسنده ثبت نشده");
+        frame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
+        authorsGrid.setEmptyView(empty);
+        appColumn.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
+        authorSearch.addTextChangedListener(watcher(() -> {
+            if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
+        }));
+    }
+
+    private void showAuthorLibraryHelp() {
+        TextView help = text("روی کارت نویسنده بزن تا کتاب‌هایش را ببینی. قلب، نویسنده را به علاقه‌مندی‌ها اضافه می‌کند. برای تعیین جنسیت، آیکون کارت را لمس کن.", 15, TEXT);
+        help.setGravity(Gravity.CENTER);
+        help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        help.setPadding(dp(10), dp(12), dp(10), dp(12));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("کتابخانه نویسندگان")
+                .setView(dialogPadding(help)).setPositiveButton("بستن", null).create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void showAuthorBooks(String author) {
+        activeAuthor = author == null ? "" : author.trim();
+        selectedBookIds.clear();
+        activeGenreFilter.clear();
+        showBookShelfContent(true, activeAuthor);
+    }
+
+    private void addAuthorBooksHeader() {
+        View header;
+        if (selectedBookIds.isEmpty()) {
+            header = makeHeader(activeAuthor, "", "menu", null, this::openDrawer, null);
+        } else if (selectedBookIds.size() == 1) {
+            JSONObject selected = findBookById(selectedBookIds.iterator().next());
+            header = makeHeader("1 انتخاب‌شده", "", "delete", "edit", this::confirmDeleteSelected,
+                    () -> { if (selected != null) showBookDialog(selected); }, 10, 118);
+        } else {
+            header = makeHeader(selectedBookIds.size() + " انتخاب‌شده", "", "delete", null,
+                    this::confirmDeleteSelected, null);
+        }
+        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
+    }
+
+    private String authorGender(String author) {
+        if (recommendationState == null || author == null) return "unknown";
+        return recommendationState.getString("author_gender:" + author.trim().toLowerCase(Locale.ROOT), "unknown");
+    }
+
+    private String authorIcon(String author) {
+        String gender = authorGender(author);
+        if ("female".equals(gender)) return "author_woman";
+        if ("male".equals(gender)) return "author_man";
+        return "person";
+    }
+
+    private void showAuthorGenderPicker(String author) {
+        String[] labels = {"نامشخص", "زن", "مرد"};
+        String[] values = {"unknown", "female", "male"};
+        String current = authorGender(author);
+        int checked = "female".equals(current) ? 1 : "male".equals(current) ? 2 : 0;
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("جنسیت نویسنده")
+                .setSingleChoiceItems(labels, checked, (choice, which) -> {
+                    String key = "author_gender:" + author.trim().toLowerCase(Locale.ROOT);
+                    if (recommendationState != null) {
+                        if ("unknown".equals(values[which])) recommendationState.edit().remove(key).apply();
+                        else recommendationState.edit().putString(key, values[which]).apply();
+                    }
+                    choice.dismiss();
+                    if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
+                })
+                .setNegativeButton("لغو", null)
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void toggleFavoriteAuthor(String author) {
+        if (containsIgnoreCase(favoriteAuthorPreferences, author)) removeIgnoreCase(favoriteAuthorPreferences, author);
+        else favoriteAuthorPreferences.add(author);
+        persistRecommendationState();
+        if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
+    }
+
     private void animatePageTransition() {
         if (appColumn == null) return;
         appColumn.animate().cancel();
@@ -2255,7 +2382,7 @@ public final class MainActivity extends Activity {
                 .start();
     }
 
-    private boolean showingAllBooks() { return "allBooks".equals(page); }
+    private boolean showingAllBooks() { return "allBooks".equals(page) || "authorBooks".equals(page); }
 
     private void showAllBooks() {
         selectedBookIds.clear();
@@ -2471,7 +2598,7 @@ public final class MainActivity extends Activity {
         ensureFavoriteTagsDefined();
         appColumn.removeAllViews();
         animatePageTransition();
-        appColumn.addView(makeHeader("تنظیمات تگ‌ها", "", "menu", "help",
+        appColumn.addView(makeHeader("تنظیمات ژانرها", "", "menu", "help",
                 this::openDrawer, this::showTagSettingsHelp, 0, 68, true));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
@@ -2479,7 +2606,7 @@ public final class MainActivity extends Activity {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(18), dp(14), dp(18), dp(24));
-        EditText tagSearch = edit("جستجو یا افزودن تگ", false);
+        EditText tagSearch = edit("جستجو یا افزودن ژانر", false);
         tagSearch.setSingleLine(true);
         LinearLayout tagRows = new LinearLayout(this);
         tagRows.setOrientation(LinearLayout.VERTICAL);
@@ -2497,31 +2624,19 @@ public final class MainActivity extends Activity {
 
         LinearLayout.LayoutParams equivalentParams = new LinearLayout.LayoutParams(-1, dp(48));
         equivalentParams.topMargin = dp(8);
-        body.addView(textButton("تگ‌های معادل", "tag", PURPLE, this::showGenreEquivalents),
+        body.addView(textButton("ژانرهای معادل", "tag", PURPLE, this::showGenreEquivalents),
                 equivalentParams);
-
-        TextView authorTitle = text("نویسندگان محبوب", 15, MUTED);
-        authorTitle.setPadding(0, dp(18), 0, dp(7));
-        body.addView(authorTitle);
-        EditText authorSearch = edit("جستجوی نویسنده", false);
-        authorSearch.setSingleLine(true);
-        LinearLayout authorRows = new LinearLayout(this);
-        authorRows.setOrientation(LinearLayout.VERTICAL);
-        body.addView(clearableInput(authorSearch), fieldParams());
-        body.addView(authorRows, new LinearLayout.LayoutParams(-1, -2));
-        authorSearch.addTextChangedListener(watcher(() -> renderFavoriteAuthors(authorRows, authorSearch)));
-        renderFavoriteAuthors(authorRows, authorSearch);
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     }
 
     private void showTagSettingsHelp() {
-        TextView help = text("ژانرهای محبوب و نویسندگان محبوب روی پیشنهادها اثر می‌گذارند. مداد برای تغییر نام یا ادغام ژانرها و سطل زباله برای حذف آن است.", 15, TEXT);
+        TextView help = text("ژانرهای پسندیده روی پیشنهادها اثر می‌گذارند. مداد برای ویرایش یا ادغام است؛ حذف ژانر از داخل مودال ویرایش انجام می‌شود.", 15, TEXT);
         help.setGravity(Gravity.CENTER);
         help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         help.setPadding(dp(10), dp(12), dp(10), dp(12));
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("راهنمای تنظیمات تگ‌ها")
+                .setTitle("راهنمای ژانرها")
                 .setView(dialogPadding(help))
                 .setPositiveButton("بستن", null)
                 .create();
@@ -2567,60 +2682,18 @@ public final class MainActivity extends Activity {
                         persistRecommendationState();
                         renderManagedTags(rows, search);
                     });
-            favoriteButton.setContentDescription(favorite ? "حذف تگ از علاقه‌مندی‌ها" : "افزودن تگ به علاقه‌مندی‌ها");
+            favoriteButton.setContentDescription(favorite ? "حذف ژانر از علاقه‌مندی‌ها" : "افزودن ژانر به علاقه‌مندی‌ها");
             row.addView(favoriteButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
             FrameLayout editButton = iconButton("edit", MUTED, false,
                     () -> showEditTagDialog(tag, rows, search));
             editButton.setContentDescription("ویرایش یا ادغام ژانر");
             row.addView(editButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
-            FrameLayout deleteButton = iconButton("delete", RED, false,
-                    () -> confirmDeleteTag(tag, rows, search));
-            deleteButton.setContentDescription("حذف ژانر");
-            row.addView(deleteButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
             rows.addView(row, rowParams);
         }
         if (rows.getChildCount() == 0) {
-            TextView empty = emptyLabel(query.isEmpty() ? "هنوز تگی ساخته نشده" : "تگی پیدا نشد");
+            TextView empty = emptyLabel(query.isEmpty() ? "هنوز ژانری ثبت نشده" : "ژانری پیدا نشد");
             rows.addView(empty, new LinearLayout.LayoutParams(-1, dp(80)));
         }
-    }
-
-    private void renderFavoriteAuthors(LinearLayout rows, EditText search) {
-        rows.removeAllViews();
-        String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
-        Set<String> unique = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null && !book.optString("author").trim().isEmpty()) unique.add(book.optString("author").trim());
-        }
-        unique.addAll(favoriteAuthorPreferences);
-        for (String author : unique) {
-            if (!author.toLowerCase(Locale.ROOT).contains(query)) continue;
-            boolean favorite = containsIgnoreCase(favoriteAuthorPreferences, author);
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(10), dp(3), dp(10), dp(3));
-            row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
-            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(54));
-            rowParams.bottomMargin = dp(7);
-            TextView label = text(author, 15, TEXT);
-            label.setSingleLine(true);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            row.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
-            FrameLayout favoriteButton = iconButton(favorite ? "heart_filled" : "heart_outline",
-                    favorite ? RED : PURPLE, false, () -> {
-                        if (favorite) removeIgnoreCase(favoriteAuthorPreferences, author);
-                        else favoriteAuthorPreferences.add(author);
-                        persistRecommendationState();
-                        renderFavoriteAuthors(rows, search);
-                    });
-            row.addView(favoriteButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
-            rows.addView(row, rowParams);
-        }
-        if (rows.getChildCount() == 0) rows.addView(
-                emptyLabel(query.isEmpty() ? "نام نویسنده‌ای ثبت نشده" : "نویسنده‌ای پیدا نشد"),
-                new LinearLayout.LayoutParams(-1, dp(70)));
     }
 
     private void removeIgnoreCase(Set<String> values, String value) {
@@ -2629,12 +2702,12 @@ public final class MainActivity extends Activity {
 
     private void addManagedTag(EditText search, LinearLayout rows) {
         String tag = canonicalGenre(titleCaseWords(search.getText().toString()));
-        if (tag.isEmpty()) { search.setError("نام تگ را وارد کن"); return; }
+        if (tag.isEmpty()) { search.setError("نام ژانر را وارد کن"); return; }
         JSONArray tags = library.optJSONArray("genres");
         if (tags == null) tags = new JSONArray();
         if (findGenreName(tags, tag) != null) {
             search.setText("");
-            toast("این نام به تگ «" + tag + "» تبدیل می‌شود.");
+            toast("این نام به ژانر «" + tag + "» تبدیل می‌شود.");
             renderManagedTags(rows, search);
             return;
         }
@@ -2648,39 +2721,45 @@ public final class MainActivity extends Activity {
     }
 
     private void showEditTagDialog(String oldTag, LinearLayout rows, EditText search) {
-        EditText name = edit("نام تگ", false);
+        EditText name = edit("نام ژانر", false);
         name.setText(oldTag);
         name.setSelection(name.length());
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setGravity(Gravity.CENTER_HORIZONTAL);
         form.addView(clearableInput(name), fieldParams());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ویرایش تگ")
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ویرایش ژانر")
                 .setView(dialogPadding(form)).setNegativeButton("لغو", null)
+                .setNeutralButton("حذف ژانر", null)
                 .setPositiveButton("ذخیره", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String newTag = titleCaseWords(name.getText().toString());
-            if (newTag.isEmpty()) { name.setError("نام تگ را وارد کن"); return; }
-            String existing = findGenreName(library.optJSONArray("genres"), newTag);
-            if (existing != null && !existing.equalsIgnoreCase(oldTag)) {
-                AlertDialog merge = new AlertDialog.Builder(this)
-                        .setMessage("همهٔ کتاب‌های دارای «" + oldTag + "» به «" + existing + "» تغییر کنند؟")
-                        .setNegativeButton("لغو", null)
-                        .setPositiveButton("ادغام", (ignoredDialog, which) -> {
-                            if (renameTag(oldTag, existing)) {
-                                dialog.dismiss();
-                                renderManagedTags(rows, search);
-                            }
-                        }).create();
-                merge.show();
-                styleDialogWindow(merge);
-                return;
-            }
-            if (renameTag(oldTag, newTag)) {
-                dialog.dismiss();
-                renderManagedTags(rows, search);
-            }
-        }));
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setTextColor(RED);
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v ->
+                    confirmDeleteTag(oldTag, rows, search, dialog));
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String newTag = titleCaseWords(name.getText().toString());
+                if (newTag.isEmpty()) { name.setError("نام ژانر را وارد کن"); return; }
+                String existing = findGenreName(library.optJSONArray("genres"), newTag);
+                if (existing != null && !existing.equalsIgnoreCase(oldTag)) {
+                    AlertDialog merge = new AlertDialog.Builder(this)
+                            .setMessage("همهٔ کتاب‌های دارای «" + oldTag + "» به «" + existing + "» تغییر کنند؟")
+                            .setNegativeButton("لغو", null)
+                            .setPositiveButton("ادغام", (ignoredDialog, which) -> {
+                                if (renameTag(oldTag, existing)) {
+                                    dialog.dismiss();
+                                    renderManagedTags(rows, search);
+                                }
+                            }).create();
+                    merge.show();
+                    styleDialogWindow(merge);
+                    return;
+                }
+                if (renameTag(oldTag, newTag)) {
+                    dialog.dismiss();
+                    renderManagedTags(rows, search);
+                }
+            });
+        });
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
@@ -2737,21 +2816,23 @@ public final class MainActivity extends Activity {
         }
         rebuildRecommendationWeights();
         persistRecommendationState();
-        toast("تگ و کتاب‌های مرتبط به‌روزرسانی شدند");
+        toast("ژانر و کتاب‌های مرتبط به‌روزرسانی شدند");
         return true;
     }
 
-    private void confirmDeleteTag(String tag, LinearLayout rows, EditText search) {
+    private void confirmDeleteTag(String tag, LinearLayout rows, EditText search, AlertDialog editor) {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setMessage("ژانر «" + tag + "» از فهرست و کتاب‌های مرتبط حذف شود؟")
                 .setNegativeButton("لغو", null)
-                .setPositiveButton("حذف", (ignored, which) -> deleteTag(tag, rows, search))
+                .setPositiveButton("حذف", (ignored, which) -> {
+                    if (deleteTag(tag, rows, search)) editor.dismiss();
+                })
                 .create();
         dialog.show();
         styleDialogWindow(dialog);
     }
 
-    private void deleteTag(String tag, LinearLayout rows, EditText search) {
+    private boolean deleteTag(String tag, LinearLayout rows, EditText search) {
         String before = library.toString();
         Set<String> oldFavorites = new LinkedHashSet<>(favoriteGenrePreferences);
         Set<String> oldFilters = new HashSet<>(activeGenreFilter);
@@ -2796,18 +2877,19 @@ public final class MainActivity extends Activity {
                 }
             }
             library.put("genreEquivalents", keptGroups);
-        } catch (JSONException error) { return; }
+        } catch (JSONException error) { return false; }
         removeIgnoreCase(favoriteGenrePreferences, tag);
         removeIgnoreCase(activeGenreFilter, tag);
         if (!saveLibrary()) {
             restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
             activeGenreFilter.clear(); activeGenreFilter.addAll(oldFilters);
-            return;
+            return false;
         }
         rebuildRecommendationWeights();
         persistRecommendationState();
         renderManagedTags(rows, search);
+        return true;
     }
 
     private JSONArray genreEquivalentGroups() {
@@ -2909,7 +2991,7 @@ public final class MainActivity extends Activity {
                 () -> showGenreEquivalentEditor(null, rows)), fieldParams());
         content.addView(scroll, new LinearLayout.LayoutParams(-1, dp(330)));
         renderGenreEquivalentRows(rows);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تگ‌های معادل")
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ژانرهای معادل")
                 .setView(dialogPadding(content)).setPositiveButton("بستن", null).create();
         dialog.setOnDismissListener(ignored -> {
             if ("tagSettings".equals(page)) showTagSettings();
@@ -2949,7 +3031,7 @@ public final class MainActivity extends Activity {
                     () -> confirmDeleteGenreEquivalent(primary, rows)), new LinearLayout.LayoutParams(dp(42), dp(42)));
             rows.addView(row, rowParams);
         }
-        if (rows.getChildCount() == 0) rows.addView(emptyLabel("هنوز تگ معادلی تعریف نشده است."),
+        if (rows.getChildCount() == 0) rows.addView(emptyLabel("هنوز ژانر معادلی تعریف نشده است."),
                 new LinearLayout.LayoutParams(-1, dp(74)));
     }
 
@@ -2966,7 +3048,7 @@ public final class MainActivity extends Activity {
         JSONArray oldAliases = existing == null ? null : existing.optJSONArray("aliases");
         if (oldAliases != null) for (int i = 0; i < oldAliases.length(); i++) aliases.add(oldAliases.optString(i));
 
-        TextView primaryChoice = text("تگ اصلی: " + (primary[0].isEmpty() ? "انتخاب نشده" : primary[0]), 15, TEXT);
+        TextView primaryChoice = text("ژانر اصلی: " + (primary[0].isEmpty() ? "انتخاب نشده" : primary[0]), 15, TEXT);
         primaryChoice.setGravity(Gravity.CENTER);
         primaryChoice.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
         TextView aliasChoice = text(equivalentAliasSummary(aliases), 14, TEXT);
@@ -2986,18 +3068,18 @@ public final class MainActivity extends Activity {
                     aliasChoice.setText(equivalentAliasSummary(aliases));
                 }));
 
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("گروه تگ‌های معادل")
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("گروه ژانرهای معادل")
                 .setView(dialogPadding(form)).setNegativeButton("لغو", null)
                 .setPositiveButton("ذخیره", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String main = titleCaseWords(primary[0]);
-            if (main.isEmpty()) { toast("یک تگ اصلی انتخاب کن."); return; }
+            if (main.isEmpty()) { toast("یک ژانر اصلی انتخاب کن."); return; }
             LinkedHashSet<String> cleanAliases = new LinkedHashSet<>();
             for (String alias : aliases) {
                 String clean = titleCaseWords(alias);
                 if (!clean.isEmpty() && !clean.equalsIgnoreCase(main)) cleanAliases.add(clean);
             }
-            if (cleanAliases.isEmpty()) { toast("حداقل یک تگ معادل انتخاب کن."); return; }
+            if (cleanAliases.isEmpty()) { toast("حداقل یک ژانر معادل انتخاب کن."); return; }
             if (saveGenreEquivalentGroup(oldPrimary, main, cleanAliases)) {
                 dialog.dismiss();
                 renderGenreEquivalentRows(rows);
@@ -3008,23 +3090,23 @@ public final class MainActivity extends Activity {
     }
 
     private String equivalentAliasSummary(Collection<String> aliases) {
-        return aliases.isEmpty() ? "انتخاب تگ‌های معادل" : android.text.TextUtils.join("، ", aliases);
+        return aliases.isEmpty() ? "انتخاب ژانرهای معادل" : android.text.TextUtils.join("، ", aliases);
     }
 
     private void showGenrePrimaryPicker(String[] selected, TextView target) {
         JSONArray tags = allGenres();
         String[] items = new String[tags.length() + 1];
         for (int i = 0; i < tags.length(); i++) items[i] = tags.optString(i);
-        items[items.length - 1] = "＋ تگ تازه";
-        new AlertDialog.Builder(this).setTitle("انتخاب تگ اصلی").setItems(items, (dialog, which) -> {
+        items[items.length - 1] = "＋ ژانر تازه";
+        new AlertDialog.Builder(this).setTitle("انتخاب ژانر اصلی").setItems(items, (dialog, which) -> {
             if (which == items.length - 1) {
-                showBookTextEntryDialog("تگ اصلی تازه", "نام تگ", "", value -> {
+                showBookTextEntryDialog("ژانر اصلی تازه", "نام ژانر", "", value -> {
                     selected[0] = titleCaseWords(value);
-                    target.setText("تگ اصلی: " + selected[0]);
+                    target.setText("ژانر اصلی: " + selected[0]);
                 });
             } else {
                 selected[0] = canonicalGenre(items[which]);
-                target.setText("تگ اصلی: " + selected[0]);
+                target.setText("ژانر اصلی: " + selected[0]);
             }
         }).show();
     }
@@ -3095,7 +3177,7 @@ public final class MainActivity extends Activity {
         }
         rebuildRecommendationWeights();
         persistRecommendationState();
-        toast("تگ‌های معادل ذخیره شدند و کتاب‌ها یکدست شدند.");
+        toast("ژانرهای معادل ذخیره شدند و کتاب‌ها یکدست شدند.");
         return true;
     }
 
@@ -3812,10 +3894,16 @@ public final class MainActivity extends Activity {
     }
 
     private void showBookShelfPage(boolean allBooks) {
-        page = allBooks ? "allBooks" : "collectionBooks";
+        showBookShelfContent(allBooks, null);
+    }
+
+    private void showBookShelfContent(boolean allBooks, String author) {
+        boolean authorShelf = author != null;
+        page = authorShelf ? "authorBooks" : allBooks ? "allBooks" : "collectionBooks";
         appColumn.removeAllViews();
         animatePageTransition();
-        addDashboardHeader();
+        if (authorShelf) addAuthorBooksHeader();
+        else addDashboardHeader();
         LinearLayout filters = new LinearLayout(this);
         filters.setGravity(Gravity.CENTER_VERTICAL);
         filters.setPadding(dp(14), dp(7), dp(14), dp(7));
@@ -3836,7 +3924,8 @@ public final class MainActivity extends Activity {
         bookAdapter = new BookAdapter(); booksGrid.setAdapter(bookAdapter);
         FrameLayout listFrame = new FrameLayout(this);
         listFrame.addView(booksGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel(allBooks ? "کتابی در کتابخانه نیست" : "کتابی در این مجموعه نیست");
+        TextView empty = emptyLabel(authorShelf ? "کتابی از این نویسنده ثبت نشده"
+                : allBooks ? "کتابی در کتابخانه نیست" : "کتابی در این مجموعه نیست");
         listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1)); booksGrid.setEmptyView(empty);
         appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         TextView version = text(VERSION, 10, MUTED); version.setGravity(Gravity.CENTER);
@@ -4144,9 +4233,11 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshDashboardSelection() {
-        if ((!"collectionBooks".equals(page) && !"allBooks".equals(page)) || appColumn == null) return;
+        if ((!"collectionBooks".equals(page) && !"allBooks".equals(page) && !"authorBooks".equals(page))
+                || appColumn == null) return;
         if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
-        addDashboardHeader();
+        if ("authorBooks".equals(page)) addAuthorBooksHeader();
+        else addDashboardHeader();
         if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
     }
 
@@ -6188,7 +6279,8 @@ public final class MainActivity extends Activity {
             refreshCollectionSelection();
             return;
         }
-        if (!selectedBookIds.isEmpty() && ("collectionBooks".equals(page) || "allBooks".equals(page))) {
+        if (!selectedBookIds.isEmpty() && ("collectionBooks".equals(page) || "allBooks".equals(page)
+                || "authorBooks".equals(page))) {
             selectedBookIds.clear();
             refreshDashboardSelection();
             return;
@@ -6204,6 +6296,8 @@ public final class MainActivity extends Activity {
             showBookInfo(activeBook());
         }
         else if ("bookInfo".equals(page)) showBookShelfForPage(bookInfoReturnPage);
+        else if ("authorBooks".equals(page)) { selectedBookIds.clear(); showAuthors(); }
+        else if ("authors".equals(page)) showDashboard();
         else if ("collectionBooks".equals(page) || "allBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
         else if ("settings".equals(page) || "themes".equals(page) || "recommendations".equals(page)
                 || "statistics".equals(page)
@@ -6213,6 +6307,8 @@ public final class MainActivity extends Activity {
 
     private void showBookShelfForPage(String target) {
         if ("allBooks".equals(target)) showAllBooks();
+        else if ("authorBooks".equals(target)) showBookShelfContent(true, activeAuthor);
+        else if ("authors".equals(target)) showAuthors();
         else if ("recommendations".equals(target)) showRecommendation();
         else if ("collectionBooks".equals(target)) showBookShelf();
         else showDashboard();
@@ -6882,6 +6978,100 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private final class AuthorAdapter extends BaseAdapter {
+        private List<String> cachedAuthors;
+
+        @Override public void notifyDataSetChanged() {
+            cachedAuthors = null;
+            super.notifyDataSetChanged();
+        }
+
+        private List<String> visible() {
+            if (cachedAuthors != null) return cachedAuthors;
+            Set<String> unique = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            JSONArray books = library.optJSONArray("books");
+            if (books != null) for (int i = 0; i < books.length(); i++) {
+                JSONObject book = books.optJSONObject(i);
+                if (book != null && !book.optString("author").trim().isEmpty()) {
+                    unique.add(book.optString("author").trim());
+                }
+            }
+            unique.addAll(favoriteAuthorPreferences);
+            String query = authorSearchField == null ? ""
+                    : authorSearchField.getText().toString().trim().toLowerCase(Locale.ROOT);
+            List<String> result = new ArrayList<>();
+            for (String author : unique) {
+                if (author.toLowerCase(Locale.ROOT).contains(query)) result.add(author);
+            }
+            return cachedAuthors = result;
+        }
+
+        String getAuthor(int position) { return visible().get(position); }
+        @Override public int getCount() { return visible().size(); }
+        @Override public Object getItem(int position) { return getAuthor(position); }
+        @Override public long getItemId(int position) { return position; }
+
+        @Override public View getView(int position, View convertView, ViewGroup parent) {
+            String author = getAuthor(position);
+            boolean favorite = containsIgnoreCase(favoriteAuthorPreferences, author);
+            FrameLayout frame = new FrameLayout(MainActivity.this);
+            LinearLayout card = new LinearLayout(MainActivity.this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setGravity(Gravity.CENTER);
+            card.setPadding(dp(12), dp(12), dp(12), dp(10));
+            card.setBackground(roundDrawable(SURFACE, 0xFF503C68, 20));
+            card.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+            applyPressScale(frame, .96f);
+
+            FrameLayout genderIcon = new FrameLayout(MainActivity.this);
+            genderIcon.setBackground(roundDrawable(lightTheme ? 0xFFEDE3FA : 0xFF2A2034,
+                    Color.TRANSPARENT, 18));
+            NativeIconView icon = new NativeIconView(MainActivity.this, authorIcon(author), PURPLE);
+            genderIcon.addView(icon, new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER));
+            genderIcon.setContentDescription("تعیین جنسیت نویسنده");
+            genderIcon.setClickable(true);
+            genderIcon.setFocusable(true);
+            genderIcon.setOnClickListener(v -> showAuthorGenderPicker(author));
+            applyPressScale(genderIcon, .9f);
+            card.addView(genderIcon, new LinearLayout.LayoutParams(dp(62), dp(62)));
+
+            TextView title = text(author, 15, TEXT);
+            title.setGravity(Gravity.CENTER);
+            title.setMaxLines(2);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-1, dp(42));
+            titleParams.topMargin = dp(4);
+            card.addView(title, titleParams);
+            TextView count = text(authorBookCount(author) + " کتاب", 12, MUTED);
+            count.setGravity(Gravity.CENTER);
+            card.addView(count, new LinearLayout.LayoutParams(-1, dp(22)));
+            frame.addView(card, new FrameLayout.LayoutParams(-1, -1));
+
+            FrameLayout favoriteButton = plainIconButton(favorite ? "heart_filled" : "heart_outline",
+                    favorite ? RED : MUTED, () -> toggleFavoriteAuthor(author));
+            favoriteButton.setContentDescription(favorite ? "حذف نویسنده از علاقه‌مندی‌ها"
+                    : "افزودن نویسنده به علاقه‌مندی‌ها");
+            FrameLayout.LayoutParams favoriteParams = new FrameLayout.LayoutParams(dp(42), dp(42),
+                    Gravity.TOP | Gravity.RIGHT);
+            favoriteParams.topMargin = dp(5);
+            favoriteParams.rightMargin = dp(5);
+            frame.addView(favoriteButton, favoriteParams);
+            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(154)));
+            return frame;
+        }
+    }
+
+    private int authorBookCount(String author) {
+        JSONArray books = library.optJSONArray("books");
+        if (books == null) return 0;
+        int count = 0;
+        for (int i = 0; i < books.length(); i++) {
+            JSONObject book = books.optJSONObject(i);
+            if (book != null && author.equalsIgnoreCase(book.optString("author", "").trim())) count++;
+        }
+        return count;
+    }
+
     private final class CollectionAdapter extends BaseAdapter {
         private List<JSONObject> cachedCollections;
 
@@ -6964,7 +7154,10 @@ public final class MainActivity extends Activity {
             query = searchField == null ? "" : searchField.getText().toString().trim().toLowerCase(Locale.ROOT);
             for (int i = 0; i < books.length(); i++) {
                 JSONObject book = books.optJSONObject(i); if (book == null) continue;
-                if (!showingAllBooks() && !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
+                if ("authorBooks".equals(page)) {
+                    if (!activeAuthor.equalsIgnoreCase(book.optString("author", "").trim())) continue;
+                } else if (!showingAllBooks()
+                        && !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
                 if (!(book.optString("title").toLowerCase(Locale.ROOT).contains(query)
                         || book.optString("author").toLowerCase(Locale.ROOT).contains(query))) continue;
                 JSONArray genres = book.optJSONArray("genres"); boolean match = true;

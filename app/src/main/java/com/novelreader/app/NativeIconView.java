@@ -57,6 +57,9 @@ final class NativeIconView extends View {
             case "scrolltop": resourceName = "direction"; rotation = 270f; break;
             case "scrollbottom": resourceName = "direction"; rotation = 90f; break;
             case "folder": resourceName = "folder"; break;
+            case "person": resourceName = "person"; break;
+            case "author_woman": resourceName = "author_woman"; break;
+            case "author_man": resourceName = "author_man"; break;
             case "tag": resourceName = "tag"; break;
             case "scan_text": resourceName = "scan_text"; break;
             case "favorite":
