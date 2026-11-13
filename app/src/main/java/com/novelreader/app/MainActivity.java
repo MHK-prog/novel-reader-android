@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.29";
+    private static final String VERSION = "1.4.30";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -5282,7 +5282,8 @@ public final class MainActivity extends Activity {
                 prompt = fillBookPromptField(prompt, "مجموعه:",
                         collection == null ? "" : collection.optString("title", ""));
             }
-            TextView content = text(prompt, 14, TEXT);
+            final String promptText = prompt;
+            TextView content = text(promptText, 14, TEXT);
             content.setTextIsSelectable(true);
             content.setGravity(Gravity.RIGHT | Gravity.TOP);
             content.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -5294,9 +5295,9 @@ public final class MainActivity extends Activity {
                     .setTitle("نمونه برای هوش مصنوعی")
                     .setView(dialogPadding(scroll))
                     .setNegativeButton("بستن", null)
-                    .setNeutralButton("اشتراک‌گذاری", (ignored, which) -> shareBookPrompt(prompt))
+                    .setNeutralButton("اشتراک‌گذاری", (ignored, which) -> shareBookPrompt(promptText))
                     .setPositiveButton("کپی متن", (ignored, which) -> {
-                        copyToClipboard("book-json-prompt", prompt);
+                        copyToClipboard("book-json-prompt", promptText);
                         toast("متن نمونه کپی شد.");
                     })
                     .create();
