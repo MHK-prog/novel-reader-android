@@ -107,6 +107,7 @@ public final class MainActivity extends Activity {
     static final int REQUEST_FOLDER = 41;
     private static final int REQUEST_COVER = 42;
     private static final int REQUEST_COLLOQUIALIZER = 43;
+    private static final int REQUEST_BOOK_JSON = 44;
     private static final int BG_DARK = Color.rgb(9, 9, 9);
     private static final int SURFACE_DARK = Color.rgb(20, 20, 20);
     private static final int SURFACE_ALT_DARK = Color.rgb(17, 17, 17);
@@ -159,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.26";
+    private static final String VERSION = "1.4.27";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -234,6 +235,7 @@ public final class MainActivity extends Activity {
     private String reorderOriginalLibrary;
     private boolean reorderChanged;
     private View coverRemoveButton;
+    private BookJsonImportTarget activeBookJsonImportTarget;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateBatteryIndicator(intent); }
     };
@@ -645,6 +647,12 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_COLLOQUIALIZER) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 importColloquializerRules(data.getData());
+            }
+            return;
+        }
+        if (requestCode == REQUEST_BOOK_JSON) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                importBookJson(data.getData());
             }
             return;
         }
@@ -4979,6 +4987,274 @@ public final class MainActivity extends Activity {
         void save(LinkedHashSet<String> selected, ArrayList<String> available);
     }
 
+    private static final class BookJsonData {
+        String title = "";
+        String author = "";
+        String description = "";
+        String collection = "";
+        int chapterCount;
+        int seriesNumber;
+        boolean hasTitle;
+        boolean hasAuthor;
+        boolean hasDescription;
+        boolean hasGenres;
+        boolean hasCollection;
+        boolean hasChapterCount;
+        boolean hasSeriesNumber;
+        final ArrayList<String> genres = new ArrayList<>();
+    }
+
+    private static final class BookJsonImportTarget {
+        final EditText title;
+        final EditText author;
+        final EditText count;
+        final EditText seriesNumber;
+        final String[] description;
+        final String[] collectionId;
+        final LinkedHashSet<String> selectedGenres;
+        final ArrayList<String> availableGenres;
+        final View descriptionEntry;
+        final View genreEntry;
+        final Runnable refreshCollectionChoice;
+        final boolean isNew;
+
+        BookJsonImportTarget(EditText title, EditText author, EditText count, EditText seriesNumber,
+                             String[] description, String[] collectionId,
+                             LinkedHashSet<String> selectedGenres, ArrayList<String> availableGenres,
+                             View descriptionEntry, View genreEntry, Runnable refreshCollectionChoice,
+                             boolean isNew) {
+            this.title = title;
+            this.author = author;
+            this.count = count;
+            this.seriesNumber = seriesNumber;
+            this.description = description;
+            this.collectionId = collectionId;
+            this.selectedGenres = selectedGenres;
+            this.availableGenres = availableGenres;
+            this.descriptionEntry = descriptionEntry;
+            this.genreEntry = genreEntry;
+            this.refreshCollectionChoice = refreshCollectionChoice;
+            this.isNew = isNew;
+        }
+    }
+
+    private void chooseBookJson() {
+        if (activeBookJsonImportTarget == null) {
+            toast("فرم کتاب باز نیست.");
+            return;
+        }
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        picker.setType("*/*");
+        picker.putExtra(Intent.EXTRA_MIME_TYPES,
+                new String[]{"application/json", "text/json", "text/plain"});
+        picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(picker, REQUEST_BOOK_JSON);
+        } catch (Exception error) {
+            toast("انتخاب فایل JSON در دسترس نیست.");
+        }
+    }
+
+    private void importBookJson(Uri uri) {
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IOException("Empty input stream");
+            String source = readUtf8(input).trim();
+            if (source.startsWith("```") && source.endsWith("```")) {
+                int firstLine = source.indexOf('\n');
+                if (firstLine >= 0) source = source.substring(firstLine + 1, source.length() - 3).trim();
+            }
+            JSONObject root = new JSONObject(source);
+            JSONObject nestedBook = root.optJSONObject("book");
+            BookJsonData imported = parseBookJson(nestedBook == null ? root : nestedBook);
+            if (activeBookJsonImportTarget == null) {
+                toast("فرم کتاب بسته شده است.");
+                return;
+            }
+            showBookJsonImportPreview(imported, activeBookJsonImportTarget);
+        } catch (Exception error) {
+            toast("خواندن JSON ناموفق بود؛ ساختار فایل را بررسی کن.");
+        }
+    }
+
+    private String readUtf8(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+        return new String(output.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    private BookJsonData parseBookJson(JSONObject json) {
+        BookJsonData result = new BookJsonData();
+        result.hasTitle = json.has("title") || json.has("name");
+        result.title = json.optString("title", json.optString("name", "")).trim();
+        result.hasAuthor = json.has("author");
+        result.author = json.optString("author", "").trim();
+        result.hasDescription = json.has("description");
+        result.description = json.optString("description", "").trim();
+        result.hasCollection = json.has("collection") || json.has("series");
+        result.collection = json.optString("collection", json.optString("series", "")).trim();
+        result.hasSeriesNumber = json.has("seriesNumber") || json.has("bookNumber");
+        result.seriesNumber = json.optInt("seriesNumber", json.optInt("bookNumber", 0));
+
+        Object rawCount = json.has("chapterCount") ? json.opt("chapterCount") : json.opt("chaptersCount");
+        result.hasChapterCount = json.has("chapterCount") || json.has("chaptersCount");
+        if (rawCount instanceof Number) result.chapterCount = ((Number) rawCount).intValue();
+        else if (rawCount instanceof String) {
+            try { result.chapterCount = Integer.parseInt(((String) rawCount).trim()); }
+            catch (NumberFormatException ignored) { result.chapterCount = 0; }
+        }
+
+        String genreKey = json.has("genres") ? "genres" : "tags";
+        result.hasGenres = json.has(genreKey);
+        Object rawGenres = json.opt(genreKey);
+        if (rawGenres instanceof JSONArray) {
+            JSONArray genres = (JSONArray) rawGenres;
+            for (int i = 0; i < genres.length(); i++) {
+                String value = genres.optString(i, "").trim();
+                if (!value.isEmpty()) result.genres.add(value);
+            }
+        } else if (rawGenres instanceof String) {
+            for (String value : ((String) rawGenres).split("[,،]")) {
+                if (!value.trim().isEmpty()) result.genres.add(value.trim());
+            }
+        }
+        return result;
+    }
+
+    private void showBookJsonImportPreview(BookJsonData data, BookJsonImportTarget target) {
+        StringBuilder preview = new StringBuilder();
+        if (data.hasTitle) appendPreviewLine(preview, "کتاب", data.title.isEmpty() ? "خالی" : data.title);
+        if (data.hasAuthor) appendPreviewLine(preview, "نویسنده", data.author.isEmpty() ? "خالی" : data.author);
+        if (data.hasDescription) appendPreviewLine(preview, "توضیحات", shortBookPreview(data.description));
+        if (data.hasGenres) appendPreviewLine(preview, "ژانرها", data.genres.isEmpty()
+                ? "خالی" : android.text.TextUtils.join("، ", data.genres));
+        if (data.hasChapterCount) appendPreviewLine(preview, "تعداد Chapter", target.isNew
+                ? (data.chapterCount > 0 ? Integer.toString(data.chapterCount) : "نامعتبر؛ بدون تغییر")
+                : "در ویرایش کتاب اعمال نمی‌شود");
+        if (data.hasCollection && !data.collection.isEmpty()) {
+            String collectionId = findCollectionIdByTitle(data.collection);
+            appendPreviewLine(preview, "مجموعه", collectionId == null
+                    ? data.collection + " (در برنامه پیدا نشد؛ انتخاب فعلی می‌ماند)" : data.collection);
+        }
+        if (data.hasSeriesNumber) appendPreviewLine(preview, "شماره در مجموعه",
+                data.seriesNumber > 0 ? Integer.toString(data.seriesNumber) : "نامعتبر؛ بدون تغییر");
+        if (preview.length() == 0) preview.append("فیلد قابل استفاده‌ای در فایل پیدا نشد.");
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("بازبینی اطلاعات JSON")
+                .setMessage(preview.toString())
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("اعمال به فرم", (ignored, which) -> applyBookJson(data, target))
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void appendPreviewLine(StringBuilder text, String label, String value) {
+        if (text.length() > 0) text.append('\n');
+        text.append(label).append(": ").append(value);
+    }
+
+    private String shortBookPreview(String value) {
+        String preview = value == null ? "" : value.replace('\n', ' ').trim();
+        if (preview.isEmpty()) return "خالی";
+        return preview.length() <= 150 ? preview : preview.substring(0, 147) + "…";
+    }
+
+    private String findCollectionIdByTitle(String title) {
+        JSONArray collections = collectionArray();
+        for (int i = 0; i < collections.length(); i++) {
+            JSONObject collection = collections.optJSONObject(i);
+            if (collection != null && collection.optString("title", "").trim().equalsIgnoreCase(title.trim())) {
+                return collection.optString("id", "other");
+            }
+        }
+        return null;
+    }
+
+    private void applyBookJson(BookJsonData data, BookJsonImportTarget target) {
+        if (activeBookJsonImportTarget != target) {
+            toast("فرم کتاب بسته شده است.");
+            return;
+        }
+        if (data.hasTitle) target.title.setText(data.title);
+        if (data.hasAuthor) target.author.setText(data.author);
+        if (data.hasDescription) {
+            target.description[0] = data.description;
+            updateBookDialogEntryButton(target.descriptionEntry, descriptionButtonSummary(data.description));
+        }
+        if (target.isNew && data.hasChapterCount && data.chapterCount > 0 && data.chapterCount <= 5000) {
+            target.count.setText(Integer.toString(data.chapterCount));
+        }
+        if (data.hasSeriesNumber && data.seriesNumber > 0 && data.seriesNumber <= 9999) {
+            target.seriesNumber.setText(Integer.toString(data.seriesNumber));
+        }
+        if (data.hasGenres) {
+            target.selectedGenres.clear();
+            for (String raw : data.genres) {
+                String genre = canonicalGenre(titleCaseWords(raw));
+                if (genre.isEmpty()) continue;
+                String matching = null;
+                for (String available : target.availableGenres) {
+                    if (available.equalsIgnoreCase(genre)) { matching = available; break; }
+                }
+                if (matching == null) {
+                    target.availableGenres.add(genre);
+                    matching = genre;
+                }
+                target.selectedGenres.add(matching);
+            }
+            updateBookDialogEntryButton(target.genreEntry, genreButtonSummary(target.selectedGenres));
+        }
+        if (data.hasCollection && !data.collection.isEmpty()) {
+            String matchingCollection = findCollectionIdByTitle(data.collection);
+            if (matchingCollection != null) {
+                target.collectionId[0] = matchingCollection;
+                target.refreshCollectionChoice.run();
+            }
+        }
+        toast("اطلاعات به فرم اضافه شد؛ برای ذخیره، ثبت اطلاعات را بزن.");
+    }
+
+    private void showBookJsonPrompt() {
+        try (InputStream input = getAssets().open("book_info_prompt.txt")) {
+            String prompt = readUtf8(input);
+            TextView content = text(prompt, 14, TEXT);
+            content.setTextIsSelectable(true);
+            content.setGravity(Gravity.RIGHT | Gravity.TOP);
+            content.setPadding(dp(14), dp(12), dp(14), dp(12));
+            setRtlTextAlignment(content);
+            ScrollView scroll = new ScrollView(this);
+            scroll.setVerticalScrollBarEnabled(false);
+            scroll.addView(content);
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                    .setTitle("نمونه برای هوش مصنوعی")
+                    .setView(dialogPadding(scroll))
+                    .setNegativeButton("بستن", null)
+                    .setNeutralButton("اشتراک‌گذاری", (ignored, which) -> shareBookPrompt(prompt))
+                    .setPositiveButton("کپی متن", (ignored, which) -> {
+                        copyToClipboard("book-json-prompt", prompt);
+                        toast("متن نمونه کپی شد.");
+                    })
+                    .create();
+            dialog.show();
+            styleDialogWindow(dialog);
+        } catch (IOException error) {
+            toast("خواندن فایل نمونه ناموفق بود.");
+        }
+    }
+
+    private void shareBookPrompt(String prompt) {
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_SUBJECT, "قالب اطلاعات کتاب برای JSON");
+        share.putExtra(Intent.EXTRA_TEXT, prompt);
+        try { startActivity(Intent.createChooser(share, "اشتراک‌گذاری نمونه")); }
+        catch (Exception error) { toast("اشتراک‌گذاری در دسترس نیست."); }
+    }
+
     private View bookDialogEntryButton(String title, String summary, String icon, Runnable action) {
         LinearLayout button = new LinearLayout(this);
         button.setGravity(Gravity.CENTER_VERTICAL);
@@ -5187,6 +5463,20 @@ public final class MainActivity extends Activity {
         form.addView(coverRow, coverRowParams);
         renderCoverPreview(bookCoverPreview, pendingCoverName);
 
+        LinearLayout importRow = new LinearLayout(this);
+        importRow.setOrientation(LinearLayout.HORIZONTAL);
+        importRow.setGravity(Gravity.CENTER_VERTICAL);
+        View importJsonButton = textButton("ورود JSON", "scan_text", PURPLE, this::chooseBookJson);
+        View promptButton = textButton("نمونه AI", "help", PURPLE, this::showBookJsonPrompt);
+        LinearLayout.LayoutParams importButtonParams = new LinearLayout.LayoutParams(0, dp(52), 1);
+        importButtonParams.bottomMargin = dp(9);
+        LinearLayout.LayoutParams promptButtonParams = new LinearLayout.LayoutParams(0, dp(52), 1);
+        promptButtonParams.leftMargin = dp(8);
+        promptButtonParams.bottomMargin = dp(9);
+        importRow.addView(importJsonButton, importButtonParams);
+        importRow.addView(promptButton, promptButtonParams);
+        form.addView(importRow, new LinearLayout.LayoutParams(-1, dp(52)));
+
         EditText title = edit("نام کتاب", false);
         title.setText(isNew ? "" : existing.optString("title"));
         EditText author = edit("نام نویسنده", false);
@@ -5266,6 +5556,10 @@ public final class MainActivity extends Activity {
         genreEntryParams.bottomMargin = dp(9);
         form.addView(genreEntry[0], genreEntryParams);
 
+        activeBookJsonImportTarget = new BookJsonImportTarget(title, author, count, seriesNumber,
+                descriptionValue, chosenCollectionId, selected, availableGenres,
+                descriptionEntry[0], genreEntry[0], refreshCollectionChoice, isNew);
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false);
@@ -5280,6 +5574,9 @@ public final class MainActivity extends Activity {
         dialog.setOnDismissListener(ignored -> {
             if (!coverCommitted[0] && pendingCoverName != null && !pendingCoverName.isEmpty()
                     && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
+            if (activeBookJsonImportTarget != null && activeBookJsonImportTarget.title == title) {
+                activeBookJsonImportTarget = null;
+            }
             bookCoverPreview = null;
             coverRemoveButton = null;
         });
