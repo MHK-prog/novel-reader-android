@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.30";
+    private static final String VERSION = "1.4.31";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -236,6 +236,7 @@ public final class MainActivity extends Activity {
     private boolean reorderChanged;
     private View coverRemoveButton;
     private BookJsonImportTarget activeBookJsonImportTarget;
+    private AlertDialog bookJsonInputDialog;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateBatteryIndicator(intent); }
     };
@@ -652,6 +653,7 @@ public final class MainActivity extends Activity {
         }
         if (requestCode == REQUEST_BOOK_JSON) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                if (bookJsonInputDialog != null) bookJsonInputDialog.dismiss();
                 importBookJson(data.getData());
             }
             return;
@@ -5095,6 +5097,60 @@ public final class MainActivity extends Activity {
             toast("فرم کتاب باز نیست.");
             return;
         }
+        showBookJsonInputDialog();
+    }
+
+    private void showBookJsonInputDialog() {
+        EditText input = edit("محتوای JSON را اینجا بچسبان", true);
+        input.setSingleLine(false);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setMinLines(8);
+        input.setMaxLines(12);
+        input.setHorizontallyScrolling(false);
+        input.setVerticalScrollBarEnabled(false);
+        input.setGravity(Gravity.TOP | Gravity.LEFT);
+        input.setTextDirection(View.TEXT_DIRECTION_LTR);
+        input.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
+        input.setPadding(dp(14), dp(12), dp(14), dp(12));
+        input.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 15));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("ورود اطلاعات JSON")
+                .setView(dialogPadding(input))
+                .setNegativeButton("لغو", null)
+                .setNeutralButton("انتخاب فایل موجود", null)
+                .setPositiveButton("اعمال متن", null)
+                .create();
+        bookJsonInputDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (bookJsonInputDialog == dialog) bookJsonInputDialog = null;
+        });
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> openBookJsonFilePicker());
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                BookJsonData imported;
+                try {
+                    imported = parseBookJsonText(input.getText().toString());
+                } catch (Exception error) {
+                    toast("JSON معتبر نیست؛ متن را بررسی کن.");
+                    return;
+                }
+                BookJsonImportTarget target = activeBookJsonImportTarget;
+                if (target == null) {
+                    toast("فرم کتاب بسته شده است.");
+                    dialog.dismiss();
+                    return;
+                }
+                dialog.dismiss();
+                showBookJsonImportPreview(imported, target);
+            });
+        });
+        dialog.show();
+        styleDialogWindow(dialog);
+        if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void openBookJsonFilePicker() {
         Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         picker.addCategory(Intent.CATEGORY_OPENABLE);
         picker.setType("*/*");
@@ -5111,14 +5167,7 @@ public final class MainActivity extends Activity {
     private void importBookJson(Uri uri) {
         try (InputStream input = getContentResolver().openInputStream(uri)) {
             if (input == null) throw new IOException("Empty input stream");
-            String source = readUtf8(input).trim();
-            if (source.startsWith("```") && source.endsWith("```")) {
-                int firstLine = source.indexOf('\n');
-                if (firstLine >= 0) source = source.substring(firstLine + 1, source.length() - 3).trim();
-            }
-            JSONObject root = new JSONObject(source);
-            JSONObject nestedBook = root.optJSONObject("book");
-            BookJsonData imported = parseBookJson(nestedBook == null ? root : nestedBook);
+            BookJsonData imported = parseBookJsonText(readUtf8(input));
             if (activeBookJsonImportTarget == null) {
                 toast("فرم کتاب بسته شده است.");
                 return;
@@ -5127,6 +5176,18 @@ public final class MainActivity extends Activity {
         } catch (Exception error) {
             toast("خواندن JSON ناموفق بود؛ ساختار فایل را بررسی کن.");
         }
+    }
+
+    private BookJsonData parseBookJsonText(String value) throws JSONException {
+        String source = value == null ? "" : value.trim();
+        if (source.startsWith("```") && source.endsWith("```")) {
+            int firstLine = source.indexOf('\n');
+            if (firstLine >= 0) source = source.substring(firstLine + 1, source.length() - 3).trim();
+        }
+        if (source.isEmpty()) throw new JSONException("Empty JSON");
+        JSONObject root = new JSONObject(source);
+        JSONObject nestedBook = root.optJSONObject("book");
+        return parseBookJson(nestedBook == null ? root : nestedBook);
     }
 
     private String readUtf8(InputStream input) throws IOException {
