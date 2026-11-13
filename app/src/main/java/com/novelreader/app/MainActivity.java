@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.28";
+    private static final String VERSION = "1.4.29";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -5273,6 +5273,15 @@ public final class MainActivity extends Activity {
     private void showBookJsonPrompt() {
         try (InputStream input = getAssets().open("book_info_prompt.txt")) {
             String prompt = readUtf8(input);
+            BookJsonImportTarget target = activeBookJsonImportTarget;
+            if (target != null) {
+                prompt = fillBookPromptField(prompt, "عنوان کتاب:", target.title.getText().toString());
+                prompt = fillBookPromptField(prompt, "نویسنده:", target.author.getText().toString());
+                JSONObject collection = "other".equals(target.collectionId[0])
+                        ? null : findCollectionById(target.collectionId[0]);
+                prompt = fillBookPromptField(prompt, "مجموعه:",
+                        collection == null ? "" : collection.optString("title", ""));
+            }
             TextView content = text(prompt, 14, TEXT);
             content.setTextIsSelectable(true);
             content.setGravity(Gravity.RIGHT | Gravity.TOP);
@@ -5296,6 +5305,19 @@ public final class MainActivity extends Activity {
         } catch (IOException error) {
             toast("خواندن فایل نمونه ناموفق بود.");
         }
+    }
+
+    private String fillBookPromptField(String prompt, String label, String value) {
+        int labelStart = prompt.indexOf(label);
+        if (labelStart < 0) return prompt;
+        int valueStart = labelStart + label.length();
+        int lineEnd = prompt.indexOf('\n', valueStart);
+        if (lineEnd < 0) lineEnd = prompt.length();
+        int contentEnd = lineEnd;
+        if (contentEnd > valueStart && prompt.charAt(contentEnd - 1) == '\r') contentEnd--;
+        String cleanValue = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').trim();
+        return prompt.substring(0, valueStart) + (cleanValue.isEmpty() ? "" : " " + cleanValue)
+                + prompt.substring(contentEnd);
     }
 
     private void shareBookPrompt(String prompt) {
