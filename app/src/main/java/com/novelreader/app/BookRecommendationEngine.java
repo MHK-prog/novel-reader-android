@@ -19,23 +19,23 @@ final class BookRecommendationEngine {
         final String title;
         final List<String> genres;
         final String author;
-        final int interestRating;
         final boolean favorite;
         final boolean favoriteAuthor;
+        final boolean dislikedAuthor;
         final long wordsRead;
         final long totalWordsRead;
         final boolean useReadingShare;
 
         Book(long id, String title, List<String> genres, String author,
-             int interestRating, boolean favorite, boolean favoriteAuthor,
+             boolean favorite, boolean favoriteAuthor, boolean dislikedAuthor,
              long wordsRead, long totalWordsRead, boolean useReadingShare) {
             this.id = id;
             this.title = title == null ? "" : title;
             this.genres = genres == null ? new ArrayList<>() : new ArrayList<>(genres);
             this.author = author == null ? "" : author;
-            this.interestRating = interestRating;
             this.favorite = favorite;
             this.favoriteAuthor = favoriteAuthor;
+            this.dislikedAuthor = dislikedAuthor;
             this.wordsRead = Math.max(0, wordsRead);
             this.totalWordsRead = Math.max(0, totalWordsRead);
             this.useReadingShare = useReadingShare;
@@ -44,17 +44,15 @@ final class BookRecommendationEngine {
 
     static final class WeightBreakdown {
         final double genre;
-        final double rating;
         final double personal;
         final double reading;
         final double total;
 
-        WeightBreakdown(double genre, double rating, double personal, double reading) {
+        WeightBreakdown(double genre, double personal, double reading) {
             this.genre = genre;
-            this.rating = rating;
             this.personal = personal;
             this.reading = reading;
-            this.total = Math.max(0.05, genre * rating * personal * reading);
+            this.total = Math.max(0.05, genre * personal * reading);
         }
     }
 
@@ -121,16 +119,15 @@ final class BookRecommendationEngine {
             if (key.isEmpty() || "other".equals(key) || !uniqueGenres.add(key)) continue;
             totalGenreWeight += preferences.weightFor(key);
         }
-        // Averaging prevents books with many tags from receiving extra lottery tickets.
+        // Averaging prevents books with many genres from receiving extra lottery tickets.
         double genreWeight = uniqueGenres.isEmpty() ? DEFAULT_WEIGHT
                 : totalGenreWeight / uniqueGenres.size();
-        double ratingWeight = book.interestRating < 1 || book.interestRating > 5
-                ? 1.0 : new double[]{0, 0.35, 0.60, 1.0, 1.50, 2.10}[book.interestRating];
-        double personalWeight = (book.favorite ? 1.12 : 1.0)
-                * (book.favoriteAuthor ? 1.12 : 1.0);
+        double personalWeight = (book.favorite ? 1.3 : 1.0)
+                * (book.favoriteAuthor ? 1.15 : 1.0)
+                * (book.dislikedAuthor ? 0.35 : 1.0);
         double readingShareWeight = !book.useReadingShare || book.totalWordsRead == 0 ? 1.0
                 : Math.max(0.05, Math.min(1.0, book.wordsRead / (double) book.totalWordsRead));
-        return new WeightBreakdown(genreWeight, ratingWeight, personalWeight, readingShareWeight);
+        return new WeightBreakdown(genreWeight, personalWeight, readingShareWeight);
     }
 
     private static String normalize(String value) {

@@ -114,12 +114,12 @@ public final class MainActivity extends Activity {
     private static final int BLUE = Color.rgb(90, 169, 255);
     private static final int GREEN = Color.rgb(86, 201, 135);
     private static final int RED = Color.rgb(255, 76, 76);
-    private static final int[] FLAT_ACCENT_COLORS = {
+    // Kept only to migrate saved single-color theme selections to a nearby gradient once.
+    private static final int[] LEGACY_FLAT_ACCENT_COLORS = {
             Color.rgb(187, 134, 252), Color.rgb(79, 195, 247), Color.rgb(77, 182, 172),
             Color.rgb(129, 199, 132), Color.rgb(255, 183, 77), Color.rgb(255, 138, 101),
             Color.rgb(240, 98, 146)
     };
-    private static final String[] FLAT_ACCENT_NAMES = {"بنفش", "آبی", "فیروزه‌ای", "سبز", "کهربایی", "مرجانی", "صورتی"};
     private static final int[][] GRADIENT_COLORS = {
             {0xFFFAD95C, 0xFFF9C251, 0xFFFFA270, 0xFFFD80A4, 0xFFFE66CD, 0xFFFE59D2},
             {0xFF030712, 0xFF040917, 0xFF050D1D, 0xFF071225, 0xFF0A172D, 0xFF0D1D36, 0xFF10233F, 0xFF122946, 0xFF142F4E, 0xFF163556, 0xFF173C5E, 0xFF184366, 0xFF194B6D, 0xFF185274, 0xFF175A7A, 0xFF15617F, 0xFF146984, 0xFF147189, 0xFF167A8E, 0xFF1A8395, 0xFF1B8D9D, 0xFF1A98A6, 0xFF1CA4AF, 0xFF23B0B8, 0xFF32BBC1, 0xFF47C6CA, 0xFF62D1D3, 0xFF7FDCDD, 0xFF9BE7E8, 0xFFB5F1F1, 0xFFCAF9F9, 0xFFD9FFFF},
@@ -158,9 +158,9 @@ public final class MainActivity extends Activity {
             GradientDrawable.Orientation.BL_TR, GradientDrawable.Orientation.TOP_BOTTOM,
             GradientDrawable.Orientation.TL_BR, GradientDrawable.Orientation.TL_BR
     };
-    private static final int BUILTIN_THEME_COUNT = FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
+    private static final int BUILTIN_THEME_COUNT = GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.33";
+    private static final String VERSION = "1.4.34";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -168,7 +168,8 @@ public final class MainActivity extends Activity {
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
     private int SURFACE_ALT = SURFACE_ALT_DARK;
-    private int PURPLE = FLAT_ACCENT_COLORS[0];
+    private int PURPLE = GRADIENT_COLORS[2][GRADIENT_COLORS[2].length / 2];
+    private int SECONDARY_ACCENT = GRADIENT_COLORS[2][GRADIENT_COLORS[2].length * 3 / 4];
     private int TEXT = Color.rgb(241, 241, 241);
     private int MUTED = Color.rgb(165, 165, 165);
     private boolean lightTheme;
@@ -183,8 +184,11 @@ public final class MainActivity extends Activity {
     private final Deque<String> chapterRedoStack = new ArrayDeque<>();
     private final Set<Long> seenRecommendationIds = new HashSet<>();
     private final Set<String> favoriteGenrePreferences = new LinkedHashSet<>();
+    private final Set<String> dislikedGenrePreferences = new LinkedHashSet<>();
     private final Set<String> favoriteBookIds = new LinkedHashSet<>();
+    private final Set<String> dislikedBookIds = new LinkedHashSet<>();
     private final Set<String> favoriteAuthorPreferences = new LinkedHashSet<>();
+    private final Set<String> dislikedAuthorPreferences = new LinkedHashSet<>();
     private final Set<String> selectedAuthorNames = new LinkedHashSet<>();
     private final BookRecommendationEngine.UserPreferences recommendationPreferences =
             new BookRecommendationEngine.UserPreferences();
@@ -321,6 +325,7 @@ public final class MainActivity extends Activity {
         readingStats = new ReadingStatsStore(getSharedPreferences("reading_stats", MODE_PRIVATE));
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
+        migrateGradientThemeSelection(appearance);
         lightTheme = appearance.getBoolean("light", false);
         accentIndex = Math.max(0, Math.min(themeCount() - 1, appearance.getInt("accent", 0)));
         if (appearance.getBoolean("random_each_launch", false)) {
@@ -352,6 +357,7 @@ public final class MainActivity extends Activity {
 
     private void applyThemeColors() {
         PURPLE = themeAccentColor(accentIndex);
+        SECONDARY_ACCENT = themeSecondaryColor(accentIndex);
         BG = lightTheme ? Color.rgb(246, 244, 249) : BG_DARK;
         SURFACE = lightTheme ? Color.WHITE : SURFACE_DARK;
         SURFACE_ALT = lightTheme ? Color.rgb(239, 236, 244) : SURFACE_ALT_DARK;
@@ -375,19 +381,89 @@ public final class MainActivity extends Activity {
     }
 
     private int themeAccentColor(int index) {
-        if (index < FLAT_ACCENT_COLORS.length) return FLAT_ACCENT_COLORS[index];
-        if (index < BUILTIN_THEME_COUNT) {
-            int[] colors = GRADIENT_COLORS[index - FLAT_ACCENT_COLORS.length];
-            return colors[colors.length / 2];
+        int[] colors = themeGradientColors(index);
+        return colors.length == 0 ? GRADIENT_COLORS[2][GRADIENT_COLORS[2].length / 2]
+                : colors.length == 2 ? colors[0] : colors[colors.length / 2];
+    }
+
+    private int themeSecondaryColor(int index) {
+        int[] colors = themeGradientColors(index);
+        if (colors.length == 0) return themeAccentColor(index);
+        return colors.length == 2 ? colors[1]
+                : colors[Math.min(colors.length - 1, Math.max(1, colors.length * 3 / 4))];
+    }
+
+    private int[] themeGradientColors(int index) {
+        if (index >= 0 && index < BUILTIN_THEME_COUNT) return GRADIENT_COLORS[index];
+        JSONArray storedColors = customTheme(index).optJSONArray("colors");
+        if (storedColors == null || storedColors.length() < 2) return new int[0];
+        int[] colors = new int[storedColors.length()];
+        for (int i = 0; i < storedColors.length(); i++) colors[i] = storedColors.optInt(i, PURPLE);
+        return colors;
+    }
+
+    private void migrateGradientThemeSelection(SharedPreferences appearance) {
+        if (appearance.getBoolean("gradient_theme_indices_v1", false)) return;
+        int oldBuiltinCount = LEGACY_FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
+        JSONArray rawThemes = rawCustomThemes();
+        JSONArray gradients = new JSONArray();
+        List<Integer> oldGradientPositions = new ArrayList<>();
+        for (int i = 0; i < rawThemes.length(); i++) {
+            JSONObject theme = rawThemes.optJSONObject(i);
+            JSONArray colors = theme == null ? null : theme.optJSONArray("colors");
+            if (colors != null && colors.length() >= 2) {
+                gradients.put(theme);
+                oldGradientPositions.add(i);
+            }
         }
-        JSONArray colors = customTheme(index).optJSONArray("colors");
-        return colors == null || colors.length() == 0 ? FLAT_ACCENT_COLORS[0]
-                : colors.optInt(colors.length() / 2, FLAT_ACCENT_COLORS[0]);
+        int oldAccent = appearance.getInt("accent", 0);
+        int newAccent;
+        if (oldAccent < LEGACY_FLAT_ACCENT_COLORS.length) {
+            newAccent = nearestGradientTheme(LEGACY_FLAT_ACCENT_COLORS[Math.max(0,
+                    Math.min(LEGACY_FLAT_ACCENT_COLORS.length - 1, oldAccent))]);
+        } else if (oldAccent < oldBuiltinCount) {
+            newAccent = oldAccent - LEGACY_FLAT_ACCENT_COLORS.length;
+        } else {
+            int newCustomIndex = oldGradientPositions.indexOf(oldAccent - oldBuiltinCount);
+            newAccent = newCustomIndex < 0 ? nearestGradientTheme(LEGACY_FLAT_ACCENT_COLORS[0])
+                    : BUILTIN_THEME_COUNT + newCustomIndex;
+        }
+        Set<Integer> oldFavorites = new HashSet<>();
+        for (String value : appearance.getString("favorite_builtin_themes", "").split(",")) {
+            try { if (!value.isEmpty()) oldFavorites.add(Integer.parseInt(value)); }
+            catch (NumberFormatException ignored) { }
+        }
+        StringBuilder migratedFavorites = new StringBuilder();
+        for (Integer oldIndex : oldFavorites) {
+            if (oldIndex < LEGACY_FLAT_ACCENT_COLORS.length) continue;
+            if (oldIndex >= oldBuiltinCount) continue; // Custom favorite state stays on each theme object.
+            int migrated = oldIndex - LEGACY_FLAT_ACCENT_COLORS.length;
+            if (migrated < 0 || migrated >= BUILTIN_THEME_COUNT) continue;
+            if (migratedFavorites.length() > 0) migratedFavorites.append(',');
+            migratedFavorites.append(migrated);
+        }
+        appearance.edit().putInt("accent", Math.max(0, Math.min(themeCount() - 1, newAccent)))
+                .putString("favorite_builtin_themes", migratedFavorites.toString())
+                .putString("custom_themes", gradients.toString())
+                .putBoolean("gradient_theme_indices_v1", true).apply();
+    }
+
+    private int nearestGradientTheme(int color) {
+        long bestDistance = Long.MAX_VALUE;
+        int bestIndex = 0;
+        for (int i = 0; i < GRADIENT_COLORS.length; i++) {
+            int candidate = GRADIENT_COLORS[i][GRADIENT_COLORS[i].length / 2];
+            long red = Color.red(color) - Color.red(candidate);
+            long green = Color.green(color) - Color.green(candidate);
+            long blue = Color.blue(color) - Color.blue(candidate);
+            long distance = red * red + green * green + blue * blue;
+            if (distance < bestDistance) { bestDistance = distance; bestIndex = i; }
+        }
+        return bestIndex;
     }
 
     private String themeName(int index) {
-        if (index < FLAT_ACCENT_NAMES.length) return FLAT_ACCENT_NAMES[index];
-        if (index < BUILTIN_THEME_COUNT) return GRADIENT_NAMES[index - FLAT_ACCENT_COLORS.length];
+        if (index < BUILTIN_THEME_COUNT) return GRADIENT_NAMES[index];
         return customTheme(index).optString("name", "تم سفارشی");
     }
 
@@ -396,6 +472,17 @@ public final class MainActivity extends Activity {
     }
 
     private JSONArray customThemes() {
+        JSONArray stored = rawCustomThemes();
+        JSONArray gradients = new JSONArray();
+        for (int i = 0; i < stored.length(); i++) {
+            JSONObject theme = stored.optJSONObject(i);
+            JSONArray colors = theme == null ? null : theme.optJSONArray("colors");
+            if (colors != null && colors.length() >= 2) gradients.put(theme);
+        }
+        return gradients;
+    }
+
+    private JSONArray rawCustomThemes() {
         try {
             return new JSONArray(getSharedPreferences("appearance", MODE_PRIVATE)
                     .getString("custom_themes", "[]"));
@@ -411,10 +498,7 @@ public final class MainActivity extends Activity {
     }
 
     private boolean isGradientTheme(int index) {
-        if (index >= FLAT_ACCENT_COLORS.length && index < BUILTIN_THEME_COUNT) return true;
-        if (index < BUILTIN_THEME_COUNT) return false;
-        JSONArray colors = customTheme(index).optJSONArray("colors");
-        return colors != null && colors.length() > 1;
+        return index >= 0 && index < themeCount() && themeGradientColors(index).length > 1;
     }
 
     private boolean isThemeFavorite(int index) {
@@ -465,22 +549,29 @@ public final class MainActivity extends Activity {
     }
 
     private void applyGradientTheme(GradientDrawable drawable, int index, int radialRadiusDp) {
-        if (index >= BUILTIN_THEME_COUNT) {
-            JSONArray storedColors = customTheme(index).optJSONArray("colors");
-            if (storedColors == null || storedColors.length() < 2) return;
-            int[] colors = new int[storedColors.length()];
-            for (int i = 0; i < storedColors.length(); i++) colors[i] = storedColors.optInt(i, PURPLE);
-            drawable.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
-            drawable.setColors(colors);
-            return;
-        }
-        int gradientIndex = index - FLAT_ACCENT_COLORS.length;
-        drawable.setOrientation(GRADIENT_ORIENTATIONS[gradientIndex]);
-        drawable.setColors(GRADIENT_COLORS[gradientIndex]);
-        if (gradientIndex == GRADIENT_COLORS.length - 1) {
+        int[] colors = themeGradientColors(index);
+        if (colors.length < 2) { drawable.setColor(PURPLE); return; }
+        drawable.setOrientation(index < BUILTIN_THEME_COUNT
+                ? GRADIENT_ORIENTATIONS[index] : GradientDrawable.Orientation.LEFT_RIGHT);
+        drawable.setColors(colors);
+        if (index == GRADIENT_COLORS.length - 1) {
             drawable.setGradientType(GradientDrawable.RADIAL_GRADIENT);
             drawable.setGradientRadius(dp(radialRadiusDp));
         }
+    }
+
+    private void applySecondaryGradientTheme(GradientDrawable drawable, int index) {
+        int[] colors = themeGradientColors(index);
+        if (colors.length < 2) { drawable.setColor(SECONDARY_ACCENT); return; }
+        if (colors.length == 2) { drawable.setColor(SECONDARY_ACCENT); return; }
+        int start = Math.max(0, colors.length / 2);
+        int count = colors.length - start;
+        if (count < 2) { start = Math.max(0, colors.length - 2); count = colors.length - start; }
+        int[] secondary = new int[count];
+        System.arraycopy(colors, start, secondary, 0, count);
+        drawable.setOrientation(index < BUILTIN_THEME_COUNT
+                ? GRADIENT_ORIENTATIONS[index] : GradientDrawable.Orientation.LEFT_RIGHT);
+        drawable.setColors(secondary);
     }
 
     private int contrastOnAccent() {
@@ -609,10 +700,8 @@ public final class MainActivity extends Activity {
         track.setShape(GradientDrawable.RECTANGLE);
         track.setColor(lightTheme ? 0xFFDCD6E5 : 0xFF302A38);
         track.setCornerRadius(dp(8));
-        int bright = Color.rgb(Math.min(255, Color.red(PURPLE) + 55),
-                Math.min(255, Color.green(PURPLE) + 45), Math.min(255, Color.blue(PURPLE) + 35));
         GradientDrawable fill = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{PURPLE, bright});
+                new int[]{PURPLE, SECONDARY_ACCENT});
         fill.setCornerRadius(dp(8));
         ClipDrawable clippedFill = new ClipDrawable(fill, Gravity.LEFT, ClipDrawable.HORIZONTAL);
         LayerDrawable layers = new LayerDrawable(new Drawable[]{track, clippedFill});
@@ -1093,21 +1182,21 @@ public final class MainActivity extends Activity {
             closeDrawer();
             showDashboard();
         }, false);
-        addDrawerAction(drawerPanel, "کتابخانه همهٔ کتاب‌ها", "book", 0xFF65B5F2, () -> {
+        addDrawerAction(drawerPanel, "کتابخانه همهٔ کتاب‌ها", "book", SECONDARY_ACCENT, () -> {
             selectedBookIds.clear();
             activeGenreFilter.clear();
             closeDrawer();
             showAllBooks();
         }, false);
-        addDrawerAction(drawerPanel, "کتابخانه نویسندگان", "person", 0xFFFF9CBD, () -> {
+        addDrawerAction(drawerPanel, "کتابخانه نویسندگان", "person", PURPLE, () -> {
             closeDrawer();
             showAuthors();
         }, false);
-        addDrawerAction(drawerPanel, "پیشنهاد کتاب", "book", 0xFFFFB45E, () -> {
+        addDrawerAction(drawerPanel, "پیشنهاد کتاب", "book", SECONDARY_ACCENT, () -> {
             closeDrawer();
             showRecommendation();
         }, false);
-        addDrawerAction(drawerPanel, "آمار مطالعه", "chart", 0xFF69D2A0, () -> {
+        addDrawerAction(drawerPanel, "آمار مطالعه", "chart", PURPLE, () -> {
             closeDrawer();
             showStatistics();
         }, false);
@@ -1122,28 +1211,28 @@ public final class MainActivity extends Activity {
         drawerSettingsOptions.setVisibility(drawerSettingsExpanded ? View.VISIBLE : View.GONE);
         drawerPanel.addView(drawerSettingsOptions, new LinearLayout.LayoutParams(-1,
                 drawerSettingsExpanded ? ViewGroup.LayoutParams.WRAP_CONTENT : 0));
-        addDrawerAction(drawerSettingsOptions, "عمومی", "settings", 0xFFB69AFF, () -> {
+        addDrawerAction(drawerSettingsOptions, "عمومی", "settings", SECONDARY_ACCENT, () -> {
             closeDrawer();
             showSettings();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "محاوره‌ای‌ساز", "scan_text", 0xFF61C7D2, () -> {
+        addDrawerAction(drawerSettingsOptions, "محاوره‌ای‌ساز", "scan_text", SECONDARY_ACCENT, () -> {
             closeDrawer();
             showColloquializer();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "ژانرها", "tag", 0xFF82CF8B, () -> {
+        addDrawerAction(drawerSettingsOptions, "ژانرها", "tag", SECONDARY_ACCENT, () -> {
             closeDrawer();
             showTagSettings();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "وزن‌های پیشنهاد", "chart", 0xFF69D2A0, () -> {
+        addDrawerAction(drawerSettingsOptions, "وزن‌های پیشنهاد", "chart", SECONDARY_ACCENT, () -> {
             closeDrawer();
             showRecommendationSettings();
         }, true);
-        addDrawerAction(drawerSettingsOptions, "تم‌ها", "settings", 0xFFE6A7FF, () -> {
+        addDrawerAction(drawerSettingsOptions, "تم‌ها", "settings", SECONDARY_ACCENT, () -> {
             closeDrawer();
             showThemes();
         }, true);
 
-        addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", 0xFF69D2A0, () -> {
+        addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", SECONDARY_ACCENT, () -> {
             ResumeTarget target = findResumeTarget();
             closeDrawer();
             if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
@@ -1850,6 +1939,8 @@ public final class MainActivity extends Activity {
         readerExtensionSpinner = new ProgressBar(this);
         readerExtensionSpinner.setIndeterminate(true);
         if (Build.VERSION.SDK_INT >= 21) {
+            readerExtensionSpinner.setIndeterminateTintList(
+                    android.content.res.ColorStateList.valueOf(PURPLE));
             readerExtensionSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
         }
         readerExtensionSpinner.setVisibility(View.GONE);
@@ -2059,8 +2150,7 @@ public final class MainActivity extends Activity {
 
         GradientDrawable preview = new GradientDrawable();
         preview.setCornerRadius(dp(9));
-        if (isGradientTheme(index)) applyGradientTheme(preview, index, 19);
-        else preview.setColor(themeAccentColor(index));
+        applyGradientTheme(preview, index, 19);
         FrameLayout swatch = new FrameLayout(this);
         swatch.setBackground(preview);
         card.addView(swatch, new LinearLayout.LayoutParams(dp(30), dp(30)));
@@ -2087,7 +2177,7 @@ public final class MainActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(4), dp(4), dp(4), dp(4));
         EditText name = edit("نام تم", false);
-        EditText colors = edit("#B69AFF یا #B69AFF, #7046C8", false);
+        EditText colors = edit("دو رنگ با ویرگول: #B69AFF, #7046C8", false);
         colors.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
         form.addView(name, fieldParams());
         form.addView(colors, fieldParams());
@@ -2099,8 +2189,8 @@ public final class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 String themeName = name.getText().toString().trim();
                 String[] rawColors = colors.getText().toString().split(",");
-                if (themeName.isEmpty() || rawColors.length < 1 || rawColors.length > 2) {
-                    toast("نام تم و یک یا دو رنگ وارد کن.");
+                if (themeName.isEmpty() || rawColors.length != 2) {
+                    toast("نام تم و دقیقاً دو رنگ وارد کن.");
                     return;
                 }
                 JSONArray parsedColors = new JSONArray();
@@ -2380,16 +2470,7 @@ public final class MainActivity extends Activity {
     }
 
     private void selectAuthorCard(String author) {
-        if (!selectedAuthorNames.isEmpty()) {
-            if (containsIgnoreCase(selectedAuthorNames, author)) selectedAuthorNames.clear();
-            else {
-                selectedAuthorNames.clear();
-                selectedAuthorNames.add(author);
-            }
-            refreshAuthorSelection();
-        } else {
-            showAuthorBooks(author);
-        }
+        showAllBooksForAuthor(author);
     }
 
     private void startAuthorSelection(String author) {
@@ -2489,6 +2570,10 @@ public final class MainActivity extends Activity {
             removeIgnoreCase(favoriteAuthorPreferences, oldName);
             favoriteAuthorPreferences.add(newName);
         }
+        if (containsIgnoreCase(dislikedAuthorPreferences, oldName)) {
+            removeIgnoreCase(dislikedAuthorPreferences, oldName);
+            if (!containsIgnoreCase(favoriteAuthorPreferences, newName)) dislikedAuthorPreferences.add(newName);
+        }
         persistRecommendationState();
         selectedAuthorNames.clear();
         activeAuthor = newName;
@@ -2499,7 +2584,22 @@ public final class MainActivity extends Activity {
 
     private void toggleFavoriteAuthor(String author) {
         if (containsIgnoreCase(favoriteAuthorPreferences, author)) removeIgnoreCase(favoriteAuthorPreferences, author);
-        else favoriteAuthorPreferences.add(author);
+        else {
+            removeIgnoreCase(dislikedAuthorPreferences, author);
+            favoriteAuthorPreferences.add(author);
+        }
+        rebuildRecommendationWeights();
+        persistRecommendationState();
+        if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
+    }
+
+    private void toggleDislikedAuthor(String author) {
+        if (containsIgnoreCase(dislikedAuthorPreferences, author)) removeIgnoreCase(dislikedAuthorPreferences, author);
+        else {
+            removeIgnoreCase(favoriteAuthorPreferences, author);
+            dislikedAuthorPreferences.add(author);
+        }
+        rebuildRecommendationWeights();
         persistRecommendationState();
         if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
     }
@@ -2522,6 +2622,18 @@ public final class MainActivity extends Activity {
         activeGenreFilter.clear();
         activeCollectionId = "other";
         showBookShelfPage(true);
+    }
+
+    private void showAllBooksForAuthor(String author) {
+        selectedAuthorNames.clear();
+        selectedBookIds.clear();
+        activeGenreFilter.clear();
+        activeCollectionId = "other";
+        showBookShelfPage(true);
+        if (searchField != null) {
+            searchField.setText(author == null ? "" : author.trim());
+            searchField.setSelection(searchField.length());
+        }
     }
 
     private void showRecommendation() {
@@ -2595,6 +2707,25 @@ public final class MainActivity extends Activity {
         descriptionParams.topMargin = dp(12);
         body.addView(description, descriptionParams);
 
+        Runnable openRecommendedDetails = () -> {
+            if (recommendedRecord == null) return;
+            bookInfoReturnPage = "recommendations";
+            showBookInfo(recommendedRecord);
+        };
+        LinearLayout feedback = new LinearLayout(this);
+        feedback.setGravity(Gravity.CENTER);
+        feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        FrameLayout likeButton = plainIconButton("thumb_up", PURPLE, openRecommendedDetails);
+        likeButton.setContentDescription("جزئیات کتاب");
+        FrameLayout dislikeButton = plainIconButton("thumb_down", RED,
+                () -> rejectRecommendedBook(recommendedRecord));
+        dislikeButton.setContentDescription("نپسندیدن کتاب");
+        feedback.addView(likeButton, new LinearLayout.LayoutParams(dp(54), dp(46)));
+        feedback.addView(dislikeButton, new LinearLayout.LayoutParams(dp(54), dp(46)));
+        LinearLayout.LayoutParams feedbackParams = new LinearLayout.LayoutParams(-1, dp(46));
+        feedbackParams.topMargin = dp(8);
+        body.addView(feedback, feedbackParams);
+
         View spacer = new View(this);
         body.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
         Runnable openRecommendedChapters = () -> {
@@ -2605,13 +2736,6 @@ public final class MainActivity extends Activity {
             chaptersReturnPage = "recommendations";
             showChapters();
         };
-        Runnable openRecommendedDetails = () -> {
-            if (recommendedRecord == null) return;
-            bookInfoReturnPage = "recommendations";
-            showBookInfo(recommendedRecord);
-        };
-        body.addView(textButton("جزئیات", "book", PURPLE, openRecommendedDetails),
-                new LinearLayout.LayoutParams(-1, dp(46)));
         LinearLayout.LayoutParams chaptersButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
         chaptersButtonParams.topMargin = dp(6);
         body.addView(textButton("فهرست Chapterها", "folder", PURPLE, openRecommendedChapters),
@@ -2620,6 +2744,17 @@ public final class MainActivity extends Activity {
         nextButtonParams.topMargin = dp(7);
         body.addView(textButton("پیشنهاد بعدی", "next", PURPLE, this::showRecommendation), nextButtonParams);
         appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void rejectRecommendedBook(JSONObject book) {
+        if (book == null) return;
+        String id = book.optString("id", "");
+        if (id.isEmpty()) return;
+        dislikedBookIds.add(id);
+        favoriteBookIds.remove(id);
+        rebuildRecommendationWeights();
+        persistRecommendationState();
+        showRecommendation();
     }
 
     private void showRecommendationSettings() {
@@ -2659,13 +2794,12 @@ public final class MainActivity extends Activity {
 
         List<BookRecommendationEngine.Book> books = recommendationBooks();
         Map<Long, BookRecommendationEngine.WeightBreakdown> breakdowns = new HashMap<>();
-        double maxTotal = 0, maxGenre = 0, maxRating = 0, maxPersonal = 0, maxReading = 0;
+        double maxTotal = 0, maxGenre = 0, maxPersonal = 0, maxReading = 0;
         for (BookRecommendationEngine.Book book : books) {
             BookRecommendationEngine.WeightBreakdown parts = recommendationEngine.weightBreakdown(book);
             breakdowns.put(book.id, parts);
             maxTotal = Math.max(maxTotal, parts.total);
             maxGenre = Math.max(maxGenre, parts.genre);
-            maxRating = Math.max(maxRating, parts.rating);
             maxPersonal = Math.max(maxPersonal, parts.personal);
             maxReading = Math.max(maxReading, parts.reading);
         }
@@ -2679,7 +2813,7 @@ public final class MainActivity extends Activity {
         } else {
             for (BookRecommendationEngine.Book book : books) {
                 addRecommendationWeightCard(rows, book, breakdowns.get(book.id), maxTotal,
-                        maxGenre, maxRating, maxPersonal, maxReading, recommendationDetailsVisible);
+                        maxGenre, maxPersonal, maxReading, recommendationDetailsVisible);
             }
         }
         detailsButton.setOnClickListener(v -> {
@@ -2691,7 +2825,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showRecommendationWeightsHelp() {
-        TextView help = text("کتاب‌های ناتمام بر اساس وزن نهایی از بالا به پایین مرتب شده‌اند. وزن از ژانر، امتیاز ستاره‌ای، علاقهٔ شخصی و در صورت رسیدن به شرط حداقل داده از تعداد کلمات ساخته می‌شود. جزئیات را باز کن و روی نام هر شاخص بزن تا رنگش عوض شود.",
+        TextView help = text("کتاب‌های ناتمام بر اساس وزن نهایی از بالا به پایین مرتب شده‌اند. وزن از ژانر، علاقهٔ شخصی و در صورت رسیدن به شرط حداقل داده از تعداد کلمات ساخته می‌شود. ستاره‌ها فقط پیش‌بینی سیستم هستند و در پیشنهاد اثر ندارند.",
                 14, TEXT);
         help.setGravity(Gravity.CENTER);
         help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
@@ -2703,8 +2837,8 @@ public final class MainActivity extends Activity {
 
     private void addRecommendationColorControls(LinearLayout parent, boolean visible) {
         if (!visible) return;
-        String[] keys = {"genre", "rating", "personal", "reading"};
-        String[] labels = {"ژانر", "ستاره", "علاقه", "کلمات"};
+        String[] keys = {"genre", "personal", "reading"};
+        String[] labels = {"ژانر", "علاقه", "کلمات"};
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER);
         for (int i = 0; i < keys.length; i++) {
@@ -2729,8 +2863,7 @@ public final class MainActivity extends Activity {
     }
 
     private int getRecommendationMetricColorIndex(String key) {
-        int defaultIndex = "genre".equals(key) ? 0 : "rating".equals(key) ? 1
-                : "personal".equals(key) ? 2 : 3;
+        int defaultIndex = "genre".equals(key) ? 0 : "personal".equals(key) ? 1 : 2;
         return Math.max(0, Math.min(RECOMMENDATION_METRIC_COLORS.length - 1,
                 recommendationState.getInt("metric_color_" + key, defaultIndex)));
     }
@@ -2741,7 +2874,7 @@ public final class MainActivity extends Activity {
 
     private void addRecommendationWeightCard(LinearLayout parent, BookRecommendationEngine.Book book,
             BookRecommendationEngine.WeightBreakdown parts, double maxTotal, double maxGenre,
-            double maxRating, double maxPersonal, double maxReading, boolean showDetails) {
+            double maxPersonal, double maxReading, boolean showDetails) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(9), dp(12), dp(9));
@@ -2758,7 +2891,6 @@ public final class MainActivity extends Activity {
         addWeightTube(card, parts.total, maxTotal, PURPLE, 8);
         if (showDetails) {
             addWeightFactor(card, "ژانر", parts.genre, maxGenre, recommendationMetricColor("genre"));
-            addWeightFactor(card, "ستاره", parts.rating, maxRating, recommendationMetricColor("rating"));
             addWeightFactor(card, "علاقه", parts.personal, maxPersonal, recommendationMetricColor("personal"));
             addWeightFactor(card, "کلمات", parts.reading, maxReading, recommendationMetricColor("reading"));
         }
@@ -2984,7 +3116,8 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < tags.length(); i++) {
             String tag = tags.optString(i);
             if (!tag.toLowerCase(Locale.ROOT).contains(query)) continue;
-            boolean favorite = favoriteGenrePreferences.contains(tag);
+            boolean favorite = containsIgnoreCase(favoriteGenrePreferences, tag);
+            boolean disliked = containsIgnoreCase(dislikedGenrePreferences, tag);
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(10), dp(3), dp(10), dp(3));
@@ -2995,25 +3128,36 @@ public final class MainActivity extends Activity {
             label.setSingleLine(true);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
             row.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
-            FrameLayout favoriteButton = iconButton(favorite ? "heart_filled" : "heart_outline",
-                    favorite ? RED : PURPLE, false, () -> {
-                        if (!favoriteGenrePreferences.add(tag)) favoriteGenrePreferences.remove(tag);
-                        rebuildRecommendationWeights();
-                        persistRecommendationState();
-                        renderManagedTags(rows, search);
-                    });
-            favoriteButton.setContentDescription(favorite ? "حذف ژانر از علاقه‌مندی‌ها" : "افزودن ژانر به علاقه‌مندی‌ها");
-            row.addView(favoriteButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : PURPLE,
+                    () -> { toggleGenrePreference(tag, true); renderManagedTags(rows, search); });
+            likeButton.setContentDescription(favorite ? "حذف پسند ژانر" : "پسندیدن ژانر");
+            row.addView(likeButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
+            FrameLayout dislikeButton = plainIconButton("thumb_down", disliked ? RED : MUTED,
+                    () -> { toggleGenrePreference(tag, false); renderManagedTags(rows, search); });
+            dislikeButton.setContentDescription(disliked ? "حذف نپسند ژانر" : "نپسندیدن ژانر");
+            row.addView(dislikeButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
             FrameLayout editButton = iconButton("edit", MUTED, false,
                     () -> showEditTagDialog(tag, rows, search));
             editButton.setContentDescription("ویرایش یا ادغام ژانر");
-            row.addView(editButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            row.addView(editButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
             rows.addView(row, rowParams);
         }
         if (rows.getChildCount() == 0) {
             TextView empty = emptyLabel(query.isEmpty() ? "هنوز ژانری ثبت نشده" : "ژانری پیدا نشد");
             rows.addView(empty, new LinearLayout.LayoutParams(-1, dp(80)));
         }
+    }
+
+    private void toggleGenrePreference(String genre, boolean liked) {
+        Set<String> selected = liked ? favoriteGenrePreferences : dislikedGenrePreferences;
+        Set<String> opposite = liked ? dislikedGenrePreferences : favoriteGenrePreferences;
+        if (containsIgnoreCase(selected, genre)) removeIgnoreCase(selected, genre);
+        else {
+            removeIgnoreCase(opposite, genre);
+            selected.add(genre);
+        }
+        rebuildRecommendationWeights();
+        persistRecommendationState();
     }
 
     private void removeIgnoreCase(Set<String> values, String value) {
@@ -3092,6 +3236,7 @@ public final class MainActivity extends Activity {
         if (oldTag.equals(newTag)) return true;
         String before = library.toString();
         Set<String> oldFavorites = new LinkedHashSet<>(favoriteGenrePreferences);
+        Set<String> oldDislikes = new LinkedHashSet<>(dislikedGenrePreferences);
         Set<String> oldFilters = new HashSet<>(activeGenreFilter);
         try {
             library.put("genres", renamedTags(tags, oldTag, newTag));
@@ -3127,10 +3272,12 @@ public final class MainActivity extends Activity {
             canonicalizeLibraryGenres();
         } catch (JSONException ignored) { return false; }
         replaceSetValue(favoriteGenrePreferences, oldTag, newTag);
+        replaceSetValue(dislikedGenrePreferences, oldTag, newTag);
         replaceSetValue(activeGenreFilter, oldTag, newTag);
         if (!saveLibrary()) {
             restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
+            dislikedGenrePreferences.clear(); dislikedGenrePreferences.addAll(oldDislikes);
             activeGenreFilter.clear(); activeGenreFilter.addAll(oldFilters);
             return false;
         }
@@ -3155,6 +3302,7 @@ public final class MainActivity extends Activity {
     private boolean deleteTag(String tag, LinearLayout rows, EditText search) {
         String before = library.toString();
         Set<String> oldFavorites = new LinkedHashSet<>(favoriteGenrePreferences);
+        Set<String> oldDislikes = new LinkedHashSet<>(dislikedGenrePreferences);
         Set<String> oldFilters = new HashSet<>(activeGenreFilter);
         JSONArray tags = library.optJSONArray("genres");
         JSONArray remaining = new JSONArray();
@@ -3199,10 +3347,12 @@ public final class MainActivity extends Activity {
             library.put("genreEquivalents", keptGroups);
         } catch (JSONException error) { return false; }
         removeIgnoreCase(favoriteGenrePreferences, tag);
+        removeIgnoreCase(dislikedGenrePreferences, tag);
         removeIgnoreCase(activeGenreFilter, tag);
         if (!saveLibrary()) {
             restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
+            dislikedGenrePreferences.clear(); dislikedGenrePreferences.addAll(oldDislikes);
             activeGenreFilter.clear(); activeGenreFilter.addAll(oldFilters);
             return false;
         }
@@ -3252,6 +3402,14 @@ public final class MainActivity extends Activity {
         }
         favoriteGenrePreferences.clear();
         favoriteGenrePreferences.addAll(favoriteGenres);
+
+        Set<String> dislikedGenres = new LinkedHashSet<>();
+        for (String value : dislikedGenrePreferences) {
+            String canonical = canonicalGenre(value);
+            if (!canonical.isEmpty() && !containsIgnoreCase(favoriteGenres, canonical)) dislikedGenres.add(canonical);
+        }
+        dislikedGenrePreferences.clear();
+        dislikedGenrePreferences.addAll(dislikedGenres);
 
         Set<String> filters = new HashSet<>();
         for (String value : activeGenreFilter) {
@@ -3434,6 +3592,7 @@ public final class MainActivity extends Activity {
     private boolean saveGenreEquivalentGroup(String oldPrimary, String primary, Set<String> selectedAliases) {
         String before = library.toString();
         Set<String> oldFavorites = new LinkedHashSet<>(favoriteGenrePreferences);
+        Set<String> oldDislikes = new LinkedHashSet<>(dislikedGenrePreferences);
         Set<String> oldFilters = new HashSet<>(activeGenreFilter);
         JSONArray current = genreEquivalentGroups();
         JSONArray rebuilt = new JSONArray();
@@ -3492,6 +3651,7 @@ public final class MainActivity extends Activity {
         if (!saveLibrary()) {
             restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
+            dislikedGenrePreferences.clear(); dislikedGenrePreferences.addAll(oldDislikes);
             activeGenreFilter.clear(); activeGenreFilter.addAll(oldFilters);
             return false;
         }
@@ -3573,9 +3733,14 @@ public final class MainActivity extends Activity {
         }
 
         Set<String> preferredGenreKeys = new HashSet<>();
+        Set<String> dislikedGenreKeys = new HashSet<>();
         for (String genre : favoriteGenrePreferences) {
             String key = rememberRecommendationGenre(genreNames, genre);
             if (key != null) preferredGenreKeys.add(key);
+        }
+        for (String genre : dislikedGenrePreferences) {
+            String key = rememberRecommendationGenre(genreNames, genre);
+            if (key != null) dislikedGenreKeys.add(key);
         }
 
         JSONArray books = library.optJSONArray("books");
@@ -3601,6 +3766,11 @@ public final class MainActivity extends Activity {
         for (String key : preferredGenreKeys) {
             if (genreNames.containsKey(key)) recommendationPreferences.genreWeights.put(key, 30);
         }
+        for (String key : dislikedGenreKeys) {
+            if (!preferredGenreKeys.contains(key) && genreNames.containsKey(key)) {
+                recommendationPreferences.genreWeights.put(key, 1);
+            }
+        }
 
     }
 
@@ -3614,7 +3784,8 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < books.length(); i++) {
             JSONObject candidate = books.optJSONObject(i);
             if (candidate == null || "other".equals(candidate.optString("collectionId", "other"))
-                    || bookReadPercent(candidate) >= 100) continue;
+                    || bookReadPercent(candidate) >= 100
+                    || dislikedBookIds.contains(candidate.optString("id"))) continue;
             String collectionId = candidate.optString("collectionId", "other");
             int number = seriesBookNumber(candidate);
             Integer first = firstUnfinishedSeriesNumber.get(collectionId);
@@ -3622,7 +3793,8 @@ public final class MainActivity extends Activity {
         }
         for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
-            if (book == null || bookReadPercent(book) >= 100) continue;
+            if (book == null || bookReadPercent(book) >= 100
+                    || dislikedBookIds.contains(book.optString("id"))) continue;
             String collectionId = book.optString("collectionId", "other");
             if (!"other".equals(collectionId)) {
                 Integer firstNumber = firstUnfinishedSeriesNumber.get(collectionId);
@@ -3640,10 +3812,10 @@ public final class MainActivity extends Activity {
             }
             String title = displayBookTitle(book);
             String author = book.optString("author", "");
-            int savedRating = book.optInt("interestRating", 0);
             boolean favoriteAuthor = containsIgnoreCase(favoriteAuthorPreferences, author);
+            boolean dislikedAuthor = containsIgnoreCase(dislikedAuthorPreferences, author);
             result.add(new BookRecommendationEngine.Book(id, title, genreNames, author,
-                    savedRating, favoriteBookIds.contains(book.optString("id")), favoriteAuthor,
+                    favoriteBookIds.contains(book.optString("id")), favoriteAuthor, dislikedAuthor,
                     wordsReadFromBook(book), allReadWords, includeReadingShare));
         }
         return result;
@@ -3716,12 +3888,24 @@ public final class MainActivity extends Activity {
             String normalized = titleCaseWords(genre);
             if (!normalized.isEmpty()) favoriteGenrePreferences.add(normalized);
         }
+        Set<String> savedDislikedGenres = recommendationState.getStringSet("disliked_genres", Collections.emptySet());
+        if (savedDislikedGenres != null) for (String genre : savedDislikedGenres) {
+            String normalized = titleCaseWords(genre);
+            if (!normalized.isEmpty()) dislikedGenrePreferences.add(normalized);
+        }
         Set<String> savedBookIds = recommendationState.getStringSet("favorite_book_ids", Collections.emptySet());
         if (savedBookIds != null) favoriteBookIds.addAll(savedBookIds);
+        Set<String> savedDislikedBookIds = recommendationState.getStringSet("disliked_book_ids", Collections.emptySet());
+        if (savedDislikedBookIds != null) dislikedBookIds.addAll(savedDislikedBookIds);
         Set<String> savedAuthors = recommendationState.getStringSet("favorite_authors", Collections.emptySet());
         if (savedAuthors != null) for (String author : savedAuthors) {
             String normalized = titleCaseWords(author);
             if (!normalized.isEmpty()) favoriteAuthorPreferences.add(normalized);
+        }
+        Set<String> savedDislikedAuthors = recommendationState.getStringSet("disliked_authors", Collections.emptySet());
+        if (savedDislikedAuthors != null) for (String author : savedDislikedAuthors) {
+            String normalized = titleCaseWords(author);
+            if (!normalized.isEmpty()) dislikedAuthorPreferences.add(normalized);
         }
     }
 
@@ -3737,8 +3921,11 @@ public final class MainActivity extends Activity {
         recommendationState.edit().putString("genre_weights", weights.toString())
                 .putStringSet("seen_books", ids)
                 .putStringSet("favorite_genres", new HashSet<>(favoriteGenrePreferences))
+                .putStringSet("disliked_genres", new HashSet<>(dislikedGenrePreferences))
                 .putStringSet("favorite_book_ids", new HashSet<>(favoriteBookIds))
-                .putStringSet("favorite_authors", new HashSet<>(favoriteAuthorPreferences)).apply();
+                .putStringSet("disliked_book_ids", new HashSet<>(dislikedBookIds))
+                .putStringSet("favorite_authors", new HashSet<>(favoriteAuthorPreferences))
+                .putStringSet("disliked_authors", new HashSet<>(dislikedAuthorPreferences)).apply();
     }
 
     private JSONArray collectionArray() {
@@ -4316,8 +4503,7 @@ public final class MainActivity extends Activity {
         ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
         progress.setProgress(readPercent);
-        if (Build.VERSION.SDK_INT >= 21) progress.setProgressTintList(
-                android.content.res.ColorStateList.valueOf(PURPLE));
+        progress.setProgressDrawable(createSplashProgressDrawable());
         LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(5));
         progressParams.bottomMargin = dp(16);
         body.addView(progress, progressParams);
@@ -4410,23 +4596,26 @@ public final class MainActivity extends Activity {
         int averageWeight = genreCount == 0 ? 10 : totalWeight / genreCount;
         int rating = averageWeight >= 28 ? 5 : averageWeight >= 18 ? 4
                 : averageWeight >= 9 ? 3 : averageWeight >= 6 ? 2 : 1;
-        if (book != null && favoriteBookIds.contains(book.optString("id"))) rating++;
+        if (book != null) {
+            if (favoriteBookIds.contains(book.optString("id"))
+                    || containsIgnoreCase(favoriteAuthorPreferences, book.optString("author"))) rating++;
+            if (dislikedBookIds.contains(book.optString("id"))
+                    || containsIgnoreCase(dislikedAuthorPreferences, book.optString("author"))) rating--;
+        }
         return Math.max(1, Math.min(5, rating));
     }
 
     private void addBookInterestRating(LinearLayout body, JSONObject book) {
         int estimate = estimatedInterestRating(book);
-        int userRating = book.optInt("interestRating", 0);
-        int shownRating = userRating >= 1 && userRating <= 5 ? userRating : estimate;
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
         card.setPadding(dp(12), dp(12), dp(12), dp(12));
         card.setBackground(roundDrawable(SURFACE, 0xFF29242F, 11));
-        TextView title = text(userRating > 0 ? "علاقهٔ ثبت‌شدهٔ تو" : "برآورد الگوریتم", 14, TEXT);
+        TextView title = text("پیش‌بینی سیستم", 14, TEXT);
         title.setGravity(Gravity.CENTER);
         card.addView(title);
-        TextView estimateText = text("برآورد پیش‌فرض: " + estimate + " از 5", 12, MUTED);
+        TextView estimateText = text("میزان علاقهٔ پیش‌بینی‌شده: " + estimate + " از 5", 12, MUTED);
         estimateText.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams estimateParams = new LinearLayout.LayoutParams(-1, -2);
         estimateParams.topMargin = dp(3);
@@ -4435,25 +4624,45 @@ public final class MainActivity extends Activity {
         stars.setGravity(Gravity.CENTER);
         stars.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         for (int i = 1; i <= 5; i++) {
-            final int rating = i;
-            View star = ratingStar(i <= shownRating, rating, book);
-            star.setOnClickListener(v -> saveBookInterestRating(book, rating));
+            View star = ratingStar(i <= estimate, i);
             stars.addView(star, new LinearLayout.LayoutParams(dp(42), dp(46)));
         }
         LinearLayout.LayoutParams starsParams = new LinearLayout.LayoutParams(-1, -2);
         starsParams.topMargin = dp(4);
         card.addView(stars, starsParams);
-        if (userRating > 0) {
-            TextView reset = text("استفاده از برآورد خودکار", 12, PURPLE);
-            reset.setGravity(Gravity.CENTER);
-            reset.setPadding(0, dp(5), 0, 0);
-            reset.setOnClickListener(v -> saveBookInterestRating(book, 0));
-            card.addView(reset);
-        }
+        LinearLayout feedback = new LinearLayout(this);
+        feedback.setGravity(Gravity.CENTER);
+        feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        boolean favorite = favoriteBookIds.contains(book.optString("id"));
+        boolean disliked = dislikedBookIds.contains(book.optString("id"));
+        FrameLayout like = plainIconButton("thumb_up", favorite ? GREEN : PURPLE,
+                () -> toggleBookFeedback(book, true));
+        like.setContentDescription(favorite ? "حذف پسند کتاب" : "پسندیدن کتاب");
+        FrameLayout dislike = plainIconButton("thumb_down", disliked ? RED : MUTED,
+                () -> toggleBookFeedback(book, false));
+        dislike.setContentDescription(disliked ? "حذف نپسند کتاب" : "نپسندیدن کتاب");
+        feedback.addView(like, new LinearLayout.LayoutParams(dp(48), dp(40)));
+        feedback.addView(dislike, new LinearLayout.LayoutParams(dp(48), dp(40)));
+        LinearLayout.LayoutParams feedbackParams = new LinearLayout.LayoutParams(-1, dp(40));
+        feedbackParams.topMargin = dp(5);
+        card.addView(feedback, feedbackParams);
         body.addView(card, new LinearLayout.LayoutParams(-1, -2));
     }
 
-    private View ratingStar(boolean selected, int rating, JSONObject book) {
+    private void toggleBookFeedback(JSONObject book, boolean liked) {
+        if (book == null) return;
+        String id = book.optString("id", "");
+        if (id.isEmpty()) return;
+        Set<String> selected = liked ? favoriteBookIds : dislikedBookIds;
+        Set<String> opposite = liked ? dislikedBookIds : favoriteBookIds;
+        if (selected.contains(id)) selected.remove(id);
+        else { opposite.remove(id); selected.add(id); }
+        rebuildRecommendationWeights();
+        persistRecommendationState();
+        showBookInfo(book);
+    }
+
+    private View ratingStar(boolean selected, int rating) {
         View star = new View(this) {
             private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
             @Override protected void onDraw(Canvas canvas) {
@@ -4491,25 +4700,9 @@ public final class MainActivity extends Activity {
             }
         };
         star.setContentDescription(rating + " از 5");
-        star.setClickable(true);
-        star.setFocusable(true);
-        applyPressScale(star, .92f);
+        star.setClickable(false);
+        star.setFocusable(false);
         return star;
-    }
-
-    private void saveBookInterestRating(JSONObject book, int rating) {
-        int previous = book.optInt("interestRating", 0);
-        if (rating == 0) book.remove("interestRating");
-        else putJson(book, "interestRating", rating);
-        if (!saveLibrary()) {
-            if (previous == 0) book.remove("interestRating");
-            else putJson(book, "interestRating", previous);
-            toast("ذخیرهٔ امتیاز انجام نشد");
-            return;
-        }
-        rebuildRecommendationWeights();
-        persistRecommendationState();
-        showBookInfo(book);
     }
 
     private void addDashboardHeader() {
@@ -4838,7 +5031,10 @@ public final class MainActivity extends Activity {
         String id = book.optString("id");
         if (id.isEmpty()) return;
         boolean isFavorite;
-        if (favoriteBookIds.add(id)) isFavorite = true;
+        if (favoriteBookIds.add(id)) {
+            dislikedBookIds.remove(id);
+            isFavorite = true;
+        }
         else {
             favoriteBookIds.remove(id);
             isFavorite = false;
@@ -4885,8 +5081,10 @@ public final class MainActivity extends Activity {
         View readerHeaderBar = makeCompactReaderHeader(book.optString("title"),
                 chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length());
         appColumn.addView(readerHeaderBar, new LinearLayout.LayoutParams(-1, dp(80)));
-        FrameLayout progressTrack = new FrameLayout(this); progressTrack.setBackgroundColor(0xFF241C2E);
-        readerProgress = new View(this); readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
+        FrameLayout progressTrack = new FrameLayout(this);
+        progressTrack.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 3));
+        readerProgress = new View(this);
+        readerProgress.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 3));
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
         progressTrack.addView(readerProgress, progressParams);
         appColumn.addView(progressTrack, new LinearLayout.LayoutParams(-1, dp(3)));
@@ -5350,7 +5548,7 @@ public final class MainActivity extends Activity {
         }
         int width = readerProgress.getParent() instanceof View ? ((View) readerProgress.getParent()).getWidth() : 0;
         ViewGroup.LayoutParams lp = readerProgress.getLayoutParams(); lp.width = Math.round(width * percent / 100f); readerProgress.setLayoutParams(lp);
-        readerProgress.setBackgroundColor(chapter.optBoolean("done") ? GREEN : BLUE);
+        readerProgress.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 3));
         if (chapterAdapter != null && "chapters".equals(page)) chapterAdapter.notifyDataSetChanged();
     }
 
@@ -6605,7 +6803,7 @@ public final class MainActivity extends Activity {
                 connection.setConnectTimeout(12_000);
                 connection.setReadTimeout(18_000);
                 connection.setInstanceFollowRedirects(true);
-                connection.setRequestProperty("User-Agent", "NovelReader/1.4.33 (Android)");
+                connection.setRequestProperty("User-Agent", "NovelReader/1.4.34 (Android)");
                 connection.connect();
                 int status = connection.getResponseCode();
                 if (status < 200 || status >= 300) throw new IOException("HTTP " + status);
@@ -7167,6 +7365,9 @@ public final class MainActivity extends Activity {
     private GradientDrawable roundDrawable(int color, int stroke, int radiusDp) {
         GradientDrawable drawable = new GradientDrawable();
         if (color == PURPLE && isGradientTheme(accentIndex)) applyGradientTheme(drawable, accentIndex);
+        else if (color == SECONDARY_ACCENT && isGradientTheme(accentIndex)) {
+            applySecondaryGradientTheme(drawable, accentIndex);
+        }
         else drawable.setColor(color);
         drawable.setCornerRadius(dp(radiusDp));
         if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), themedStrokeColor(stroke));
@@ -7532,6 +7733,7 @@ public final class MainActivity extends Activity {
                 }
             }
             unique.addAll(favoriteAuthorPreferences);
+            unique.addAll(dislikedAuthorPreferences);
             String query = authorSearchField == null ? ""
                     : authorSearchField.getText().toString().trim().toLowerCase(Locale.ROOT);
             List<String> result = new ArrayList<>();
@@ -7549,6 +7751,7 @@ public final class MainActivity extends Activity {
         @Override public View getView(int position, View convertView, ViewGroup parent) {
             String author = getAuthor(position);
             boolean favorite = containsIgnoreCase(favoriteAuthorPreferences, author);
+            boolean disliked = containsIgnoreCase(dislikedAuthorPreferences, author);
             boolean selected = containsIgnoreCase(selectedAuthorNames, author);
             FrameLayout frame = new FrameLayout(MainActivity.this);
             frame.setClickable(false);
@@ -7580,18 +7783,20 @@ public final class MainActivity extends Activity {
             TextView count = text(authorBookCount(author) + " کتاب", 12, MUTED);
             count.setGravity(Gravity.CENTER);
             card.addView(count, new LinearLayout.LayoutParams(-1, dp(22)));
+            LinearLayout feedback = new LinearLayout(MainActivity.this);
+            feedback.setGravity(Gravity.CENTER);
+            feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : PURPLE,
+                    () -> toggleFavoriteAuthor(author));
+            likeButton.setContentDescription(favorite ? "حذف پسند نویسنده" : "پسندیدن نویسنده");
+            FrameLayout dislikeButton = plainIconButton("thumb_down", disliked ? RED : MUTED,
+                    () -> toggleDislikedAuthor(author));
+            dislikeButton.setContentDescription(disliked ? "حذف نپسند نویسنده" : "نپسندیدن نویسنده");
+            feedback.addView(likeButton, new LinearLayout.LayoutParams(dp(42), dp(36)));
+            feedback.addView(dislikeButton, new LinearLayout.LayoutParams(dp(42), dp(36)));
+            card.addView(feedback, new LinearLayout.LayoutParams(-1, dp(36)));
             frame.addView(card, new FrameLayout.LayoutParams(-1, -1));
-
-            FrameLayout favoriteButton = plainIconButton(favorite ? "heart_filled" : "heart_outline",
-                    favorite ? RED : MUTED, () -> toggleFavoriteAuthor(author));
-            favoriteButton.setContentDescription(favorite ? "حذف نویسنده از علاقه‌مندی‌ها"
-                    : "افزودن نویسنده به علاقه‌مندی‌ها");
-            FrameLayout.LayoutParams favoriteParams = new FrameLayout.LayoutParams(dp(42), dp(42),
-                    Gravity.TOP | Gravity.RIGHT);
-            favoriteParams.topMargin = dp(5);
-            favoriteParams.rightMargin = dp(5);
-            frame.addView(favoriteButton, favoriteParams);
-            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(154)));
+            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(174)));
             return frame;
         }
     }
@@ -7778,22 +7983,24 @@ public final class MainActivity extends Activity {
             boolean selected = selectedChapterKeys.contains(key);
             boolean done = chapterItem.optBoolean("done"), hasText = chapterItem.optBoolean("hasText");
             int color = done ? GREEN : hasText ? BLUE : PURPLE;
+            boolean hasEndMarker = chapterItem.optBoolean("hasEndMarker");
             LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
             row.setTag(key);
             row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
             LinearLayout detail = new LinearLayout(MainActivity.this); detail.setOrientation(LinearLayout.VERTICAL);
             TextView name = text(chapterLabel(chapterItem, position), 15, TEXT);
-            FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(0xFF302A38, Color.TRANSPARENT, 4));
-            View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(color, Color.TRANSPARENT, 4));
+            FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 5));
+            View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 5));
             final int fillPercent = done ? 100 : chapterItem.optInt("percent");
             FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(4), Gravity.LEFT);
             meter.addView(fill, fillParams);
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
             detail.addView(name); LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
-            String statusIcon = selecting ? (selected ? "reorder" : "select") : done ? "check" : hasText ? "edit" : "book";
-            int statusColor = selecting ? (selected ? PURPLE : MUTED) : color;
+            String statusIcon = selecting ? (selected ? "reorder" : "select")
+                    : hasEndMarker ? "edit_checked" : done ? "check" : hasText ? "edit" : "book";
+            int statusColor = selecting ? (selected ? PURPLE : MUTED) : hasEndMarker ? PURPLE : color;
             FrameLayout status = plainIconButton(statusIcon, statusColor, selecting
                     ? () -> toggleChapterSelection(chapterItem, position) : () -> toggleChapterDone(position));
             if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
