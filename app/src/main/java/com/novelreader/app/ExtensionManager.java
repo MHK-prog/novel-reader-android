@@ -202,6 +202,11 @@ final class ExtensionManager {
     boolean removeColloquializer() { return remove("colloquializer"); }
 
     String runTextReplacement(Plugin plugin, Action action, String input) throws Exception {
+        return runTextReplacement(plugin, action, input, false);
+    }
+
+    String runTextReplacement(Plugin plugin, Action action, String input,
+                              boolean tagVariableChanges) throws Exception {
         if (plugin == null || action == null || !TEXT_REPLACEMENT.equals(action.capability)) {
             throw new IOException("Unsupported extension action.");
         }
@@ -212,7 +217,7 @@ final class ExtensionManager {
             throw new IOException("Extension data checksum does not match.");
         }
         validatePairs(content);
-        return TextReplacementEngine.transform(input, content);
+        return TextReplacementEngine.transform(input, content, tagVariableChanges);
     }
 
     boolean remove(String id) {

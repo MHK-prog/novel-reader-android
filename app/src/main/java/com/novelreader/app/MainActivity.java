@@ -1395,6 +1395,8 @@ public final class MainActivity extends Activity {
                 content.addView(ruleActions, new LinearLayout.LayoutParams(-1, dp(50)));
                 addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
                         "enabled.colloquializer", true);
+                addPreferenceSwitch(content, "ثبت الگوهای متغیر با تگ مخفی", "extensions",
+                        "colloquializer.hide.variable.matches", false);
                 TextView count = text("", 12, MUTED);
                 count.setGravity(Gravity.CENTER);
                 EditText search = edit("جستجو در قانون‌ها", false);
@@ -1514,7 +1516,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showColloquializerHelp() {
-        TextView help = text("هر جفت، عبارت مبدأ را با عبارت مقصد جایگزین می‌کند. در الگو می‌توانی یک x بگذاری تا یک رشتهٔ پیوسته از حروف فارسی را بگیرد؛ اگر در مقصد هم x باشد همان رشته برمی‌گردد، مثل xهایم ← xهام.\n\nدر کادر «استثناها» واژه یا عبارت‌های نزدیک به مبدأ را با ویرگول جدا کن. اگر یکی از آن‌ها بلافاصله قبل یا بعد از مبدأ باشد، آن مورد تغییر نمی‌کند؛ مثلاً برای «کند» استثنای «شدن» را بنویس تا «کند شدن» دست‌نخورده بماند.\n\nدر صفحهٔ خواندن، عبارت انتخاب‌شده خودکار به‌عنوان مبدأ می‌آید. اگر گزینهٔ «فقط همین Chapter» روشن باشد، جفت و استثناهایش فقط روی متن همان Chapter اعمال می‌شوند و در JSON ذخیره نمی‌شوند.", 14, TEXT);
+        TextView help = text("هر جفت، عبارت مبدأ را با مقصد جایگزین می‌کند. x یک رشتهٔ پیوسته از حروف فارسی را می‌گیرد؛ اگر در مقصد هم x باشد همان رشته برمی‌گردد، مثل xهایم ← xهام. n نبودن یا بودن «ن» را حفظ می‌کند؛ s فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد. b مرز واژه را خاموش می‌کند و برای جایگزینی یک حرف درون واژه به کار می‌رود.\n\na فقط از میان واژه‌های فارسی تک‌واژه‌ای که در مبدأ قوانین دیگر ثبت کرده‌ای انتخاب می‌کند؛ مثلاً aشان ← aشون. برای ساختن واژه‌نامهٔ فعل، یک جفت به شکل vgکرد ← vhکن اضافه کن؛ سپس الگویی مثل «خواهند vg» ← «می vhن» برای همین فعل‌ها گسترش پیدا می‌کند.\n\nبا روشن کردن «ثبت الگوهای متغیر با تگ مخفی»، موتور متنِ مبدأِ واقعی را در قالب %hid{...}% پیش از مقصد نگه می‌دارد. این تگ در صفحهٔ خواندن پنهان است و برای الگوهای دارای متغیر کمک می‌کند عبارت تغییرکرده را پیدا کنی.\n\nدر کادر استثناها، واژه‌های مجاور را با ویرگول جدا کن. اجرای قوانین همیشه روی متن اولیه انجام می‌شود؛ مقصد تولیدشده دوباره به‌عنوان مبدأ قانون دیگری بررسی نمی‌شود. در صفحهٔ خواندن، گزینهٔ «فقط همین Chapter» قانون را فقط روی همان متن اعمال می‌کند و آن را در JSON ذخیره نمی‌کند.", 14, TEXT);
         help.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         help.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
         help.setPadding(dp(8), dp(10), dp(8), dp(10));
@@ -2012,7 +2014,10 @@ public final class MainActivity extends Activity {
                 if (plugin == null || !extensionManager.isEnabled(action.pluginId)) {
                     throw new IOException("افزونه نصب یا فعال نیست.");
                 }
-                output = extensionManager.runTextReplacement(plugin, action, source);
+                boolean tagVariableChanges = "colloquializer".equals(action.pluginId)
+                        && getSharedPreferences("extensions", MODE_PRIVATE)
+                        .getBoolean("colloquializer.hide.variable.matches", false);
+                output = extensionManager.runTextReplacement(plugin, action, source, tagVariableChanges);
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
@@ -4594,7 +4599,9 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < chapters.length(); i++) {
             JSONObject chapter = chapters.optJSONObject(i);
             if (chapter == null) continue;
-            int percent = chapter.optBoolean("done") ? 100 : chapter.optInt("percent", 0);
+            boolean hasEndMarker = chapter.optBoolean("hasEndMarker", false);
+            int percent = !hasEndMarker ? 0 : chapter.optBoolean("done")
+                    ? 100 : chapter.optInt("percent", 0);
             total += Math.max(0, Math.min(100, percent));
         }
         return Math.round(total / (float) chapters.length());
@@ -5087,7 +5094,11 @@ public final class MainActivity extends Activity {
     private int firstUnread(JSONObject book) {
         JSONArray chapters = book.optJSONArray("chapters");
         if (chapters == null || chapters.length() == 0) return 0;
-        for (int i = 0; i < chapters.length(); i++) if (!chapters.optJSONObject(i).optBoolean("done")) return i;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter == null || !chapter.optBoolean("hasEndMarker", false)
+                    || !chapter.optBoolean("done")) return i;
+        }
         return chapters.length() - 1;
     }
 
@@ -5245,7 +5256,7 @@ public final class MainActivity extends Activity {
         readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; });
         chapterEditor.addTextChangedListener(watcher(() -> {
             chapterText = chapterEditor.getText().toString();
-            chapterWordCount = countWords(chapterText);
+            chapterWordCount = countWords(visibleChapterText(chapterText));
             chapterDirty = true;
             applyRuleSpans(chapterEditor.getText());
             updateTokenSuggestions();
@@ -5300,11 +5311,25 @@ public final class MainActivity extends Activity {
                         putReplacementPair(rules, ruleSource, replacement, exceptions);
                         extensionManager.saveColloquializerRules(rules.toString());
                     }
-                    String updated = TextReplacementEngine.transform(current, singlePair.toString());
+                    boolean tagVariableChanges = getSharedPreferences("extensions", MODE_PRIVATE)
+                            .getBoolean("colloquializer.hide.variable.matches", false);
+                    String updated = TextReplacementEngine.transform(current, singlePair.toString(), tagVariableChanges);
                     String transformedPrefix = TextReplacementEngine.transform(
-                            current.substring(0, safeStart), singlePair.toString());
-                    applyChapterText(updated, Math.min(transformedPrefix.length() + replacement.length(), updated.length()));
+                            current.substring(0, safeStart), singlePair.toString(), tagVariableChanges);
+                    int markerLength = tagVariableChanges && containsAsciiLetter(ruleSource.replace("b", ""))
+                            ? current.substring(safeStart, Math.min(current.length(), safeStart + source.length())).length() + 7 : 0;
+                    applyChapterText(updated, Math.min(transformedPrefix.length() + markerLength
+                            + replacement.length(), updated.length()));
                 });
+    }
+
+    private boolean containsAsciiLetter(String value) {
+        if (value == null) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
+        }
+        return false;
     }
 
     private void putReplacementPair(JSONArray rules, String source, String replacement,
@@ -5462,15 +5487,15 @@ public final class MainActivity extends Activity {
         lastUndoWasTyping = false;
         lastUndoEnd = -1;
         chapterText = loadedText == null ? "" : loadedText;
-        chapterWordCount = countWords(chapterText);
+        chapterWordCount = countWords(visibleChapterText(chapterText));
         chapterDirty = false;
         JSONObject chapter = activeChapterObject();
         if (chapter != null) {
             if (!chapterText.trim().isEmpty()) putJson(chapter, "hasText", true);
-            boolean hasEndMarker = chapterText.toLowerCase(Locale.ROOT).contains("%end%");
+            boolean hasEndMarker = containsVisibleEndMarker(chapterText);
             putJson(chapter, "hasEndMarker", hasEndMarker);
             if (hasEndMarker && !chapter.has("wordsRead")) {
-                long total = countWords(chapterText);
+                long total = countWords(visibleChapterText(chapterText));
                 int savedPercent = chapter.optBoolean("done") ? 100
                         : Math.max(0, Math.min(100, chapter.optInt("percent", 0)));
                 putJson(chapter, "totalWords", total);
@@ -5497,7 +5522,7 @@ public final class MainActivity extends Activity {
         updateProgress();
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
-        putJson(chapter, "hasEndMarker", chapterText.toLowerCase(Locale.ROOT).contains("%end%"));
+        putJson(chapter, "hasEndMarker", containsVisibleEndMarker(chapterText));
         rememberRecentReading();
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
         putJson(chapter, "scroll", readerScroll == null ? 0 : readerScroll.getScrollY());
@@ -5542,17 +5567,17 @@ public final class MainActivity extends Activity {
     private void updateProgress() {
         if (chapterEditor == null || readerScroll == null || readerProgress == null) return;
         JSONObject chapter = activeChapterObject(); if (chapter == null) return;
-        boolean hasEndMarker = chapterText.toLowerCase(Locale.ROOT).contains("%end%");
+        boolean hasEndMarker = containsVisibleEndMarker(chapterText);
         putJson(chapter, "hasEndMarker", hasEndMarker);
         if (!hasEndMarker && "reader".equals(page)) stopReadingTimer();
         int contentHeight = chapterEditor.getHeight();
         int range = Math.max(0, contentHeight - readerScroll.getHeight());
         boolean hasText = !chapterText.trim().isEmpty();
-        int percent = !hasText ? (chapter.optBoolean("done") ? 100 : 0) : range == 0 ? 100
+        int percent = !hasEndMarker || !hasText ? 0 : range == 0 ? 100
                 : Math.max(0, Math.min(100, Math.round(readerScroll.getScrollY() * 100f / range)));
         putJson(chapter, "percent", percent);
-        if (!chapter.optBoolean("manualDone")) putJson(chapter, "done", hasText && percent >= 100);
-        if (!hasText && !chapter.optBoolean("manualDone")) putJson(chapter, "done", false);
+        putJson(chapter, "done", hasEndMarker && hasText && percent >= 100);
+        putJson(chapter, "manualDone", false);
         putJson(chapter, "scroll", readerScroll.getScrollY());
         if (hasEndMarker) {
             long totalWords = chapterWordCount;
@@ -5567,6 +5592,8 @@ public final class MainActivity extends Activity {
             } else {
                 putJson(chapter, "wordsRead", previousReadWords);
             }
+        } else {
+            putJson(chapter, "wordsRead", 0);
         }
         int width = readerProgress.getParent() instanceof View ? ((View) readerProgress.getParent()).getWidth() : 0;
         ViewGroup.LayoutParams lp = readerProgress.getLayoutParams(); lp.width = Math.round(width * percent / 100f); readerProgress.setLayoutParams(lp);
@@ -5636,7 +5663,7 @@ public final class MainActivity extends Activity {
     }
 
     private void startReadingTimer() {
-        if (!"reader".equals(page) || !chapterText.toLowerCase(Locale.ROOT).contains("%end%")) {
+        if (!"reader".equals(page) || !containsVisibleEndMarker(chapterText)) {
             stopReadingTimer();
             return;
         }
@@ -5675,9 +5702,41 @@ public final class MainActivity extends Activity {
     }
 
     private void markReadingActivity() {
-        if ("reader".equals(page) && chapterText.toLowerCase(Locale.ROOT).contains("%end%")) {
+        if ("reader".equals(page) && containsVisibleEndMarker(chapterText)) {
             startReadingTimer();
         }
+    }
+
+    private boolean containsVisibleEndMarker(String text) {
+        if (text == null) return false;
+        for (int index = 0; index < text.length();) {
+            if (text.regionMatches(true, index, "%hid{", 0, 5)) {
+                int hiddenEnd = text.indexOf("}%", index + 5);
+                if (hiddenEnd < 0) return false;
+                index = hiddenEnd + 2;
+            } else if (text.regionMatches(true, index, "%end%", 0, 5)) {
+                return true;
+            } else {
+                index++;
+            }
+        }
+        return false;
+    }
+
+    private String visibleChapterText(String text) {
+        if (text == null || !text.contains("%hid{")) return text == null ? "" : text;
+        StringBuilder visible = new StringBuilder(text.length());
+        for (int index = 0; index < text.length();) {
+            if (text.regionMatches(true, index, "%hid{", 0, 5)) {
+                int hiddenEnd = text.indexOf("}%", index + 5);
+                if (hiddenEnd >= 0) {
+                    index = hiddenEnd + 2;
+                    continue;
+                }
+            }
+            visible.append(text.charAt(index++));
+        }
+        return visible.toString();
     }
 
     private void showQuickScroll(boolean toTop) {
@@ -8026,9 +8085,10 @@ public final class MainActivity extends Activity {
             String key = chapterSelectionKey(chapterItem, position);
             boolean selecting = !selectedChapterKeys.isEmpty();
             boolean selected = selectedChapterKeys.contains(key);
-            boolean done = chapterItem.optBoolean("done"), hasText = chapterItem.optBoolean("hasText");
+            boolean hasText = chapterItem.optBoolean("hasText");
+            boolean hasEndMarker = hasText && chapterItem.optBoolean("hasEndMarker");
+            boolean done = hasEndMarker && chapterItem.optBoolean("done");
             int color = done ? GREEN : hasText ? BLUE : PURPLE;
-            boolean hasEndMarker = chapterItem.optBoolean("hasEndMarker");
             LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
             row.setTag(key);
             row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
@@ -8037,7 +8097,7 @@ public final class MainActivity extends Activity {
             TextView name = text(chapterLabel(chapterItem, position), 15, TEXT);
             FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 5));
             View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 5));
-            final int fillPercent = done ? 100 : chapterItem.optInt("percent");
+            final int fillPercent = !hasEndMarker ? 0 : done ? 100 : chapterItem.optInt("percent");
             FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(4), Gravity.LEFT);
             meter.addView(fill, fillParams);
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
@@ -8045,11 +8105,11 @@ public final class MainActivity extends Activity {
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
             String statusIcon = selecting ? (selected ? "reorder" : "select")
                     : done ? "check" : hasText ? "edit" : "book";
-            int statusColor = selecting ? (selected ? PURPLE : MUTED) : hasEndMarker ? PURPLE : color;
-            FrameLayout status = !selecting && hasEndMarker
-                    ? pairedEditCheckedButton(statusColor, () -> toggleChapterDone(position))
-                    : plainIconButton(statusIcon, statusColor, selecting
-                    ? () -> toggleChapterSelection(chapterItem, position) : () -> toggleChapterDone(position));
+            int statusColor = selecting ? (selected ? PURPLE : MUTED) : done ? GREEN : hasText ? BLUE : PURPLE;
+            FrameLayout status = selecting
+                    ? plainIconButton(statusIcon, statusColor, () -> toggleChapterSelection(chapterItem, position))
+                    : hasEndMarker && !done ? pairedEditCheckedButton(PURPLE, null)
+                    : plainIconButton(statusIcon, statusColor, null);
             if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
             row.setClickable(true);
@@ -8065,16 +8125,6 @@ public final class MainActivity extends Activity {
             setReorderDropTarget(row, "chapter", key);
             return row;
         }
-    }
-
-    private void toggleChapterDone(int index) {
-        JSONObject book = activeBook(); JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null || index < 0 || index >= chapters.length()) return;
-        JSONObject chapter = chapters.optJSONObject(index); boolean done = !chapter.optBoolean("done");
-        putJson(chapter, "done", done); putJson(chapter, "manualDone", done); putJson(chapter, "percent", done ? 100 : 0);
-        if (!done) putJson(chapter, "scroll", 0);
-        saveLibrary();
-        chapterAdapter.notifyDataSetChanged();
     }
 
     private final class GenreCloud extends ViewGroup {
@@ -8174,6 +8224,14 @@ public final class MainActivity extends Activity {
             }
             if (newline < 0) break;
             start = newline + 1;
+        }
+        int hiddenStart = source.indexOf("%hid{");
+        while (hiddenStart >= 0) {
+            int hiddenEnd = source.indexOf("}%", hiddenStart + 5);
+            if (hiddenEnd < 0) break;
+            editable.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), hiddenStart, hiddenEnd + 2,
+                    Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            hiddenStart = source.indexOf("%hid{", hiddenEnd + 2);
         }
     }
 
