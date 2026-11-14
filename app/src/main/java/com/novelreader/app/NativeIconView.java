@@ -53,7 +53,6 @@ final class NativeIconView extends View {
             case "undo": resourceName = "undo"; break;
             case "redo": resourceName = "redo"; break;
             case "check": resourceName = "check"; break;
-            case "edit_checked": resourceName = "edit_checked"; break;
             case "thumb_up": resourceName = "thumb_up"; break;
             case "thumb_down": resourceName = "thumb_down"; break;
             case "close": resourceName = "close"; break;

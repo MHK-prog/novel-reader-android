@@ -160,7 +160,7 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.34";
+    private static final String VERSION = "1.4.35";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -259,6 +259,10 @@ public final class MainActivity extends Activity {
     private TextView titleView;
     private TextView subtitleView;
     private EditText searchField;
+    private FrameLayout bookInfoLikeButton;
+    private FrameLayout bookInfoDislikeButton;
+    private TextView bookInfoEstimateText;
+    private final List<View> bookInfoEstimateStars = new ArrayList<>();
     private FrameLayout genreFilterButton;
     private GridView booksGrid;
     private GridView collectionsGrid;
@@ -1201,6 +1205,13 @@ public final class MainActivity extends Activity {
             showStatistics();
         }, false);
 
+        addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", SECONDARY_ACCENT, () -> {
+            ResumeTarget target = findResumeTarget();
+            closeDrawer();
+            if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
+            else openResumeTarget(target);
+        }, false);
+
         LinearLayout settingsToggle = drawerSettingsButton();
         LinearLayout.LayoutParams settingsParams = drawerActionParams(false);
         drawerPanel.addView(settingsToggle, settingsParams);
@@ -1232,12 +1243,6 @@ public final class MainActivity extends Activity {
             showThemes();
         }, true);
 
-        addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", SECONDARY_ACCENT, () -> {
-            ResumeTarget target = findResumeTarget();
-            closeDrawer();
-            if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
-            else openResumeTarget(target);
-        }, false);
         View spacer = new View(this);
         drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
         drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
@@ -1249,15 +1254,16 @@ public final class MainActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         row.setPadding(dp(14), 0, dp(14), 0);
-        row.setBackground(drawerActionBackground(PURPLE));
-        NativeIconView icon = new NativeIconView(this, "settings", PURPLE);
+        int foreground = contrastOnAccent();
+        row.setBackground(roundDrawable(PURPLE, PURPLE, 14));
+        NativeIconView icon = new NativeIconView(this, "settings", foreground);
         row.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
-        TextView label = text("تنظیمات", 15, TEXT);
+        TextView label = text("تنظیمات", 15, foreground);
         label.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, -1, 1);
         labelParams.leftMargin = dp(12);
         row.addView(label, labelParams);
-        drawerSettingsChevron = new NativeIconView(this, "dropdown", PURPLE);
+        drawerSettingsChevron = new NativeIconView(this, "dropdown", foreground);
         row.addView(drawerSettingsChevron, new LinearLayout.LayoutParams(dp(18), dp(18)));
         drawerSettingsChevron.setRotation(drawerSettingsExpanded ? 180f : 0f);
         row.setClickable(true);
@@ -1271,7 +1277,14 @@ public final class MainActivity extends Activity {
     private void addDrawerAction(LinearLayout parent, String label, String icon, int accent,
                                  Runnable action, boolean nested) {
         LinearLayout button = (LinearLayout) textButton(label, icon, accent, action);
-        button.setBackground(drawerActionBackground(accent));
+        if (nested) {
+            button.setBackground(drawerActionBackground());
+        } else {
+            int foreground = contrastOnAccent();
+            button.setBackground(roundDrawable(PURPLE, PURPLE, 14));
+            ((NativeIconView) button.getChildAt(0)).setTint(foreground);
+            ((TextView) button.getChildAt(1)).setTextColor(foreground);
+        }
         parent.addView(button, drawerActionParams(nested));
     }
 
@@ -1283,11 +1296,9 @@ public final class MainActivity extends Activity {
         return params;
     }
 
-    private GradientDrawable drawerActionBackground(int accent) {
-        int fillAlpha = lightTheme ? 18 : 24;
-        int strokeAlpha = lightTheme ? 65 : 85;
-        int fill = Color.argb(fillAlpha, Color.red(accent), Color.green(accent), Color.blue(accent));
-        int stroke = Color.argb(strokeAlpha, Color.red(accent), Color.green(accent), Color.blue(accent));
+    private GradientDrawable drawerActionBackground() {
+        int fill = lightTheme ? Color.WHITE : Color.rgb(24, 24, 24);
+        int stroke = lightTheme ? Color.rgb(210, 205, 218) : Color.rgb(68, 63, 76);
         return roundDrawable(fill, stroke, 14);
     }
 
@@ -2633,6 +2644,7 @@ public final class MainActivity extends Activity {
         if (searchField != null) {
             searchField.setText(author == null ? "" : author.trim());
             searchField.setSelection(searchField.length());
+            if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
         }
     }
 
@@ -2715,9 +2727,9 @@ public final class MainActivity extends Activity {
         LinearLayout feedback = new LinearLayout(this);
         feedback.setGravity(Gravity.CENTER);
         feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        FrameLayout likeButton = plainIconButton("thumb_up", PURPLE, openRecommendedDetails);
+        FrameLayout likeButton = plainIconButton("thumb_up", MUTED, openRecommendedDetails);
         likeButton.setContentDescription("جزئیات کتاب");
-        FrameLayout dislikeButton = plainIconButton("thumb_down", RED,
+        FrameLayout dislikeButton = plainIconButton("thumb_down", MUTED,
                 () -> rejectRecommendedBook(recommendedRecord));
         dislikeButton.setContentDescription("نپسندیدن کتاب");
         feedback.addView(likeButton, new LinearLayout.LayoutParams(dp(54), dp(46)));
@@ -3128,7 +3140,7 @@ public final class MainActivity extends Activity {
             label.setSingleLine(true);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
             row.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
-            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : PURPLE,
+            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : MUTED,
                     () -> { toggleGenrePreference(tag, true); renderManagedTags(rows, search); });
             likeButton.setContentDescription(favorite ? "حذف پسند ژانر" : "پسندیدن ژانر");
             row.addView(likeButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
@@ -4451,6 +4463,10 @@ public final class MainActivity extends Activity {
 
     private void showBookInfo(JSONObject book) {
         if (book == null) { showDashboard(); return; }
+        bookInfoLikeButton = null;
+        bookInfoDislikeButton = null;
+        bookInfoEstimateText = null;
+        bookInfoEstimateStars.clear();
         page = "bookInfo";
         activeBookId = book.optString("id");
         activeCollectionId = book.optString("collectionId", "other");
@@ -4490,6 +4506,7 @@ public final class MainActivity extends Activity {
         coverParams.gravity = Gravity.CENTER_HORIZONTAL;
         coverParams.bottomMargin = dp(18);
         body.addView(coverFrame, coverParams);
+        addBookFeedbackRow(body, book);
 
         JSONArray chapters = book.optJSONArray("chapters");
         int chapterCount = chapters == null ? 0 : chapters.length();
@@ -4605,6 +4622,26 @@ public final class MainActivity extends Activity {
         return Math.max(1, Math.min(5, rating));
     }
 
+    private void addBookFeedbackRow(LinearLayout body, JSONObject book) {
+        String id = book.optString("id");
+        boolean favorite = favoriteBookIds.contains(id);
+        boolean disliked = dislikedBookIds.contains(id);
+        LinearLayout feedback = new LinearLayout(this);
+        feedback.setGravity(Gravity.CENTER);
+        feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        bookInfoLikeButton = plainIconButton("thumb_up", favorite ? GREEN : MUTED,
+                () -> toggleBookFeedback(book, true));
+        bookInfoLikeButton.setContentDescription(favorite ? "حذف پسند کتاب" : "پسندیدن کتاب");
+        bookInfoDislikeButton = plainIconButton("thumb_down", disliked ? RED : MUTED,
+                () -> toggleBookFeedback(book, false));
+        bookInfoDislikeButton.setContentDescription(disliked ? "حذف نپسند کتاب" : "نپسندیدن کتاب");
+        feedback.addView(bookInfoLikeButton, new LinearLayout.LayoutParams(dp(48), dp(40)));
+        feedback.addView(bookInfoDislikeButton, new LinearLayout.LayoutParams(dp(48), dp(40)));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(40));
+        params.bottomMargin = dp(14);
+        body.addView(feedback, params);
+    }
+
     private void addBookInterestRating(LinearLayout body, JSONObject book) {
         int estimate = estimatedInterestRating(book);
         LinearLayout card = new LinearLayout(this);
@@ -4615,37 +4652,22 @@ public final class MainActivity extends Activity {
         TextView title = text("پیش‌بینی سیستم", 14, TEXT);
         title.setGravity(Gravity.CENTER);
         card.addView(title);
-        TextView estimateText = text("میزان علاقهٔ پیش‌بینی‌شده: " + estimate + " از 5", 12, MUTED);
-        estimateText.setGravity(Gravity.CENTER);
+        bookInfoEstimateText = text("میزان علاقهٔ پیش‌بینی‌شده: " + estimate + " از 5", 12, MUTED);
+        bookInfoEstimateText.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams estimateParams = new LinearLayout.LayoutParams(-1, -2);
         estimateParams.topMargin = dp(3);
-        card.addView(estimateText, estimateParams);
+        card.addView(bookInfoEstimateText, estimateParams);
         LinearLayout stars = new LinearLayout(this);
         stars.setGravity(Gravity.CENTER);
         stars.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         for (int i = 1; i <= 5; i++) {
             View star = ratingStar(i <= estimate, i);
+            bookInfoEstimateStars.add(star);
             stars.addView(star, new LinearLayout.LayoutParams(dp(42), dp(46)));
         }
         LinearLayout.LayoutParams starsParams = new LinearLayout.LayoutParams(-1, -2);
         starsParams.topMargin = dp(4);
         card.addView(stars, starsParams);
-        LinearLayout feedback = new LinearLayout(this);
-        feedback.setGravity(Gravity.CENTER);
-        feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        boolean favorite = favoriteBookIds.contains(book.optString("id"));
-        boolean disliked = dislikedBookIds.contains(book.optString("id"));
-        FrameLayout like = plainIconButton("thumb_up", favorite ? GREEN : PURPLE,
-                () -> toggleBookFeedback(book, true));
-        like.setContentDescription(favorite ? "حذف پسند کتاب" : "پسندیدن کتاب");
-        FrameLayout dislike = plainIconButton("thumb_down", disliked ? RED : MUTED,
-                () -> toggleBookFeedback(book, false));
-        dislike.setContentDescription(disliked ? "حذف نپسند کتاب" : "نپسندیدن کتاب");
-        feedback.addView(like, new LinearLayout.LayoutParams(dp(48), dp(40)));
-        feedback.addView(dislike, new LinearLayout.LayoutParams(dp(48), dp(40)));
-        LinearLayout.LayoutParams feedbackParams = new LinearLayout.LayoutParams(-1, dp(40));
-        feedbackParams.topMargin = dp(5);
-        card.addView(feedback, feedbackParams);
         body.addView(card, new LinearLayout.LayoutParams(-1, -2));
     }
 
@@ -4659,7 +4681,38 @@ public final class MainActivity extends Activity {
         else { opposite.remove(id); selected.add(id); }
         rebuildRecommendationWeights();
         persistRecommendationState();
-        showBookInfo(book);
+        updateBookInfoFeedback(book);
+    }
+
+    private void updateBookInfoFeedback(JSONObject book) {
+        if (book == null || !"bookInfo".equals(page)
+                || !book.optString("id").equals(activeBookId)) return;
+        String id = book.optString("id");
+        boolean favorite = favoriteBookIds.contains(id);
+        boolean disliked = dislikedBookIds.contains(id);
+        updatePlainButtonTint(bookInfoLikeButton, favorite ? GREEN : MUTED);
+        updatePlainButtonTint(bookInfoDislikeButton, disliked ? RED : MUTED);
+        if (bookInfoLikeButton != null) {
+            bookInfoLikeButton.setContentDescription(favorite ? "حذف پسند کتاب" : "پسندیدن کتاب");
+        }
+        if (bookInfoDislikeButton != null) {
+            bookInfoDislikeButton.setContentDescription(disliked ? "حذف نپسند کتاب" : "نپسندیدن کتاب");
+        }
+        int estimate = estimatedInterestRating(book);
+        if (bookInfoEstimateText != null) {
+            bookInfoEstimateText.setText("میزان علاقهٔ پیش‌بینی‌شده: " + estimate + " از 5");
+        }
+        for (int i = 0; i < bookInfoEstimateStars.size(); i++) {
+            View star = bookInfoEstimateStars.get(i);
+            star.setSelected(i < estimate);
+            star.invalidate();
+        }
+    }
+
+    private void updatePlainButtonTint(FrameLayout button, int color) {
+        if (button == null || button.getChildCount() == 0) return;
+        View icon = button.getChildAt(0);
+        if (icon instanceof NativeIconView) ((NativeIconView) icon).setTint(color);
     }
 
     private View ratingStar(boolean selected, int rating) {
@@ -4692,13 +4745,15 @@ public final class MainActivity extends Activity {
                     path.quadTo(xs[i], ys[i], afterX, afterY);
                 }
                 path.close();
-                paint.setColor(selected ? Color.rgb(255, 193, 7) : MUTED);
-                paint.setStyle(selected ? Paint.Style.FILL : Paint.Style.STROKE);
+                boolean filled = isSelected();
+                paint.setColor(filled ? Color.rgb(255, 193, 7) : MUTED);
+                paint.setStyle(filled ? Paint.Style.FILL : Paint.Style.STROKE);
                 paint.setStrokeWidth(dp(1.8f));
                 paint.setStrokeJoin(Paint.Join.ROUND);
                 canvas.drawPath(path, paint);
             }
         };
+        star.setSelected(selected);
         star.setContentDescription(rating + " از 5");
         star.setClickable(false);
         star.setFocusable(false);
@@ -4808,7 +4863,6 @@ public final class MainActivity extends Activity {
         animatePageTransition();
         addChaptersHeader(book);
         View header = appColumn.getChildAt(0);
-        updateChapterFavoriteIcon(header, favoriteBookIds.contains(book.optString("id")));
         if (selectedChapterKeys.isEmpty()) {
             if (titleView != null) {
                 titleView.setContentDescription("کپی نام کتاب و نویسنده");
@@ -4870,8 +4924,8 @@ public final class MainActivity extends Activity {
     private void addChaptersHeader(JSONObject book) {
         View header;
         if (selectedChapterKeys.isEmpty()) {
-            header = makeHeader(displayBookTitle(book), book.optString("author"), "add", "favorite",
-                    this::addChapter, this::toggleActiveBookFavorite);
+            header = makeHeader(displayBookTitle(book), book.optString("author"), "add", null,
+                    this::addChapter, null);
         } else if (selectedChapterKeys.size() == 1) {
             header = makeHeader(selectedChapterKeys.size() + " Chapter selected", "", "edit", "close",
                     this::renameSelectedChapter, this::clearChapterSelection, 0, 118);
@@ -5023,38 +5077,6 @@ public final class MainActivity extends Activity {
     private int chapterStorageIndex(JSONObject chapter, int position) {
         int saved = chapter == null ? 0 : chapter.optInt("storageIndex", 0);
         return saved > 0 ? saved : position + 1;
-    }
-
-    private void toggleActiveBookFavorite() {
-        JSONObject book = activeBook();
-        if (book == null) return;
-        String id = book.optString("id");
-        if (id.isEmpty()) return;
-        boolean isFavorite;
-        if (favoriteBookIds.add(id)) {
-            dislikedBookIds.remove(id);
-            isFavorite = true;
-        }
-        else {
-            favoriteBookIds.remove(id);
-            isFavorite = false;
-        }
-        rebuildRecommendationWeights();
-        persistRecommendationState();
-        if (appColumn.getChildCount() > 0) updateChapterFavoriteIcon(appColumn.getChildAt(0), isFavorite);
-        toast(isFavorite ? "به کتاب‌های مورد علاقه اضافه شد" : "از کتاب‌های مورد علاقه حذف شد");
-    }
-
-    private void updateChapterFavoriteIcon(View header, boolean isFavorite) {
-        if (!(header instanceof ViewGroup)) return;
-        View button = header.findViewWithTag("chapter_favorite");
-        if (!(button instanceof ViewGroup) || ((ViewGroup) button).getChildCount() == 0) return;
-        View glyph = ((ViewGroup) button).getChildAt(0);
-        if (!(glyph instanceof NativeIconView)) return;
-        NativeIconView heart = (NativeIconView) glyph;
-        heart.setName(isFavorite ? "heart_filled" : "heart_outline");
-        heart.setTint(isFavorite ? RED : PURPLE);
-        button.setContentDescription(isFavorite ? "حذف از علاقه‌مندی‌ها" : "افزودن به علاقه‌مندی‌ها");
     }
 
     private String chapterLabel(JSONObject chapter, int index) {
@@ -7245,6 +7267,27 @@ public final class MainActivity extends Activity {
         return makeIconButton(icon, color, false, action, false);
     }
 
+    private FrameLayout pairedEditCheckedButton(int color, Runnable action) {
+        FrameLayout button = new FrameLayout(this);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        LinearLayout icons = new LinearLayout(this);
+        icons.setGravity(Gravity.CENTER);
+        icons.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        NativeIconView pencil = new NativeIconView(this, "edit", color);
+        NativeIconView check = new NativeIconView(this, "check", color);
+        LinearLayout.LayoutParams pencilParams = new LinearLayout.LayoutParams(dp(17), dp(17));
+        pencilParams.rightMargin = dp(1);
+        icons.addView(pencil, pencilParams);
+        icons.addView(check, new LinearLayout.LayoutParams(dp(17), dp(17)));
+        button.addView(icons, new FrameLayout.LayoutParams(dp(36), dp(24), Gravity.CENTER));
+        button.setContentDescription("نشانگر پایان Chapter");
+        button.setClickable(true);
+        button.setFocusable(true);
+        applyPressScale(button);
+        if (action != null) button.setOnClickListener(v -> action.run());
+        return button;
+    }
+
     private FrameLayout makeIconButton(String icon, int color, boolean selected, Runnable action, boolean circular) {
         FrameLayout button = new FrameLayout(this);
         if (circular) styleIconButton(button, selected);
@@ -7754,8 +7797,10 @@ public final class MainActivity extends Activity {
             boolean disliked = containsIgnoreCase(dislikedAuthorPreferences, author);
             boolean selected = containsIgnoreCase(selectedAuthorNames, author);
             FrameLayout frame = new FrameLayout(MainActivity.this);
-            frame.setClickable(false);
-            frame.setFocusable(false);
+            frame.setClickable(true);
+            frame.setFocusable(true);
+            frame.setContentDescription(author + "، نمایش کتاب‌ها");
+            frame.setOnClickListener(v -> selectAuthorCard(author));
             LinearLayout card = new LinearLayout(MainActivity.this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setGravity(Gravity.CENTER);
@@ -7786,7 +7831,7 @@ public final class MainActivity extends Activity {
             LinearLayout feedback = new LinearLayout(MainActivity.this);
             feedback.setGravity(Gravity.CENTER);
             feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : PURPLE,
+            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : MUTED,
                     () -> toggleFavoriteAuthor(author));
             likeButton.setContentDescription(favorite ? "حذف پسند نویسنده" : "پسندیدن نویسنده");
             FrameLayout dislikeButton = plainIconButton("thumb_down", disliked ? RED : MUTED,
@@ -7999,9 +8044,11 @@ public final class MainActivity extends Activity {
             detail.addView(name); LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
             String statusIcon = selecting ? (selected ? "reorder" : "select")
-                    : hasEndMarker ? "edit_checked" : done ? "check" : hasText ? "edit" : "book";
+                    : done ? "check" : hasText ? "edit" : "book";
             int statusColor = selecting ? (selected ? PURPLE : MUTED) : hasEndMarker ? PURPLE : color;
-            FrameLayout status = plainIconButton(statusIcon, statusColor, selecting
+            FrameLayout status = !selecting && hasEndMarker
+                    ? pairedEditCheckedButton(statusColor, () -> toggleChapterDone(position))
+                    : plainIconButton(statusIcon, statusColor, selecting
                     ? () -> toggleChapterSelection(chapterItem, position) : () -> toggleChapterDone(position));
             if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
