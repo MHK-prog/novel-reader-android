@@ -5,14 +5,17 @@ import android.content.SharedPreferences;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.Date;
+import java.util.Collections;
+import java.util.GregorianCalendar;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TimeZone;
 
-/** Stores small hourly totals used by the local reading statistics page. */
+/** Small local hourly totals with optional per-book breakdowns. */
 final class ReadingStatsStore {
     static final int DAY = 0;
     static final int WEEK = 1;
@@ -22,19 +25,39 @@ final class ReadingStatsStore {
     static final class Point {
         final String label;
         final long value;
+        final Map<String, Long> byBook;
 
-        Point(String label, long value) {
+        Point(String label, long value, Map<String, Long> byBook) {
             this.label = label;
             this.value = value;
+            this.byBook = byBook == null ? Collections.emptyMap() : byBook;
+        }
+    }
+
+    static final class JalaliDate {
+        final int year;
+        final int month;
+        final int day;
+
+        JalaliDate(int year, int month, int day) {
+            this.year = year;
+            this.month = month;
+            this.day = day;
         }
     }
 
     private static final String KEY = "hourly_totals";
     private static final String WORDS = "words";
     private static final String TIME = "millis";
-    private static final SimpleDateFormat HOUR_FORMAT = new SimpleDateFormat("yyyyMMddHH", Locale.ROOT);
-    private static final SimpleDateFormat WEEKDAY_FORMAT = new SimpleDateFormat("EEE", new Locale("fa"));
-    private static final SimpleDateFormat MONTH_FORMAT = new SimpleDateFormat("LLL", new Locale("fa"));
+    private static final String BOOKS = "byBook";
+    private static final int[] JALALI_BREAKS = {
+            -61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181,
+            1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178
+    };
+    static final String[] JALALI_MONTHS = {
+            "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
+    };
 
     private final SharedPreferences preferences;
     private JSONObject buckets;
@@ -49,10 +72,18 @@ final class ReadingStatsStore {
     }
 
     synchronized void addWords(long count, long timeMillis) {
-        add(WORDS, count, timeMillis);
+        add(WORDS, null, count, timeMillis);
+    }
+
+    synchronized void addWords(String bookId, long count, long timeMillis) {
+        add(WORDS, bookId, count, timeMillis);
     }
 
     synchronized void addReadingMillis(long durationMillis, long timeMillis) {
+        addReadingMillis(null, durationMillis, timeMillis);
+    }
+
+    synchronized void addReadingMillis(String bookId, long durationMillis, long timeMillis) {
         long remaining = durationMillis;
         long cursor = timeMillis;
         while (remaining > 0) {
@@ -63,19 +94,28 @@ final class ReadingStatsStore {
             nextHour.set(Calendar.MILLISECOND, 0);
             nextHour.add(Calendar.HOUR_OF_DAY, 1);
             long chunk = Math.min(remaining, Math.max(1, nextHour.getTimeInMillis() - cursor));
-            add(TIME, chunk, cursor);
+            add(TIME, bookId, chunk, cursor);
             cursor += chunk;
             remaining -= chunk;
         }
     }
 
-    private void add(String metric, long amount, long timeMillis) {
+    private void add(String metric, String bookId, long amount, long timeMillis) {
         if (amount <= 0) return;
-        String key = HOUR_FORMAT.format(new Date(timeMillis));
+        String key = hourKey(timeMillis);
         JSONObject hour = buckets.optJSONObject(key);
         if (hour == null) hour = new JSONObject();
         try {
             hour.put(metric, hour.optLong(metric, 0) + amount);
+            if (bookId != null && !bookId.isEmpty()) {
+                JSONObject byBook = hour.optJSONObject(BOOKS);
+                if (byBook == null) byBook = new JSONObject();
+                JSONObject book = byBook.optJSONObject(bookId);
+                if (book == null) book = new JSONObject();
+                book.put(metric, book.optLong(metric, 0) + amount);
+                byBook.put(bookId, book);
+                hour.put(BOOKS, byBook);
+            }
             buckets.put(key, hour);
         } catch (JSONException ignored) {
             return;
@@ -84,11 +124,208 @@ final class ReadingStatsStore {
         preferences.edit().putString(KEY, buckets.toString()).apply();
     }
 
+    synchronized long totalForBook(String bookId, boolean words) {
+        if (bookId == null || bookId.isEmpty()) return 0;
+        String metric = words ? WORDS : TIME;
+        long total = 0;
+        java.util.Iterator<String> keys = buckets.keys();
+        while (keys.hasNext()) {
+            JSONObject hour = buckets.optJSONObject(keys.next());
+            JSONObject book = hour == null ? null : hour.optJSONObject(BOOKS);
+            JSONObject values = book == null ? null : book.optJSONObject(bookId);
+            if (values != null) total += values.optLong(metric, 0);
+        }
+        return total;
+    }
+
+    synchronized List<Point> points(int range, boolean words, long nowMillis) {
+        return points(range, words, nowMillis, 0);
+    }
+
+    synchronized List<Point> points(int range, boolean words, long nowMillis, int periodOffset) {
+        List<Point> result = new ArrayList<>();
+        String metric = words ? WORDS : TIME;
+        Calendar today = Calendar.getInstance();
+        today.setTimeInMillis(nowMillis);
+        zeroTime(today);
+        if (range == DAY) {
+            today.add(Calendar.DAY_OF_YEAR, -Math.max(0, periodOffset));
+            for (int hour = 0; hour < 24; hour++) {
+                Calendar current = (Calendar) today.clone();
+                current.add(Calendar.HOUR_OF_DAY, hour);
+                Map<String, Long> byBook = hourValues(current.getTimeInMillis(), metric);
+                long total = total(current.getTimeInMillis(), metric);
+                addLegacySegment(byBook, total);
+                String label = hour % 6 == 0 ? String.format(Locale.ROOT, "%02d", hour) : "";
+                result.add(new Point(label, total, byBook));
+            }
+            return result;
+        }
+        if (range == WEEK) {
+            today.add(Calendar.DAY_OF_YEAR, -7 * Math.max(0, periodOffset));
+            int daysSinceSaturday = (today.get(Calendar.DAY_OF_WEEK) - Calendar.SATURDAY + 7) % 7;
+            today.add(Calendar.DAY_OF_YEAR, -daysSinceSaturday);
+            for (int day = 0; day < 7; day++) {
+                Calendar current = (Calendar) today.clone();
+                current.add(Calendar.DAY_OF_YEAR, day);
+                JalaliDate jalali = fromGregorian(current.get(Calendar.YEAR), current.get(Calendar.MONTH) + 1,
+                        current.get(Calendar.DAY_OF_MONTH));
+                Map<String, Long> byBook = dayValues(current, metric);
+                long total = sumDay(current, metric);
+                addLegacySegment(byBook, total);
+                result.add(new Point(Integer.toString(jalali.day), total, byBook));
+            }
+            return result;
+        }
+        JalaliDate currentJalali = fromGregorian(today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1,
+                today.get(Calendar.DAY_OF_MONTH));
+        if (range == MONTH) {
+            JalaliDate month = shiftMonth(currentJalali, -Math.max(0, periodOffset));
+            int count = monthLength(month.year, month.month);
+            int[] first = toGregorian(month.year, month.month, 1);
+            Calendar start = calendar(first[0], first[1], first[2]);
+            for (int day = 0; day < count; day++) {
+                Calendar current = (Calendar) start.clone();
+                current.add(Calendar.DAY_OF_YEAR, day);
+                Map<String, Long> byBook = dayValues(current, metric);
+                long total = sumDay(current, metric);
+                addLegacySegment(byBook, total);
+                String label = day % 5 == 0 || day == count - 1
+                        ? Integer.toString(day + 1) : "";
+                result.add(new Point(label, total, byBook));
+            }
+            return result;
+        }
+        int year = currentJalali.year - Math.max(0, periodOffset);
+        for (int month = 1; month <= 12; month++) {
+            int[] first = toGregorian(year, month, 1);
+            int[] next = month == 12 ? toGregorian(year + 1, 1, 1) : toGregorian(year, month + 1, 1);
+            Calendar start = calendar(first[0], first[1], first[2]);
+            Calendar end = calendar(next[0], next[1], next[2]);
+            Map<String, Long> byBook = rangeValues(start, end, metric);
+            long total = sumRange(start, end, metric);
+            addLegacySegment(byBook, total);
+            result.add(new Point(JALALI_MONTHS[month - 1], total, byBook));
+        }
+        return result;
+    }
+
+    synchronized String periodLabel(int range, long nowMillis, int periodOffset) {
+        Calendar today = Calendar.getInstance();
+        today.setTimeInMillis(nowMillis);
+        zeroTime(today);
+        if (range == DAY) {
+            today.add(Calendar.DAY_OF_YEAR, -Math.max(0, periodOffset));
+            return jalaliLabel(today);
+        }
+        if (range == WEEK) {
+            today.add(Calendar.DAY_OF_YEAR, -7 * Math.max(0, periodOffset));
+            int daysSinceSaturday = (today.get(Calendar.DAY_OF_WEEK) - Calendar.SATURDAY + 7) % 7;
+            today.add(Calendar.DAY_OF_YEAR, -daysSinceSaturday);
+            Calendar end = (Calendar) today.clone();
+            end.add(Calendar.DAY_OF_YEAR, 6);
+            return jalaliLabel(today) + " – " + jalaliLabel(end);
+        }
+        JalaliDate current = fromGregorian(today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1,
+                today.get(Calendar.DAY_OF_MONTH));
+        if (range == MONTH) {
+            JalaliDate date = shiftMonth(current, -Math.max(0, periodOffset));
+            return JALALI_MONTHS[date.month - 1] + " " + date.year;
+        }
+        return Integer.toString(current.year - Math.max(0, periodOffset));
+    }
+
+    private String jalaliLabel(Calendar calendar) {
+        JalaliDate date = fromGregorian(calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1,
+                calendar.get(Calendar.DAY_OF_MONTH));
+        return date.year + "/" + twoDigits(date.month) + "/" + twoDigits(date.day);
+    }
+
+    private String twoDigits(int value) { return value < 10 ? "0" + value : Integer.toString(value); }
+
+    private long total(long timeMillis, String metric) {
+        JSONObject hour = buckets.optJSONObject(hourKey(timeMillis));
+        return hour == null ? 0 : hour.optLong(metric, 0);
+    }
+
+    private Map<String, Long> hourValues(long timeMillis, String metric) {
+        JSONObject hour = buckets.optJSONObject(hourKey(timeMillis));
+        JSONObject books = hour == null ? null : hour.optJSONObject(BOOKS);
+        Map<String, Long> result = new HashMap<>();
+        if (books == null) return result;
+        java.util.Iterator<String> ids = books.keys();
+        while (ids.hasNext()) {
+            String id = ids.next();
+            JSONObject values = books.optJSONObject(id);
+            long value = values == null ? 0 : values.optLong(metric, 0);
+            if (value > 0) result.put(id, value);
+        }
+        return result;
+    }
+
+    private Map<String, Long> dayValues(Calendar day, String metric) {
+        Map<String, Long> result = new HashMap<>();
+        for (int hour = 0; hour < 24; hour++) {
+            Calendar current = (Calendar) day.clone();
+            current.add(Calendar.HOUR_OF_DAY, hour);
+            merge(result, hourValues(current.getTimeInMillis(), metric));
+        }
+        return result;
+    }
+
+    private Map<String, Long> rangeValues(Calendar start, Calendar end, String metric) {
+        Map<String, Long> result = new HashMap<>();
+        Calendar current = (Calendar) start.clone();
+        while (current.before(end)) {
+            merge(result, dayValues(current, metric));
+            current.add(Calendar.DAY_OF_YEAR, 1);
+        }
+        return result;
+    }
+
+    private void merge(Map<String, Long> into, Map<String, Long> values) {
+        for (Map.Entry<String, Long> entry : values.entrySet()) {
+            Long previous = into.get(entry.getKey());
+            into.put(entry.getKey(), (previous == null ? 0 : previous) + entry.getValue());
+        }
+    }
+
+    private void addLegacySegment(Map<String, Long> values, long total) {
+        long remainder = Math.max(0, total - sumValues(values));
+        if (remainder > 0) values.put("__legacy__", remainder);
+    }
+
+    private long sumValues(Map<String, Long> values) {
+        long sum = 0;
+        for (long value : values.values()) sum += value;
+        return sum;
+    }
+
+    private long sumDay(Calendar day, String metric) {
+        long total = 0;
+        for (int hour = 0; hour < 24; hour++) {
+            Calendar current = (Calendar) day.clone();
+            current.add(Calendar.HOUR_OF_DAY, hour);
+            total += total(current.getTimeInMillis(), metric);
+        }
+        return total;
+    }
+
+    private long sumRange(Calendar start, Calendar end, String metric) {
+        long total = 0;
+        Calendar current = (Calendar) start.clone();
+        while (current.before(end)) {
+            total += sumDay(current, metric);
+            current.add(Calendar.DAY_OF_YEAR, 1);
+        }
+        return total;
+    }
+
     private void prune(long nowMillis) {
         Calendar cutoff = Calendar.getInstance();
         cutoff.setTimeInMillis(nowMillis);
         cutoff.add(Calendar.DAY_OF_YEAR, -400);
-        String cutoffKey = HOUR_FORMAT.format(cutoff.getTime());
+        String cutoffKey = hourKey(cutoff.getTimeInMillis());
         List<String> remove = new ArrayList<>();
         java.util.Iterator<String> keys = buckets.keys();
         while (keys.hasNext()) {
@@ -98,69 +335,12 @@ final class ReadingStatsStore {
         for (String key : remove) buckets.remove(key);
     }
 
-    synchronized List<Point> points(int range, boolean words, long nowMillis) {
-        List<Point> result = new ArrayList<>();
-        String metric = words ? WORDS : TIME;
-        Calendar cursor = Calendar.getInstance();
-        cursor.setTimeInMillis(nowMillis);
-        zeroTime(cursor);
-
-        if (range == DAY) {
-            for (int hour = 0; hour < 24; hour++) {
-                Calendar current = (Calendar) cursor.clone();
-                current.add(Calendar.HOUR_OF_DAY, hour);
-                JSONObject bucket = buckets.optJSONObject(HOUR_FORMAT.format(current.getTime()));
-                result.add(new Point(hour % 6 == 0 ? String.format(Locale.ROOT, "%02d", hour) : "",
-                        bucket == null ? 0 : bucket.optLong(metric, 0)));
-            }
-            return result;
-        }
-
-        if (range == WEEK || range == MONTH) {
-            int count = range == WEEK ? 7 : 30;
-            cursor.add(Calendar.DAY_OF_YEAR, -(count - 1));
-            for (int day = 0; day < count; day++) {
-                Calendar current = (Calendar) cursor.clone();
-                current.add(Calendar.DAY_OF_YEAR, day);
-                String label = range == WEEK ? WEEKDAY_FORMAT.format(current.getTime())
-                        : (day % 5 == 0 || day == count - 1
-                        ? Integer.toString(current.get(Calendar.DAY_OF_MONTH)) : "");
-                result.add(new Point(label, sumDay(current, metric)));
-            }
-            return result;
-        }
-
-        cursor.set(Calendar.DAY_OF_MONTH, 1);
-        cursor.add(Calendar.MONTH, -11);
-        for (int month = 0; month < 12; month++) {
-            Calendar current = (Calendar) cursor.clone();
-            current.add(Calendar.MONTH, month);
-            result.add(new Point(MONTH_FORMAT.format(current.getTime()), sumMonth(current, metric)));
-        }
-        return result;
-    }
-
-    private long sumDay(Calendar day, String metric) {
-        long total = 0;
-        for (int hour = 0; hour < 24; hour++) {
-            Calendar current = (Calendar) day.clone();
-            current.add(Calendar.HOUR_OF_DAY, hour);
-            JSONObject bucket = buckets.optJSONObject(HOUR_FORMAT.format(current.getTime()));
-            if (bucket != null) total += bucket.optLong(metric, 0);
-        }
-        return total;
-    }
-
-    private long sumMonth(Calendar month, String metric) {
-        Calendar current = (Calendar) month.clone();
-        int count = current.getActualMaximum(Calendar.DAY_OF_MONTH);
-        long total = 0;
-        for (int day = 0; day < count; day++) {
-            Calendar currentDay = (Calendar) current.clone();
-            currentDay.add(Calendar.DAY_OF_MONTH, day);
-            total += sumDay(currentDay, metric);
-        }
-        return total;
+    private String hourKey(long timeMillis) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTimeInMillis(timeMillis);
+        return String.format(Locale.ROOT, "%04d%02d%02d%02d", calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH) + 1, calendar.get(Calendar.DAY_OF_MONTH),
+                calendar.get(Calendar.HOUR_OF_DAY));
     }
 
     private void zeroTime(Calendar calendar) {
@@ -168,5 +348,79 @@ final class ReadingStatsStore {
         calendar.set(Calendar.MINUTE, 0);
         calendar.set(Calendar.SECOND, 0);
         calendar.set(Calendar.MILLISECOND, 0);
+    }
+
+    private Calendar calendar(int year, int month, int day) {
+        Calendar result = Calendar.getInstance();
+        result.clear();
+        result.set(year, month - 1, day, 0, 0, 0);
+        return result;
+    }
+
+    private JalaliDate shiftMonth(JalaliDate date, int delta) {
+        int monthIndex = date.year * 12 + date.month - 1 + delta;
+        int year = Math.floorDiv(monthIndex, 12);
+        int month = Math.floorMod(monthIndex, 12) + 1;
+        return new JalaliDate(year, month, Math.min(date.day, monthLength(year, month)));
+    }
+
+    private int monthLength(int year, int month) {
+        if (month <= 6) return 31;
+        if (month <= 11) return 30;
+        int[] start = toGregorian(year, 1, 1);
+        int[] next = toGregorian(year + 1, 1, 1);
+        return dayNumber(next[0], next[1], next[2]) - dayNumber(start[0], start[1], start[2]) == 366 ? 30 : 29;
+    }
+
+    private JalaliDate fromGregorian(int gy, int gm, int gd) {
+        int jy = gy - 621;
+        int[] start = toGregorian(jy, 1, 1);
+        int currentDay = dayNumber(gy, gm, gd);
+        if (currentDay < dayNumber(start[0], start[1], start[2])) {
+            jy--;
+            start = toGregorian(jy, 1, 1);
+        }
+        int dayOfYear = currentDay - dayNumber(start[0], start[1], start[2]);
+        if (dayOfYear < 186) return new JalaliDate(jy, dayOfYear / 31 + 1, dayOfYear % 31 + 1);
+        int remaining = dayOfYear - 186;
+        return new JalaliDate(jy, remaining / 30 + 7, remaining % 30 + 1);
+    }
+
+    private int[] toGregorian(int jy, int jm, int jd) {
+        int gy = jy + 621;
+        int march = jalaliMarch(jy);
+        Calendar start = calendar(gy, 3, march);
+        int offset = jm <= 6 ? (jm - 1) * 31 + jd - 1 : 186 + (jm - 7) * 30 + jd - 1;
+        start.add(Calendar.DAY_OF_YEAR, offset);
+        return new int[]{start.get(Calendar.YEAR), start.get(Calendar.MONTH) + 1, start.get(Calendar.DAY_OF_MONTH)};
+    }
+
+    private int jalaliMarch(int jy) {
+        if (jy < JALALI_BREAKS[0] || jy >= JALALI_BREAKS[JALALI_BREAKS.length - 1]) {
+            return 20;
+        }
+        int gy = jy + 621;
+        int leapJ = -14;
+        int jp = JALALI_BREAKS[0];
+        int jump = 0;
+        for (int i = 1; i < JALALI_BREAKS.length; i++) {
+            int jm = JALALI_BREAKS[i];
+            jump = jm - jp;
+            if (jy < jm) break;
+            leapJ += (jump / 33) * 8 + (jump % 33) / 4;
+            jp = jm;
+        }
+        int n = jy - jp;
+        leapJ += (n / 33) * 8 + ((n % 33) + 3) / 4;
+        if (jump % 33 == 4 && jump - n == 4) leapJ++;
+        int leapG = gy / 4 - ((gy / 100 + 1) * 3) / 4 - 150;
+        return 20 + leapJ - leapG;
+    }
+
+    private int dayNumber(int year, int month, int day) {
+        GregorianCalendar calendar = new GregorianCalendar(TimeZone.getTimeZone("UTC"), Locale.ROOT);
+        calendar.clear();
+        calendar.set(year, month - 1, day, 0, 0, 0);
+        return (int) (calendar.getTimeInMillis() / 86_400_000L);
     }
 }
