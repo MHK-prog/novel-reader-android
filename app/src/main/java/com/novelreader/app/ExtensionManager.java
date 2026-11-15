@@ -61,7 +61,48 @@ final class ExtensionManager {
             if (!storage.writePluginFile(id, MANIFEST_FILE, manifestText)) throw new IOException(storage.lastError());
         }
         validateManifest(manifest);
+        if ("colloquializer".equals(id) && migrateLegacyVerbStems()) {
+            manifestText = storage.readPluginFile(id, MANIFEST_FILE);
+            manifest = new JSONObject(manifestText);
+            validateManifest(manifest);
+        }
         return new Plugin(manifest, manifestText);
+    }
+
+    private boolean migrateLegacyVerbStems() throws Exception {
+        String rulesText = storage.readPluginFile("colloquializer", "rules.json");
+        if (rulesText == null) return false;
+        JSONArray rules = new JSONArray(rulesText);
+        JSONArray keptRules = new JSONArray();
+        JSONArray verbs = new JSONArray(safeColloquializerFile("verbs.json"));
+        boolean migrated = false;
+        for (int i = 0; i < rules.length(); i++) {
+            JSONArray pair = rules.optJSONArray(i);
+            String source = pair == null ? "" : pair.optString(0);
+            String destination = pair == null ? "" : pair.optString(1);
+            if (pair != null && pair.length() >= 2 && source.startsWith("vg")
+                    && destination.startsWith("vh") && source.indexOf("vg", 2) < 0
+                    && destination.indexOf("vh", 2) < 0) {
+                String formalPast = source.substring(2).trim();
+                String colloquialPresent = destination.substring(2).trim();
+                String formal = formalPast + ":" + formalPast;
+                String colloquial = colloquialPresent + ":" + formalPast;
+                boolean exists = false;
+                for (int j = 0; j < verbs.length(); j++) {
+                    JSONArray old = verbs.optJSONArray(j);
+                    if (old != null && formal.equalsIgnoreCase(old.optString(0))) exists = true;
+                }
+                if (!exists && validVerbDescriptor(formal) && validVerbDescriptor(colloquial)) {
+                    verbs.put(new JSONArray().put(formal).put(colloquial));
+                }
+                migrated = true;
+            } else if (pair != null) {
+                keptRules.put(pair);
+            }
+        }
+        if (!migrated) return false;
+        writeColloquializerFiles(keptRules.toString(), safeColloquializerFile("names.json"), verbs.toString());
+        return true;
     }
 
     private boolean migratePreviousDataManifest(String id, JSONObject manifest) throws JSONException {
@@ -156,6 +197,16 @@ final class ExtensionManager {
         return content;
     }
 
+    String colloquializerNames() throws Exception {
+        String content = storage.readPluginFile("colloquializer", "names.json");
+        return content == null ? "[]" : content;
+    }
+
+    String colloquializerVerbs() throws Exception {
+        String content = storage.readPluginFile("colloquializer", "verbs.json");
+        return content == null ? "[]" : content;
+    }
+
     String transformColloquializer(String input) throws Exception {
         Plugin plugin = load("colloquializer");
         if (plugin == null || plugin.actions.isEmpty()) throw new IOException("محاوره‌ای‌ساز نصب نشده است.");
@@ -164,11 +215,47 @@ final class ExtensionManager {
 
     void saveColloquializerRules(String rulesJson) throws Exception {
         validatePairs(rulesJson);
-        byte[] bytes = rulesJson.getBytes(StandardCharsets.UTF_8);
-        JSONObject descriptor = new JSONObject();
-        descriptor.put("sha256", sha256(bytes));
-        descriptor.put("maxBytes", MAX_FILE_BYTES);
-        JSONObject files = new JSONObject().put("rules.json", descriptor);
+        String names = safeColloquializerFile("names.json");
+        String verbs = safeColloquializerFile("verbs.json");
+        writeColloquializerFiles(rulesJson, names, verbs);
+        setEnabled("colloquializer", true);
+        preferences.edit().remove(sourceKey("colloquializer")).apply();
+    }
+
+    void saveColloquializerNames(String namesJson) throws Exception {
+        validateStringList(namesJson);
+        writeColloquializerFiles(safeColloquializerFile("rules.json"), namesJson,
+                safeColloquializerFile("verbs.json"));
+        setEnabled("colloquializer", true);
+        preferences.edit().remove(sourceKey("colloquializer")).apply();
+    }
+
+    void saveColloquializerVerbs(String verbsJson) throws Exception {
+        validateVerbList(verbsJson);
+        writeColloquializerFiles(safeColloquializerFile("rules.json"),
+                safeColloquializerFile("names.json"), verbsJson);
+        setEnabled("colloquializer", true);
+        preferences.edit().remove(sourceKey("colloquializer")).apply();
+    }
+
+    private String safeColloquializerFile(String name) {
+        try {
+            String value = storage.readPluginFile("colloquializer", name);
+            return value == null ? "[]" : value;
+        } catch (Exception ignored) {
+            return "[]";
+        }
+    }
+
+    private void writeColloquializerFiles(String rulesJson, String namesJson,
+                                          String verbsJson) throws Exception {
+        validatePairs(rulesJson);
+        validateStringList(namesJson);
+        validateVerbList(verbsJson);
+        JSONObject files = new JSONObject();
+        addFileDescriptor(files, "rules.json", rulesJson);
+        addFileDescriptor(files, "names.json", namesJson);
+        addFileDescriptor(files, "verbs.json", verbsJson);
         JSONObject action = new JSONObject();
         action.put("id", "colloquialize");
         action.put("label", "محاوره‌ای‌سازی");
@@ -189,14 +276,55 @@ final class ExtensionManager {
         manifest.put("files", files);
         manifest.put("actions", actions);
         validateManifest(manifest);
-        if (!storage.writePluginFile("colloquializer", "rules.json", rulesJson)) {
+        if (!storage.writePluginFile("colloquializer", "rules.json", rulesJson)
+                || !storage.writePluginFile("colloquializer", "names.json", namesJson)
+                || !storage.writePluginFile("colloquializer", "verbs.json", verbsJson)) {
             throw new IOException(storage.lastError());
         }
         if (!storage.writePluginFile("colloquializer", MANIFEST_FILE, manifest.toString())) {
             throw new IOException(storage.lastError());
         }
-        setEnabled("colloquializer", true);
-        preferences.edit().remove(sourceKey("colloquializer")).apply();
+    }
+
+    private void addFileDescriptor(JSONObject files, String name, String content) throws Exception {
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        JSONObject descriptor = new JSONObject();
+        descriptor.put("sha256", sha256(bytes));
+        descriptor.put("maxBytes", MAX_FILE_BYTES);
+        files.put(name, descriptor);
+    }
+
+    private void validateStringList(String json) throws Exception {
+        JSONArray values = new JSONArray(json);
+        if (values.length() > 10000) throw new IOException("The name list is too large.");
+        for (int i = 0; i < values.length(); i++) {
+            Object value = values.opt(i);
+            if (!(value instanceof String) || ((String) value).trim().isEmpty()) {
+                throw new IOException("Each saved name must be a non-empty string.");
+            }
+        }
+    }
+
+    private void validateVerbList(String json) throws Exception {
+        JSONArray values = new JSONArray(json);
+        if (values.length() > 10000) throw new IOException("The verb list is too large.");
+        for (int i = 0; i < values.length(); i++) {
+            JSONArray pair = values.optJSONArray(i);
+            if (pair == null || pair.length() != 2
+                    || !validVerbDescriptor(pair.optString(0))
+                    || !validVerbDescriptor(pair.optString(1))) {
+                throw new IOException("Each verb must contain formal and colloquial roots in the form رو:رفت.");
+            }
+        }
+    }
+
+    private boolean validVerbDescriptor(String value) {
+        if (value == null) return false;
+        int colon = value.indexOf(':');
+        return colon > 0 && colon == value.lastIndexOf(':')
+                && colon < value.length() - 1
+                && !value.substring(0, colon).trim().isEmpty()
+                && !value.substring(colon + 1).trim().isEmpty();
     }
 
     boolean removeColloquializer() { return remove("colloquializer"); }
@@ -217,6 +345,13 @@ final class ExtensionManager {
             throw new IOException("Extension data checksum does not match.");
         }
         validatePairs(content);
+        if ("colloquializer".equals(plugin.id)) {
+            String names = colloquializerNames();
+            String verbs = colloquializerVerbs();
+            boolean advanced = preferences.getBoolean("colloquializer.mode.advanced", false);
+            return TextReplacementEngine.transformColloquializer(input, content, names, verbs,
+                    advanced, tagVariableChanges);
+        }
         return TextReplacementEngine.transform(input, content, tagVariableChanges);
     }
 
@@ -292,7 +427,9 @@ final class ExtensionManager {
                 }
             }
         }
-        TextReplacementEngine.transform("", pairs.toString());
+        TextReplacementEngine.transformColloquializer("", pairs.toString(), "[]", "[]", false, false);
+        TextReplacementEngine.transformColloquializer("", pairs.toString(), "[]",
+                "[[\"رو:رفت\",\"ر:رفت\"]]", true, false);
     }
 
     private byte[] download(String address, int maxBytes, String fileName) throws Exception {

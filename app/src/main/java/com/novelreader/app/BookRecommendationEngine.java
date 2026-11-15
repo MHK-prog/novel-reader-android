@@ -80,6 +80,10 @@ final class BookRecommendationEngine {
     }
 
     Book recommendBook(List<Book> books, Set<Long> seenBookIds) {
+        return recommendBook(books, seenBookIds, "");
+    }
+
+    Book recommendBook(List<Book> books, Set<Long> seenBookIds, String temporaryGenreBoost) {
         if (books == null || books.isEmpty()) return null;
         List<Book> candidates = new ArrayList<>();
         Set<Long> ids = new HashSet<>();
@@ -97,11 +101,11 @@ final class BookRecommendationEngine {
         }
 
         double total = 0;
-        for (Book book : candidates) total += bookWeight(book);
+        for (Book book : candidates) total += bookWeight(book, temporaryGenreBoost);
         if (total <= 0) return candidates.get(random.nextInt(candidates.size()));
         double selection = random.nextDouble() * total;
         for (Book book : candidates) {
-            selection -= bookWeight(book);
+            selection -= bookWeight(book, temporaryGenreBoost);
             if (selection < 0) return book;
         }
         return candidates.get(candidates.size() - 1);
@@ -109,6 +113,17 @@ final class BookRecommendationEngine {
 
     double bookWeight(Book book) {
         return weightBreakdown(book).total;
+    }
+
+    private double bookWeight(Book book, String boostedGenre) {
+        WeightBreakdown parts = weightBreakdown(book);
+        if (boostedGenre == null || boostedGenre.isEmpty()) return parts.total;
+        for (String genre : book.genres) {
+            if (normalize(genre).equals(normalize(boostedGenre))) {
+                return Math.max(0.05, (parts.genre + 25) * parts.personal * parts.reading);
+            }
+        }
+        return parts.total;
     }
 
     WeightBreakdown weightBreakdown(Book book) {

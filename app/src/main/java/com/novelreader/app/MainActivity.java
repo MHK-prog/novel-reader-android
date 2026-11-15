@@ -160,7 +160,6 @@ public final class MainActivity extends Activity {
     };
     private static final int BUILTIN_THEME_COUNT = GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
-    private static final String VERSION = "1.4.35";
     private static final long READING_TICK_MS = 15_000L;
     private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
             "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
@@ -252,6 +251,8 @@ public final class MainActivity extends Activity {
     private FrameLayout drawerLayer;
     private View drawerScrim;
     private LinearLayout drawerPanel;
+    private LinearLayout drawerActions;
+    private ScrollView drawerScroll;
     private LinearLayout drawerSettingsOptions;
     private NativeIconView drawerSettingsChevron;
     private ValueAnimator drawerSettingsAnimator;
@@ -303,6 +304,12 @@ public final class MainActivity extends Activity {
     private Runnable readingTickRunnable;
     private Runnable readingIdleRunnable;
     private boolean recommendationDetailsVisible;
+    private final Set<Long> sessionRejectedRecommendationIds = new HashSet<>();
+    private boolean recommendationCurrentReadingMode;
+    private String temporaryRecommendationGenre = "";
+    private boolean recommendationSessionStarted;
+    private boolean recommendationGenreDialogShown;
+    private boolean colloquialAdvancedMode;
     private static final long READING_IDLE_TIMEOUT_MS = 10_000L;
     private static final long RECOMMENDATION_WORD_THRESHOLD = 20_000L;
     private static final int RECOMMENDATION_BOOK_THRESHOLD = 5;
@@ -311,6 +318,15 @@ public final class MainActivity extends Activity {
             0xFFFFB45E, 0xFF4FC3F7, 0xFFF06292
     };
     private OnBackInvokedCallback systemBackCallback;
+
+    private String appVersionName() {
+        try {
+            String version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            return version == null || version.trim().isEmpty() ? "?" : version;
+        } catch (Exception ignored) {
+            return "?";
+        }
+    }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -326,6 +342,8 @@ public final class MainActivity extends Activity {
         storage = new NovelStorage(this);
         extensionManager = new ExtensionManager(storage, getSharedPreferences("extensions", MODE_PRIVATE));
         recommendationState = getSharedPreferences("recommendations", MODE_PRIVATE);
+        colloquialAdvancedMode = getSharedPreferences("extensions", MODE_PRIVATE)
+                .getBoolean("colloquializer.mode.advanced", false);
         readingStats = new ReadingStatsStore(getSharedPreferences("reading_stats", MODE_PRIVATE));
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
@@ -1176,36 +1194,49 @@ public final class MainActivity extends Activity {
     private void buildDrawer() {
         if (drawerSettingsAnimator != null) drawerSettingsAnimator.cancel();
         drawerPanel.removeAllViews();
+        drawerScroll = new ScrollView(this);
+        drawerScroll.setFillViewport(false);
+        drawerScroll.setVerticalScrollBarEnabled(false);
+        drawerScroll.setHorizontalScrollBarEnabled(false);
+        drawerActions = new LinearLayout(this);
+        drawerActions.setOrientation(LinearLayout.VERTICAL);
+        drawerActions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         TextView heading = text("فهرست", 20, TEXT);
         LinearLayout.LayoutParams headingParams = new LinearLayout.LayoutParams(-1, dp(56));
         headingParams.bottomMargin = dp(10);
-        drawerPanel.addView(heading, headingParams);
-        addDrawerAction(drawerPanel, "کتابخانه مجموعه‌ها", "folder", PURPLE, () -> {
+        drawerActions.addView(heading, headingParams);
+        addDrawerAction(drawerActions, "کتابخانه مجموعه‌ها", "folder", PURPLE, () -> {
+            endRecommendationSession();
             selectedBookIds.clear();
             activeGenreFilter.clear();
             closeDrawer();
             showDashboard();
         }, false);
-        addDrawerAction(drawerPanel, "کتابخانه همهٔ کتاب‌ها", "book", SECONDARY_ACCENT, () -> {
+        addDrawerAction(drawerActions, "کتابخانه همهٔ کتاب‌ها", "book", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             selectedBookIds.clear();
             activeGenreFilter.clear();
             closeDrawer();
             showAllBooks();
         }, false);
-        addDrawerAction(drawerPanel, "کتابخانه نویسندگان", "person", PURPLE, () -> {
+        addDrawerAction(drawerActions, "کتابخانه نویسندگان", "person", PURPLE, () -> {
+            endRecommendationSession();
             closeDrawer();
             showAuthors();
         }, false);
-        addDrawerAction(drawerPanel, "پیشنهاد کتاب", "book", SECONDARY_ACCENT, () -> {
+        addDrawerAction(drawerActions, "پیشنهاد کتاب", "book", SECONDARY_ACCENT, () -> {
+            startRecommendationSession();
             closeDrawer();
             showRecommendation();
         }, false);
-        addDrawerAction(drawerPanel, "آمار مطالعه", "chart", PURPLE, () -> {
+        addDrawerAction(drawerActions, "آمار مطالعه", "chart", PURPLE, () -> {
+            endRecommendationSession();
             closeDrawer();
             showStatistics();
         }, false);
 
-        addDrawerAction(drawerPanel, "ادامهٔ مطالعه", "book", SECONDARY_ACCENT, () -> {
+        addDrawerAction(drawerActions, "ادامهٔ مطالعه", "book", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             ResumeTarget target = findResumeTarget();
             closeDrawer();
             if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
@@ -1214,38 +1245,45 @@ public final class MainActivity extends Activity {
 
         LinearLayout settingsToggle = drawerSettingsButton();
         LinearLayout.LayoutParams settingsParams = drawerActionParams(false);
-        drawerPanel.addView(settingsToggle, settingsParams);
+        drawerActions.addView(settingsToggle, settingsParams);
 
         drawerSettingsOptions = new LinearLayout(this);
         drawerSettingsOptions.setOrientation(LinearLayout.VERTICAL);
         drawerSettingsOptions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         drawerSettingsOptions.setVisibility(drawerSettingsExpanded ? View.VISIBLE : View.GONE);
-        drawerPanel.addView(drawerSettingsOptions, new LinearLayout.LayoutParams(-1,
+        drawerActions.addView(drawerSettingsOptions, new LinearLayout.LayoutParams(-1,
                 drawerSettingsExpanded ? ViewGroup.LayoutParams.WRAP_CONTENT : 0));
         addDrawerAction(drawerSettingsOptions, "عمومی", "settings", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             closeDrawer();
             showSettings();
         }, true);
         addDrawerAction(drawerSettingsOptions, "محاوره‌ای‌ساز", "scan_text", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             closeDrawer();
             showColloquializer();
         }, true);
         addDrawerAction(drawerSettingsOptions, "ژانرها", "tag", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             closeDrawer();
             showTagSettings();
         }, true);
         addDrawerAction(drawerSettingsOptions, "وزن‌های پیشنهاد", "chart", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             closeDrawer();
             showRecommendationSettings();
         }, true);
         addDrawerAction(drawerSettingsOptions, "تم‌ها", "settings", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
             closeDrawer();
             showThemes();
         }, true);
 
-        View spacer = new View(this);
-        drawerPanel.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
-        drawerPanel.addView(text("نسخهٔ " + VERSION, 12, MUTED), new LinearLayout.LayoutParams(-1, dp(36)));
+        drawerScroll.addView(drawerActions, new ScrollView.LayoutParams(-1, -2));
+        drawerPanel.addView(drawerScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        TextView version = text("نسخهٔ " + appVersionName(), 12, MUTED);
+        version.setGravity(Gravity.CENTER);
+        drawerPanel.addView(version, new LinearLayout.LayoutParams(-1, dp(36)));
     }
 
     private LinearLayout drawerSettingsButton() {
@@ -1375,24 +1413,11 @@ public final class MainActivity extends Activity {
         boolean installed = extensionManager.colloquializerInstalled();
         content.addView(textButton("انتخاب فایل JSON", "scan_text", PURPLE,
                 this::chooseColloquializerRules), fieldParams());
+        addColloquializerControls(content);
         if (installed) {
             try {
                 ArrayList<ColloquializerRule> rules = readColloquializerRules(
                         new JSONArray(extensionManager.colloquializerRules()));
-                LinearLayout ruleActions = new LinearLayout(this);
-                ruleActions.setOrientation(LinearLayout.HORIZONTAL);
-                ruleActions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-                ruleActions.addView(textButton("افزودن جفت", "add", PURPLE,
-                        this::showAddColloquializerRuleDialog), new LinearLayout.LayoutParams(0, dp(50), 1f));
-                LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(50), 1f);
-                deleteParams.leftMargin = dp(7);
-                ruleActions.addView(textButton("حذف قوانین", "delete", RED, () -> {
-                    if (extensionManager.removeColloquializer()) {
-                        toast("قوانین محاوره‌ای‌ساز حذف شد");
-                        showColloquializer();
-                    } else toast("حذف قوانین انجام نشد: " + storage.lastError());
-                }), deleteParams);
-                content.addView(ruleActions, new LinearLayout.LayoutParams(-1, dp(50)));
                 addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
                         "enabled.colloquializer", true);
                 addPreferenceSwitch(content, "ثبت الگوهای متغیر با تگ مخفی", "extensions",
@@ -1483,6 +1508,9 @@ public final class MainActivity extends Activity {
                     visible.clear();
                     for (int i = 0; i < rules.size(); i++) {
                         ColloquializerRule rule = rules.get(i);
+                        boolean advancedRule = rule.source.contains("vh") || rule.source.contains("vg")
+                                || rule.replacement.contains("vh") || rule.replacement.contains("vg");
+                        if (colloquialAdvancedMode != advancedRule) continue;
                         if (query.isEmpty() || rule.source.toLowerCase(Locale.ROOT).contains(query)
                                 || rule.replacement.toLowerCase(Locale.ROOT).contains(query)
                                 || android.text.TextUtils.join(" ", rule.exceptions).toLowerCase(Locale.ROOT).contains(query)) visible.add(i);
@@ -1505,8 +1533,6 @@ public final class MainActivity extends Activity {
                 appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
             }
         } else {
-            content.addView(textButton("افزودن جفت", "add", PURPLE,
-                    this::showAddColloquializerRuleDialog), fieldParams());
             TextView empty = text("هنوز فایل قوانینی انتخاب نشده است.", 14, MUTED);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(0, dp(24), 0, dp(20));
@@ -1515,8 +1541,323 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void addColloquializerControls(LinearLayout content) {
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        actions.addView(textButton("افزودن جفت", "add", PURPLE,
+                this::showAddColloquializerRuleDialog), new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        deleteParams.leftMargin = dp(7);
+        actions.addView(textButton("حذف قوانین", "delete", RED, () -> {
+            try {
+                extensionManager.saveColloquializerRules("[]");
+                toast("قوانین جایگزینی پاک شدند.");
+                showColloquializer();
+            } catch (Exception error) {
+                toast("پاک کردن قوانین ناموفق بود: " + error.getMessage());
+            }
+        }), deleteParams);
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, dp(48));
+        actionParams.bottomMargin = dp(7);
+        content.addView(actions, actionParams);
+
+        LinearLayout dataPages = new LinearLayout(this);
+        dataPages.setOrientation(LinearLayout.HORIZONTAL);
+        dataPages.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        dataPages.addView(textButton("فعل‌ها", "edit", SECONDARY_ACCENT,
+                this::showColloquialVerbs), new LinearLayout.LayoutParams(0, dp(46), 1));
+        LinearLayout.LayoutParams namesParams = new LinearLayout.LayoutParams(0, dp(46), 1);
+        namesParams.leftMargin = dp(7);
+        dataPages.addView(textButton("اسم‌ها", "book", SECONDARY_ACCENT,
+                this::showColloquialNames), namesParams);
+        LinearLayout.LayoutParams dataParams = new LinearLayout.LayoutParams(-1, dp(46));
+        dataParams.bottomMargin = dp(8);
+        content.addView(dataPages, dataParams);
+
+        LinearLayout modes = new LinearLayout(this);
+        modes.setOrientation(LinearLayout.HORIZONTAL);
+        modes.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        modes.addView(textButton("عادی", "book", colloquialAdvancedMode ? SECONDARY_ACCENT : PURPLE,
+                () -> setColloquializerMode(false)), new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams advancedParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+        advancedParams.leftMargin = dp(7);
+        modes.addView(textButton("پیشرفته", "scan_text", colloquialAdvancedMode ? PURPLE : SECONDARY_ACCENT,
+                () -> setColloquializerMode(true)), advancedParams);
+        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(-1, dp(44));
+        modeParams.bottomMargin = dp(6);
+        content.addView(modes, modeParams);
+    }
+
+    private void setColloquializerMode(boolean advanced) {
+        colloquialAdvancedMode = advanced;
+        getSharedPreferences("extensions", MODE_PRIVATE).edit()
+                .putBoolean("colloquializer.mode.advanced", advanced).apply();
+        if ("colloquializer".equals(page)) showColloquializer();
+    }
+
+    private void showColloquialNames() {
+        page = "colloquialNames";
+        appColumn.removeAllViews();
+        animatePageTransition();
+        appColumn.addView(makeHeader("فهرست اسم‌ها", "", "menu", "add", this::openDrawer,
+                () -> showColloquialNameDialog(null, -1), 0, 68, true));
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        rows.setPadding(dp(16), dp(8), dp(16), dp(10));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(rows);
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        renderColloquialNames(rows);
+    }
+
+    private ArrayList<String> readColloquialNames() throws Exception {
+        JSONArray json = new JSONArray(extensionManager.colloquializerNames());
+        ArrayList<String> names = new ArrayList<>();
+        for (int i = 0; i < json.length(); i++) {
+            String name = json.optString(i).trim();
+            if (!name.isEmpty()) names.add(name);
+        }
+        return names;
+    }
+
+    private void renderColloquialNames(LinearLayout rows) {
+        rows.removeAllViews();
+        try {
+            ArrayList<String> names = readColloquialNames();
+            for (int i = 0; i < names.size(); i++) {
+                String name = names.get(i);
+                int index = i;
+                addColloquialDataRow(rows, name, "اسمِ قابل استفاده در متغیر a",
+                        () -> showColloquialNameDialog(name, index),
+                        () -> confirmDeleteColloquialName(name, index, rows));
+            }
+            if (names.isEmpty()) rows.addView(emptyLabel("هنوز اسمی اضافه نشده است."),
+                    new LinearLayout.LayoutParams(-1, dp(78)));
+        } catch (Exception error) {
+            rows.addView(emptyLabel("خواندن فهرست اسم‌ها ممکن نشد."),
+                    new LinearLayout.LayoutParams(-1, dp(78)));
+        }
+    }
+
+    private void showColloquialNameDialog(String original, int oldIndex) {
+        EditText name = colloquializerField("اسم");
+        name.setSingleLine(true);
+        if (original != null) name.setText(original);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        form.addView(colloquializerFieldColumn("اسم", name), fieldParams());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(original == null ? "افزودن اسم" : "ویرایش اسم")
+                .setView(dialogPadding(form)).setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String value = titleCaseWords(name.getText().toString());
+            if (value.isEmpty()) { name.setError("اسم را وارد کن"); return; }
+            try {
+                ArrayList<String> values = readColloquialNames();
+                for (int i = 0; i < values.size(); i++) {
+                    if (i != oldIndex && values.get(i).equalsIgnoreCase(value)) {
+                        name.setError("این اسم از قبل وجود دارد"); return;
+                    }
+                }
+                if (oldIndex >= 0 && oldIndex < values.size()) values.set(oldIndex, value);
+                else values.add(value);
+                JSONArray output = new JSONArray();
+                for (String item : values) output.put(item);
+                extensionManager.saveColloquializerNames(output.toString());
+                dialog.dismiss();
+                renderColloquialNamesForCurrentPage();
+            } catch (Exception error) {
+                toast("ذخیرهٔ اسم ناموفق بود: " + error.getMessage());
+            }
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void renderColloquialNamesForCurrentPage() {
+        if (!"colloquialNames".equals(page) || appColumn == null) return;
+        showColloquialNames();
+    }
+
+    private void confirmDeleteColloquialName(String name, int index, LinearLayout rows) {
+        AlertDialog dialog = new AlertDialog.Builder(this).setMessage("اسم «" + name + "» حذف شود؟")
+                .setNegativeButton("لغو", null).setPositiveButton("حذف", (ignored, which) -> {
+                    try {
+                        ArrayList<String> values = readColloquialNames();
+                        if (index >= 0 && index < values.size()) values.remove(index);
+                        JSONArray output = new JSONArray();
+                        for (String item : values) output.put(item);
+                        extensionManager.saveColloquializerNames(output.toString());
+                        renderColloquialNames(rows);
+                    } catch (Exception error) { toast("حذف اسم ناموفق بود: " + error.getMessage()); }
+                }).create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void showColloquialVerbs() {
+        page = "colloquialVerbs";
+        appColumn.removeAllViews();
+        animatePageTransition();
+        appColumn.addView(makeHeader("فهرست فعل‌ها", "", "menu", "add", this::openDrawer,
+                () -> showColloquialVerbDialog(null, -1), 0, 68, true));
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        rows.setPadding(dp(16), dp(8), dp(16), dp(10));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(rows);
+        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        renderColloquialVerbs(rows);
+    }
+
+    private static final class ColloquializerVerb {
+        final String formal;
+        final String colloquial;
+        ColloquializerVerb(String formal, String colloquial) {
+            this.formal = formal;
+            this.colloquial = colloquial;
+        }
+    }
+
+    private ArrayList<ColloquializerVerb> readColloquialVerbs() throws Exception {
+        JSONArray json = new JSONArray(extensionManager.colloquializerVerbs());
+        ArrayList<ColloquializerVerb> verbs = new ArrayList<>();
+        for (int i = 0; i < json.length(); i++) {
+            JSONArray pair = json.optJSONArray(i);
+            if (pair != null && pair.length() == 2) {
+                verbs.add(new ColloquializerVerb(pair.optString(0).trim(), pair.optString(1).trim()));
+            }
+        }
+        return verbs;
+    }
+
+    private void renderColloquialVerbs(LinearLayout rows) {
+        rows.removeAllViews();
+        try {
+            ArrayList<ColloquializerVerb> verbs = readColloquialVerbs();
+            for (int i = 0; i < verbs.size(); i++) {
+                ColloquializerVerb verb = verbs.get(i);
+                int index = i;
+                addColloquialDataRow(rows, verb.formal, "←  " + verb.colloquial,
+                        () -> showColloquialVerbDialog(verb, index),
+                        () -> confirmDeleteColloquialVerb(verb, index, rows));
+            }
+            if (verbs.isEmpty()) rows.addView(emptyLabel("هنوز فعلی اضافه نشده است."),
+                    new LinearLayout.LayoutParams(-1, dp(78)));
+        } catch (Exception error) {
+            rows.addView(emptyLabel("خواندن فهرست فعل‌ها ممکن نشد."),
+                    new LinearLayout.LayoutParams(-1, dp(78)));
+        }
+    }
+
+    private void showColloquialVerbDialog(ColloquializerVerb original, int oldIndex) {
+        EditText formal = colloquializerField("مثال: رو:رفت");
+        EditText colloquial = colloquializerField("مثال: ر:رفت");
+        formal.setSingleLine(true);
+        colloquial.setSingleLine(true);
+        if (original != null) {
+            formal.setText(original.formal);
+            colloquial.setText(original.colloquial);
+        }
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        form.addView(colloquializerFieldColumn("ریشهٔ رسمی", formal), fieldParams());
+        form.addView(colloquializerFieldColumn("ریشهٔ محاوره‌ای", colloquial), fieldParams());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(original == null ? "افزودن فعل" : "ویرایش فعل")
+                .setView(dialogPadding(form)).setNegativeButton("لغو", null)
+                .setPositiveButton("ذخیره", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String formalValue = formal.getText().toString().trim();
+            String colloquialValue = colloquial.getText().toString().trim();
+            if (!validColloquialVerbDescriptor(formalValue)) { formal.setError("به شکل رو:رفت وارد کن"); return; }
+            if (!validColloquialVerbDescriptor(colloquialValue)) { colloquial.setError("به شکل ر:رفت وارد کن"); return; }
+            try {
+                ArrayList<ColloquializerVerb> values = readColloquialVerbs();
+                for (int i = 0; i < values.size(); i++) {
+                    if (i != oldIndex && values.get(i).formal.equalsIgnoreCase(formalValue)) {
+                        formal.setError("این ریشهٔ رسمی از قبل ثبت شده است"); return;
+                    }
+                }
+                ColloquializerVerb value = new ColloquializerVerb(formalValue, colloquialValue);
+                if (oldIndex >= 0 && oldIndex < values.size()) values.set(oldIndex, value);
+                else values.add(value);
+                JSONArray output = new JSONArray();
+                for (ColloquializerVerb item : values) output.put(new JSONArray()
+                        .put(item.formal).put(item.colloquial));
+                extensionManager.saveColloquializerVerbs(output.toString());
+                dialog.dismiss();
+                showColloquialVerbs();
+            } catch (Exception error) {
+                toast("ذخیرهٔ فعل ناموفق بود: " + error.getMessage());
+            }
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
+        if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private boolean validColloquialVerbDescriptor(String value) {
+        if (value == null) return false;
+        int colon = value.indexOf(':');
+        if (colon <= 0 || colon != value.lastIndexOf(':') || colon >= value.length() - 1) return false;
+        String first = value.substring(0, colon).trim();
+        String second = value.substring(colon + 1).trim();
+        return !first.isEmpty() && !second.isEmpty();
+    }
+
+    private void confirmDeleteColloquialVerb(ColloquializerVerb verb, int index, LinearLayout rows) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setMessage("فعل «" + verb.formal + " ← " + verb.colloquial + "» حذف شود؟")
+                .setNegativeButton("لغو", null).setPositiveButton("حذف", (ignored, which) -> {
+                    try {
+                        ArrayList<ColloquializerVerb> values = readColloquialVerbs();
+                        if (index >= 0 && index < values.size()) values.remove(index);
+                        JSONArray output = new JSONArray();
+                        for (ColloquializerVerb item : values) output.put(new JSONArray()
+                                .put(item.formal).put(item.colloquial));
+                        extensionManager.saveColloquializerVerbs(output.toString());
+                        renderColloquialVerbs(rows);
+                    } catch (Exception error) { toast("حذف فعل ناموفق بود: " + error.getMessage()); }
+                }).create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void addColloquialDataRow(LinearLayout rows, String title, String subtitle,
+                                      Runnable edit, Runnable delete) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        row.setPadding(dp(10), dp(5), dp(8), dp(5));
+        row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 13));
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView main = text(title, 14, TEXT);
+        TextView detail = text(subtitle, 12, MUTED);
+        main.setMaxLines(1); main.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        detail.setMaxLines(1); detail.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        setRtlTextAlignment(main); setRtlTextAlignment(detail);
+        labels.addView(main, new LinearLayout.LayoutParams(-1, 0, 1));
+        labels.addView(detail, new LinearLayout.LayoutParams(-1, 0, 1));
+        row.addView(labels, new LinearLayout.LayoutParams(0, -1, 1));
+        row.addView(iconButton("edit", PURPLE, false, edit), new LinearLayout.LayoutParams(dp(42), dp(46)));
+        row.addView(iconButton("delete", RED, false, delete), new LinearLayout.LayoutParams(dp(42), dp(46)));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(62));
+        params.bottomMargin = dp(7);
+        rows.addView(row, params);
+    }
+
     private void showColloquializerHelp() {
-        TextView help = text("هر جفت، عبارت مبدأ را با مقصد جایگزین می‌کند. x یک رشتهٔ پیوسته از حروف فارسی را می‌گیرد؛ اگر در مقصد هم x باشد همان رشته برمی‌گردد، مثل xهایم ← xهام. n نبودن یا بودن «ن» را حفظ می‌کند؛ s فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد. b مرز واژه را خاموش می‌کند و برای جایگزینی یک حرف درون واژه به کار می‌رود.\n\na فقط از میان واژه‌های فارسی تک‌واژه‌ای که در مبدأ قوانین دیگر ثبت کرده‌ای انتخاب می‌کند؛ مثلاً aشان ← aشون. برای ساختن واژه‌نامهٔ فعل، یک جفت به شکل vgکرد ← vhکن اضافه کن؛ سپس الگویی مثل «خواهند vg» ← «می vhن» برای همین فعل‌ها گسترش پیدا می‌کند.\n\nبا روشن کردن «ثبت الگوهای متغیر با تگ مخفی»، موتور متنِ مبدأِ واقعی را در قالب %hid{...}% پیش از مقصد نگه می‌دارد. این تگ در صفحهٔ خواندن پنهان است و برای الگوهای دارای متغیر کمک می‌کند عبارت تغییرکرده را پیدا کنی.\n\nدر کادر استثناها، واژه‌های مجاور را با ویرگول جدا کن. اجرای قوانین همیشه روی متن اولیه انجام می‌شود؛ مقصد تولیدشده دوباره به‌عنوان مبدأ قانون دیگری بررسی نمی‌شود. در صفحهٔ خواندن، گزینهٔ «فقط همین Chapter» قانون را فقط روی همان متن اعمال می‌کند و آن را در JSON ذخیره نمی‌کند.", 14, TEXT);
+        TextView help = text("حالت عادی، جفت‌های معمولی و متغیرهای x، s و a را اجرا می‌کند. x رشته‌ای از حروف فارسی را می‌گیرد؛ s فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد؛ a فقط از میان اسم‌های صفحهٔ «اسم‌ها» انتخاب می‌کند.\n\nحالت پیشرفته، فقط قانون‌هایی را اجرا می‌کند که در مبدأشان vh یا vg دارند. فعل‌ها را در فهرست فعل‌ها به صورت «ریشهٔ رسمی:بن گذشته ← ریشهٔ محاوره‌ای:بن گذشته» ثبت کن؛ مثلاً «رو:رفت ← ر:رفت» یا بدون تغییر «کن:کرد ← کن:کرد». در قانون، vh ریشهٔ رسمی را پیدا می‌کند و vg ریشهٔ محاوره‌ای متناظر را می‌گذارد؛ نمونه: «خواهد vh» ← «می‌vgه». در الگوی «می‌vhند» ← «می‌vhند»، پایان «ند» به «ن» کوتاه می‌شود.\n\nبا روشن کردن «ثبت الگوهای متغیر با تگ مخفی»، متن مبدأ در قالب %hid{...}% پیش از مقصد حفظ می‌شود. استثناها را با ویرگول جدا کن. خروجی یک قانون دوباره به عنوان مبدأ قانون دیگری پردازش نمی‌شود.", 14, TEXT);
         help.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         help.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
         help.setPadding(dp(8), dp(10), dp(8), dp(10));
@@ -2320,6 +2661,8 @@ public final class MainActivity extends Activity {
         else if ("statistics".equals(page)) showStatistics();
         else if ("tagSettings".equals(page)) showTagSettings();
         else if ("extensions".equals(page) || "colloquializer".equals(page)) showColloquializer();
+        else if ("colloquialNames".equals(page)) showColloquialNames();
+        else if ("colloquialVerbs".equals(page)) showColloquialVerbs();
         else if ("authors".equals(page)) showAuthors();
         else if ("authorBooks".equals(page)) showBookShelfContent(true, activeAuthor);
         else if ("allBooks".equals(page)) showBookShelfPage(true);
@@ -2654,6 +2997,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showRecommendation() {
+        if (!recommendationSessionStarted) startRecommendationSession();
         page = "recommendations";
         appColumn.removeAllViews();
         animatePageTransition();
@@ -2663,15 +3007,30 @@ public final class MainActivity extends Activity {
         body.setGravity(Gravity.CENTER);
         body.setPadding(dp(24), dp(20), dp(24), dp(20));
 
-        List<BookRecommendationEngine.Book> availableBooks = recommendationBooks();
-        BookRecommendationEngine.Book book = recommendationEngine.recommendBook(availableBooks, seenRecommendationIds);
+        List<BookRecommendationEngine.Book> availableBooks = recommendationBooks(
+                recommendationCurrentReadingMode, sessionRejectedRecommendationIds);
+        BookRecommendationEngine.Book book = recommendationEngine.recommendBook(availableBooks, seenRecommendationIds,
+                temporaryRecommendationGenre);
         if (book == null) {
-            String emptyMessage = "کتاب ناتمام و قابل‌پیشنهادی وجود ندارد";
-            body.addView(emptyLabel(emptyMessage), new LinearLayout.LayoutParams(-1, 0, 1));
+            TextView emptyMessage = text(availableBooks.isEmpty()
+                    ? "کتابی برای این حالت باقی نمانده است."
+                    : "کتابی برای پیشنهاد باقی نمانده است.", 15, MUTED);
+            emptyMessage.setGravity(Gravity.CENTER);
+            body.addView(emptyMessage, new LinearLayout.LayoutParams(-1, 0, 1));
+            body.addView(textButton("انتخاب ژانر محبوب", "tag", PURPLE,
+                    this::showRecommendationGenrePicker), new LinearLayout.LayoutParams(-1, dp(48)));
+            LinearLayout.LayoutParams emptyModesParams = new LinearLayout.LayoutParams(-1, dp(48));
+            emptyModesParams.topMargin = dp(7);
+            body.addView(recommendationModeButtons(), emptyModesParams);
             appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+            if (!recommendationGenreDialogShown) {
+                recommendationGenreDialogShown = true;
+                body.post(this::showRecommendationGenrePicker);
+            }
             return;
         }
 
+        recommendationGenreDialogShown = false;
         seenRecommendationIds.add(book.id);
         persistRecommendationState();
         JSONObject recommendedRecord = findBookByRecommendationId(book.id);
@@ -2745,32 +3104,119 @@ public final class MainActivity extends Activity {
 
         View spacer = new View(this);
         body.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
-        Runnable openRecommendedChapters = () -> {
-            if (recommendedRecord == null) return;
-            activeBookId = recommendedRecord.optString("id");
-            activeCollectionId = recommendedRecord.optString("collectionId", "other");
-            bookInfoReturnPage = "recommendations";
-            chaptersReturnPage = "recommendations";
-            showChapters();
-        };
-        LinearLayout.LayoutParams chaptersButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
-        chaptersButtonParams.topMargin = dp(6);
-        body.addView(textButton("فهرست Chapterها", "folder", PURPLE, openRecommendedChapters),
-                chaptersButtonParams);
-        LinearLayout.LayoutParams nextButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
-        nextButtonParams.topMargin = dp(7);
-        body.addView(textButton("پیشنهاد بعدی", "next", PURPLE, this::showRecommendation), nextButtonParams);
+        LinearLayout.LayoutParams readButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
+        readButtonParams.topMargin = dp(6);
+        body.addView(textButton("خواندن کتاب", "book", PURPLE,
+                () -> openRecommendedBookForReading(recommendedRecord)), readButtonParams);
+        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(-1, dp(48));
+        modeParams.topMargin = dp(7);
+        body.addView(recommendationModeButtons(), modeParams);
         appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private LinearLayout recommendationModeButtons() {
+        LinearLayout modes = new LinearLayout(this);
+        modes.setOrientation(LinearLayout.HORIZONTAL);
+        modes.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        modes.addView(textButton("پیشنهاد از نخوانده‌ها", "book",
+                recommendationCurrentReadingMode ? SECONDARY_ACCENT : PURPLE, () -> {
+                    recommendationCurrentReadingMode = false;
+                    showRecommendation();
+                }), new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams readingParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        readingParams.leftMargin = dp(7);
+        modes.addView(textButton("پیشنهاد از درحال‌خواندن", "book",
+                recommendationCurrentReadingMode ? PURPLE : SECONDARY_ACCENT, () -> {
+                    recommendationCurrentReadingMode = true;
+                    showRecommendation();
+                }), readingParams);
+        return modes;
+    }
+
+    private void startRecommendationSession() {
+        sessionRejectedRecommendationIds.clear();
+        temporaryRecommendationGenre = "";
+        recommendationGenreDialogShown = false;
+        recommendationSessionStarted = true;
+    }
+
+    private void endRecommendationSession() {
+        sessionRejectedRecommendationIds.clear();
+        temporaryRecommendationGenre = "";
+        recommendationGenreDialogShown = false;
+        recommendationSessionStarted = false;
+    }
+
+    private void openRecommendedBookForReading(JSONObject book) {
+        if (book == null) return;
+        JSONArray chapters = book.optJSONArray("chapters");
+        if (chapters == null || chapters.length() == 0) { toast("این کتاب Chapter ندارد."); return; }
+        int target = -1;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && !chapter.optBoolean("done")
+                    && (chapter.optInt("scroll", 0) > 0 || chapter.optInt("percent", 0) > 0)) {
+                target = i;
+                break;
+            }
+        }
+        if (target < 0) for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && !chapter.optBoolean("done")) { target = i; break; }
+        }
+        if (target < 0) { toast("این کتاب کامل خوانده شده است."); return; }
+        activeBookId = book.optString("id");
+        activeCollectionId = book.optString("collectionId", "other");
+        bookInfoReturnPage = "recommendations";
+        chaptersReturnPage = "recommendations";
+        openReader(target);
+    }
+
+    private void showRecommendationGenrePicker() {
+        List<String> top = topRecommendationGenres();
+        if (top.isEmpty()) {
+            toast("اول از تنظیمات تگ‌ها چند ژانر محبوب انتخاب کن.");
+            return;
+        }
+        String[] choices = top.toArray(new String[0]);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("این بار چه ژانری پیشنهاد بدهم؟")
+                .setItems(choices, (ignored, which) -> {
+                    if (which < 0 || which >= top.size()) return;
+                    temporaryRecommendationGenre = top.get(which);
+                    sessionRejectedRecommendationIds.clear();
+                    recommendationGenreDialogShown = true;
+                    showRecommendation();
+                }).setNegativeButton("لغو", null).create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private List<String> topRecommendationGenres() {
+        ArrayList<String> values = new ArrayList<>(favoriteGenrePreferences);
+        if (values.isEmpty()) {
+            JSONArray all = allGenres();
+            for (int i = 0; i < all.length(); i++) values.add(all.optString(i));
+        }
+        values.sort((left, right) -> Integer.compare(
+                recommendationPreferences.weightFor(right), recommendationPreferences.weightFor(left)));
+        ArrayList<String> top = new ArrayList<>(3);
+        for (String value : values) if (!containsIgnoreCase(top, value) && top.size() < 3) top.add(value);
+        if (top.size() < 3) {
+            JSONArray all = allGenres();
+            for (int i = 0; i < all.length() && top.size() < 3; i++) {
+                String value = all.optString(i);
+                if (!containsIgnoreCase(top, value)) top.add(value);
+            }
+        }
+        return top;
     }
 
     private void rejectRecommendedBook(JSONObject book) {
         if (book == null) return;
         String id = book.optString("id", "");
         if (id.isEmpty()) return;
-        dislikedBookIds.add(id);
-        favoriteBookIds.remove(id);
-        rebuildRecommendationWeights();
-        persistRecommendationState();
+        sessionRejectedRecommendationIds.add(book.optLong("recommendationId", -1));
         showRecommendation();
     }
 
@@ -2809,7 +3255,7 @@ public final class MainActivity extends Activity {
         scroll.addView(rows);
         body.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        List<BookRecommendationEngine.Book> books = recommendationBooks();
+        List<BookRecommendationEngine.Book> books = recommendationBooks(null, Collections.emptySet());
         Map<Long, BookRecommendationEngine.WeightBreakdown> breakdowns = new HashMap<>();
         double maxTotal = 0, maxGenre = 0, maxPersonal = 0, maxReading = 0;
         for (BookRecommendationEngine.Book book : books) {
@@ -3791,7 +4237,8 @@ public final class MainActivity extends Activity {
 
     }
 
-    private List<BookRecommendationEngine.Book> recommendationBooks() {
+    private List<BookRecommendationEngine.Book> recommendationBooks(Boolean currentlyReading,
+                                                                      Set<Long> excludedIds) {
         List<BookRecommendationEngine.Book> result = new ArrayList<>();
         JSONArray books = library.optJSONArray("books");
         if (books == null) return result;
@@ -3801,8 +4248,7 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < books.length(); i++) {
             JSONObject candidate = books.optJSONObject(i);
             if (candidate == null || "other".equals(candidate.optString("collectionId", "other"))
-                    || bookReadPercent(candidate) >= 100
-                    || dislikedBookIds.contains(candidate.optString("id"))) continue;
+                    || bookReadPercent(candidate) >= 100) continue;
             String collectionId = candidate.optString("collectionId", "other");
             int number = seriesBookNumber(candidate);
             Integer first = firstUnfinishedSeriesNumber.get(collectionId);
@@ -3811,7 +4257,9 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
             if (book == null || bookReadPercent(book) >= 100
-                    || dislikedBookIds.contains(book.optString("id"))) continue;
+                    || dislikedBookIds.contains(book.optString("id"))
+                    || !recommendationModeMatches(book, currentlyReading)
+                    || isRecommendationSessionExcluded(book, excludedIds)) continue;
             String collectionId = book.optString("collectionId", "other");
             if (!"other".equals(collectionId)) {
                 Integer firstNumber = firstUnfinishedSeriesNumber.get(collectionId);
@@ -3836,6 +4284,17 @@ public final class MainActivity extends Activity {
                     wordsReadFromBook(book), allReadWords, includeReadingShare));
         }
         return result;
+    }
+
+    private boolean recommendationModeMatches(JSONObject book, Boolean currentlyReading) {
+        if (currentlyReading == null) return true;
+        int progress = bookReadPercent(book);
+        return currentlyReading ? progress > 0 && progress < 100 : progress == 0;
+    }
+
+    private boolean isRecommendationSessionExcluded(JSONObject book, Set<Long> excludedIds) {
+        return excludedIds != null
+                && excludedIds.contains(book.optLong("recommendationId", -1));
     }
 
     private boolean containsIgnoreCase(Collection<String> values, String candidate) {
@@ -4453,7 +4912,7 @@ public final class MainActivity extends Activity {
                 : allBooks ? "کتابی در کتابخانه نیست" : "کتابی در این مجموعه نیست");
         listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1)); booksGrid.setEmptyView(empty);
         appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView version = text(VERSION, 10, MUTED); version.setGravity(Gravity.CENTER);
+        TextView version = text("نسخهٔ " + appVersionName(), 10, MUTED); version.setGravity(Gravity.CENTER);
         appColumn.addView(version, new LinearLayout.LayoutParams(-1, dp(22)));
         searchField.addTextChangedListener(watcher(() -> { if (bookAdapter != null) bookAdapter.notifyDataSetChanged(); }));
     }
@@ -5573,8 +6032,10 @@ public final class MainActivity extends Activity {
         int contentHeight = chapterEditor.getHeight();
         int range = Math.max(0, contentHeight - readerScroll.getHeight());
         boolean hasText = !chapterText.trim().isEmpty();
-        int percent = !hasEndMarker || !hasText ? 0 : range == 0 ? 100
-                : Math.max(0, Math.min(100, Math.round(readerScroll.getScrollY() * 100f / range)));
+        float rawPercent = range == 0 ? 100f : readerScroll.getScrollY() * 100f / range;
+        int percent = !hasEndMarker || !hasText ? 0
+                : Math.max(0, Math.min(100, Math.round(rawPercent)));
+        if (hasEndMarker && hasText && rawPercent > 97f) percent = 100;
         putJson(chapter, "percent", percent);
         putJson(chapter, "done", hasEndMarker && hasText && percent >= 100);
         putJson(chapter, "manualDone", false);
@@ -7109,10 +7570,12 @@ public final class MainActivity extends Activity {
             showBookInfo(activeBook());
         }
         else if ("bookInfo".equals(page)) showBookShelfForPage(bookInfoReturnPage);
+        else if ("colloquialNames".equals(page) || "colloquialVerbs".equals(page)) showColloquializer();
         else if ("authorBooks".equals(page)) { selectedBookIds.clear(); showAuthors(); }
         else if ("authors".equals(page)) showDashboard();
         else if ("collectionBooks".equals(page) || "allBooks".equals(page)) { selectedBookIds.clear(); showDashboard(); }
-        else if ("settings".equals(page) || "themes".equals(page) || "recommendations".equals(page)
+        else if ("recommendations".equals(page)) { endRecommendationSession(); showDashboard(); }
+        else if ("settings".equals(page) || "themes".equals(page)
                 || "recommendationSettings".equals(page)
                 || "statistics".equals(page)
                 || "tagSettings".equals(page) || "extensions".equals(page) || "colloquializer".equals(page)) showDashboard();
@@ -7860,6 +8323,10 @@ public final class MainActivity extends Activity {
             frame.setFocusable(true);
             frame.setContentDescription(author + "، نمایش کتاب‌ها");
             frame.setOnClickListener(v -> selectAuthorCard(author));
+            frame.setOnLongClickListener(v -> {
+                startAuthorSelection(author);
+                return true;
+            });
             LinearLayout card = new LinearLayout(MainActivity.this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setGravity(Gravity.CENTER);

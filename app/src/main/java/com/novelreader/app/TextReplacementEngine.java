@@ -15,6 +15,8 @@ import java.util.Set;
 final class TextReplacementEngine {
     private static String cachedRulesJson;
     private static CompiledRules cachedRules;
+    private static String cachedColloquialKey;
+    private static CompiledRules cachedColloquialRules;
 
     private TextReplacementEngine() { }
 
@@ -24,6 +26,120 @@ final class TextReplacementEngine {
 
     static String transform(String text, String rulesJson, boolean tagVariableChanges) throws JSONException {
         return transform(text, loadRules(rulesJson), tagVariableChanges);
+    }
+
+    static String transformColloquializer(String text, String rulesJson, String namesJson,
+                                           String verbsJson, boolean advanced,
+                                           boolean tagVariableChanges) throws JSONException {
+        return transform(text, loadColloquializerRules(rulesJson, namesJson, verbsJson, advanced),
+                tagVariableChanges);
+    }
+
+    private static synchronized CompiledRules loadColloquializerRules(String rulesJson,
+            String namesJson, String verbsJson, boolean advanced) throws JSONException {
+        String key = rulesJson + "|names|" + namesJson + "|verbs|" + verbsJson + "|advanced|" + advanced;
+        if (key.equals(cachedColloquialKey) && cachedColloquialRules != null) return cachedColloquialRules;
+
+        JSONArray input = new JSONArray(rulesJson);
+        ArrayList<RawRule> sourceRules = new ArrayList<>(input.length());
+        for (int i = 0; i < input.length(); i++) {
+            JSONArray pair = input.optJSONArray(i);
+            if (pair == null || pair.length() < 2 || pair.length() > 3
+                    || !(pair.opt(0) instanceof String) || !(pair.opt(1) instanceof String)
+                    || pair.optString(0).isEmpty()) {
+                throw new JSONException("Each rule must contain a source and destination.");
+            }
+            RawRule raw = new RawRule(pair.optString(0), pair.optString(1));
+            JSONArray exceptions = pair.optJSONArray(2);
+            if (pair.length() == 3 && exceptions == null) throw new JSONException("Rule exceptions must be a string array.");
+            if (exceptions != null) for (int j = 0; j < exceptions.length(); j++) {
+                String value = exceptions.optString(j).trim();
+                if (value.isEmpty()) throw new JSONException("Rule exceptions cannot be empty.");
+                raw.exceptions.add(value);
+            }
+            sourceRules.add(raw);
+        }
+
+        ArrayList<String> nouns = new ArrayList<>();
+        Set<String> uniqueNouns = new HashSet<>();
+        JSONArray nameArray = new JSONArray(namesJson);
+        for (int i = 0; i < nameArray.length(); i++) {
+            String noun = nameArray.optString(i).trim();
+            if (isArabicWord(noun) && uniqueNouns.add(noun)) nouns.add(noun);
+        }
+        for (RawRule raw : sourceRules) {
+            if (isArabicWord(raw.source) && uniqueNouns.add(raw.source)) nouns.add(raw.source);
+        }
+        nouns.sort((left, right) -> Integer.compare(right.length(), left.length()));
+        Map<Character, List<String>> nounsByFirstCharacter = new HashMap<>();
+        for (String noun : nouns) {
+            char first = foldCharacter(noun.charAt(0));
+            nounsByFirstCharacter.computeIfAbsent(first, ignored -> new ArrayList<>()).add(noun);
+        }
+
+        Map<String, String> verbMap = new HashMap<>();
+        JSONArray verbArray = new JSONArray(verbsJson);
+        for (int i = 0; i < verbArray.length(); i++) {
+            JSONArray pair = verbArray.optJSONArray(i);
+            if (pair == null || pair.length() != 2) throw new JSONException("Verb entries must be root pairs.");
+            String[] formal = splitVerbDescriptor(pair.optString(0));
+            String[] colloquial = splitVerbDescriptor(pair.optString(1));
+            if (formal == null || colloquial == null) throw new JSONException("Verb roots must use the form رو:رفت.");
+            addVerbMapping(verbMap, formal[0], colloquial[0]);
+            addVerbMapping(verbMap, formal[1], colloquial[0]);
+        }
+        ArrayList<VerbStem> verbStems = new ArrayList<>();
+        for (Map.Entry<String, String> entry : verbMap.entrySet()) {
+            verbStems.add(new VerbStem(entry.getKey(), entry.getValue()));
+        }
+        verbStems.sort((left, right) -> Integer.compare(right.past.length(), left.past.length()));
+
+        ArrayList<Rule> rules = new ArrayList<>();
+        for (RawRule raw : sourceRules) {
+            boolean hasVerbToken = hasVerbToken(raw.source) || hasVerbToken(raw.replacement);
+            if (advanced != hasVerbToken) continue;
+            if (!advanced) {
+                rules.add(compileRule(raw.source, raw.replacement, raw.exceptions,
+                        nounsByFirstCharacter, hasAsciiLetter(raw.source.replace("b", ""))));
+                continue;
+            }
+            if (!hasVerbToken(raw.source)) {
+                throw new JSONException("Advanced verb rules must put vh or vg in the source.");
+            }
+            String replacementTemplate = raw.replacement.replace("vhند", "vhن").replace("vgند", "vgن");
+            for (VerbStem stem : verbStems) {
+                String expandedSource = raw.source.replace("vh", stem.past).replace("vg", stem.past);
+                String expandedReplacement = replacementTemplate.replace("vh", stem.colloquial)
+                        .replace("vg", stem.colloquial);
+                rules.add(compileRule(expandedSource, expandedReplacement, raw.exceptions,
+                        nounsByFirstCharacter, hasAsciiLetter(raw.source.replace("b", ""))));
+            }
+        }
+        rules.sort((left, right) -> Integer.compare(right.priorityLength, left.priorityLength));
+        CompiledRules compiled = new CompiledRules(rules);
+        cachedColloquialKey = key;
+        cachedColloquialRules = compiled;
+        return compiled;
+    }
+
+    private static boolean hasVerbToken(String value) {
+        return value != null && (value.contains("vh") || value.contains("vg"));
+    }
+
+    private static String[] splitVerbDescriptor(String value) {
+        if (value == null) return null;
+        int colon = value.indexOf(':');
+        if (colon <= 0 || colon != value.lastIndexOf(':') || colon >= value.length() - 1) return null;
+        String first = value.substring(0, colon).trim();
+        String second = value.substring(colon + 1).trim();
+        if (!isArabicWord(first) || !isArabicWord(second)) return null;
+        return new String[]{first, second};
+    }
+
+    private static void addVerbMapping(Map<String, String> mappings, String formal, String colloquial) {
+        if (formal == null || colloquial == null || formal.isEmpty() || colloquial.isEmpty()) return;
+        String key = formal.replace("\u200c", "");
+        if (!mappings.containsKey(key)) mappings.put(key, colloquial);
     }
 
     private static synchronized CompiledRules loadRules(String rulesJson) throws JSONException {
