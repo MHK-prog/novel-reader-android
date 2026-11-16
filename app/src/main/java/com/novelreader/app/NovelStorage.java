@@ -31,6 +31,8 @@ final class NovelStorage {
     private static final String FOLDER = "NovelReader";
     private static final String COVER_FOLDER = ".covers";
     private static final String PLUGIN_FOLDER = ".plugins";
+    private static final String CHAPTER_ORIGINALS_FOLDER = ".chapter-originals";
+    private static final String CHAPTER_ORIGINALS_DOCUMENT_ID = "chapter_originals_document_id";
     private static final String PLUGIN_DOCUMENT_ID = "plugin_folder_document_id";
     private static final String PLUGIN_MARKER_DOCUMENT_ID = "plugin_marker_document_id";
     private static final String NO_MEDIA_FILE = ".nomedia";
@@ -216,6 +218,68 @@ final class NovelStorage {
             android.util.Log.e("NovelReader", "Could not write extension file " + fileName, error);
             return false;
         }
+    }
+
+    String readChapterOriginal(String fileName) throws Exception {
+        if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) {
+            throw new IOException("Invalid chapter original file name.");
+        }
+        Uri directory = chapterOriginalsDirectory(false);
+        if (directory == null) return null;
+        Uri file = findChild(directory, fileName);
+        if (file == null) return null;
+        try (InputStream input = activity.getContentResolver().openInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) throw new IOException("The chapter original is unavailable.");
+            copy(input, output);
+            return output.toString("UTF-8");
+        }
+    }
+
+    boolean writeChapterOriginal(String fileName, String contents) {
+        if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) {
+            lastError = "Invalid chapter original file name.";
+            return false;
+        }
+        try {
+            Uri directory = chapterOriginalsDirectory(true);
+            Uri file = findChild(directory, fileName);
+            if (file == null) file = DocumentsContract.createDocument(
+                    activity.getContentResolver(), directory, "text/markdown", fileName);
+            if (file == null) throw new IOException("Could not create the chapter original.");
+            try (OutputStream output = activity.getContentResolver().openOutputStream(file, "rwt")) {
+                if (output == null) throw new IOException("The chapter original is unavailable.");
+                output.write((contents == null ? "" : contents).getBytes(StandardCharsets.UTF_8));
+                output.flush();
+            }
+            lastError = "";
+            return true;
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not save chapter original", error);
+            return false;
+        }
+    }
+
+    boolean deleteChapterOriginal(String fileName) {
+        if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) return false;
+        try {
+            Uri directory = chapterOriginalsDirectory(false);
+            if (directory == null) return true;
+            Uri file = findChild(directory, fileName);
+            return file == null || DocumentsContract.deleteDocument(activity.getContentResolver(), file);
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not remove chapter original", error);
+            return false;
+        }
+    }
+
+    private Uri chapterOriginalsDirectory(boolean create) throws Exception {
+        Uri root = extensionRootUri(create);
+        if (root == null) return null;
+        return resolveExtensionChild(root, CHAPTER_ORIGINALS_FOLDER,
+                CHAPTER_ORIGINALS_DOCUMENT_ID, DIRECTORY_MIME, true, create);
     }
 
     boolean deletePlugin(String pluginId) {

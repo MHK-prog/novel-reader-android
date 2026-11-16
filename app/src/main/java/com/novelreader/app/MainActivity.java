@@ -41,6 +41,7 @@ import android.text.style.ForegroundColorSpan;
 import android.text.style.LineBackgroundSpan;
 import android.text.Layout;
 import android.view.Gravity;
+import android.view.GestureDetector;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -108,6 +109,9 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_COVER = 42;
     private static final int REQUEST_COLLOQUIALIZER = 43;
     private static final int REQUEST_BOOK_JSON = 44;
+    private static final int SWIPE_MIN_DISTANCE = 50;
+    private static final int SWIPE_THRESHOLD_VELOCITY = 100;
+    private static final int SWIPE_MAX_OFF_PATH = 180;
     private static final int BG_DARK = Color.rgb(9, 9, 9);
     private static final int SURFACE_DARK = Color.rgb(20, 20, 20);
     private static final int SURFACE_ALT_DARK = Color.rgb(17, 17, 17);
@@ -221,6 +225,8 @@ public final class MainActivity extends Activity {
     private String chapterText = "";
     private long chapterWordCount;
     private boolean chapterDirty;
+    private boolean chapterColloquialized;
+    private boolean applyingChapterColloquializer;
     private boolean restoringScroll;
     private float scrollGestureStartY;
     private long scrollGestureStartAt;
@@ -1434,8 +1440,6 @@ public final class MainActivity extends Activity {
                         new JSONArray(extensionManager.colloquializerRules()));
                 addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
                         "enabled.colloquializer", true);
-                addPreferenceSwitch(content, "ثبت الگوهای متغیر با تگ مخفی", "extensions",
-                        "colloquializer.hide.variable.matches", false);
                 TextView count = text("", 12, MUTED);
                 count.setGravity(Gravity.CENTER);
                 EditText search = edit("جستجو در قانون‌ها", false);
@@ -1871,7 +1875,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showColloquializerHelp() {
-        TextView help = text("حالت عادی، جفت‌های معمولی و متغیرهای x، s و a را اجرا می‌کند. x رشته‌ای از حروف فارسی را می‌گیرد؛ s فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد؛ a فقط از میان اسم‌های صفحهٔ «اسم‌ها» انتخاب می‌کند.\n\nحالت پیشرفته، فقط قانون‌هایی را اجرا می‌کند که در مبدأشان vh یا vg دارند. فعل‌ها را در فهرست فعل‌ها به صورت «ریشهٔ رسمی:بن گذشته ← ریشهٔ محاوره‌ای:بن گذشته» ثبت کن؛ مثلاً «رو:رفت ← ر:رفت» یا بدون تغییر «کن:کرد ← کن:کرد». در قانون، vh ریشهٔ رسمی را پیدا می‌کند و vg ریشهٔ محاوره‌ای متناظر را می‌گذارد؛ نمونه: «خواهد vh» ← «می‌vgه». در الگوی «می‌vhند» ← «می‌vhند»، پایان «ند» به «ن» کوتاه می‌شود.\n\nبا روشن کردن «ثبت الگوهای متغیر با تگ مخفی»، متن مبدأ در قالب %hid{...}% پیش از مقصد حفظ می‌شود. استثناها را با ویرگول جدا کن. خروجی یک قانون دوباره به عنوان مبدأ قانون دیگری پردازش نمی‌شود.", 14, TEXT);
+        TextView help = text("حالت عادی، جفت‌های معمولی و متغیرهای x، s و a را اجرا می‌کند. x رشته‌ای از حروف فارسی را می‌گیرد؛ s فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد؛ a فقط از میان اسم‌های صفحهٔ «اسم‌ها» انتخاب می‌کند.\n\nحالت پیشرفته، فقط قانون‌هایی را اجرا می‌کند که در مبدأشان vh یا vg دارند. فعل‌ها را در فهرست فعل‌ها به صورت «ریشهٔ رسمی:بن گذشته ← ریشهٔ محاوره‌ای:بن گذشته» ثبت کن؛ مثلاً «رو:رفت ← ر:رفت» یا بدون تغییر «کن:کرد ← کن:کرد». در قانون، vh ریشهٔ رسمی را پیدا می‌کند و vg ریشهٔ محاوره‌ای متناظر را می‌گذارد؛ نمونه: «خواهد vh» ← «می‌vgه». در الگوی «می‌vhند» ← «می‌vhند»، پایان «ند» به «ن» کوتاه می‌شود.\n\nدر صفحهٔ Chapter می‌توانی نسخهٔ محاوره‌ای را اعمال یا متن اصلی را بازگردانی کنی. عبارت رسمی کنار واژهٔ تغییر‌یافته به شکل {عبارت رسمی} نگه‌داری می‌شود و از همان‌جا می‌توانی نشانه‌ها را پاک کنی. استثناها را با ویرگول جدا کن. خروجی یک قانون دوباره به عنوان مبدأ قانون دیگری پردازش نمی‌شود.", 14, TEXT);
         help.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         help.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
         help.setPadding(dp(8), dp(10), dp(8), dp(10));
@@ -2331,6 +2335,10 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmExtensionAction(ExtensionManager.Action action) {
+        if ("colloquializer".equals(action.pluginId)) {
+            showChapterColloquializerDialog();
+            return;
+        }
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(action.confirmTitle)
                 .setMessage(action.confirmMessage)
@@ -2339,6 +2347,144 @@ public final class MainActivity extends Activity {
                 .create();
         dialog.show();
         styleDialogWindow(dialog);
+    }
+
+    private void showChapterColloquializerDialog() {
+        if (!"reader".equals(page) || chapterEditor == null) return;
+        ArrayList<String> choices = new ArrayList<>();
+        ArrayList<Integer> actions = new ArrayList<>();
+        choices.add("محاوره‌ای‌سازی Chapter"); actions.add(0);
+        if (chapterColloquialized) {
+            choices.add("بازگرداندن متن اصلی"); actions.add(1);
+        }
+        if (containsFormalAnnotations(chapterText)) {
+            choices.add("حذف نشانه‌های عبارت رسمی"); actions.add(2);
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("محاوره‌ای‌ساز")
+                .setItems(choices.toArray(new String[0]), (ignored, which) -> {
+                    int action = actions.get(which);
+                    if (action == 0) runChapterColloquializer(false);
+                    else if (action == 1) runChapterColloquializer(true);
+                    else removeChapterFormalAnnotations();
+                })
+                .setNegativeButton("لغو", null).create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void runChapterColloquializer(boolean restoreOriginal) {
+        if (!"reader".equals(page) || chapterEditor == null || !saveCurrentChapter()) return;
+        final EditText targetEditor = chapterEditor;
+        final String targetBookId = activeBookId;
+        final int targetChapterIndex = activeChapter;
+        final String currentText = targetEditor.getText().toString();
+        final boolean wasColloquialized = chapterColloquialized;
+        final String originalFile = chapterOriginalFileName();
+        if (originalFile == null) return;
+        final FrameLayout targetButton = readerExtensionButton;
+        final NativeIconView targetIcon = readerExtensionIcon;
+        final ProgressBar targetSpinner = readerExtensionSpinner;
+        final LinearLayout targetBottomBar = readerBottomBar;
+
+        targetEditor.setEnabled(false);
+        if (targetBottomBar != null) {
+            for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
+                targetBottomBar.getChildAt(i).setEnabled(false);
+            }
+        }
+        if (targetButton != null) targetButton.setEnabled(false);
+        if (targetIcon != null) targetIcon.setVisibility(View.GONE);
+        if (targetSpinner != null) targetSpinner.setVisibility(View.VISIBLE);
+
+        pluginExecutor.execute(() -> {
+            String source = null;
+            String output = null;
+            String errorMessage = null;
+            try {
+                if (restoreOriginal || wasColloquialized) {
+                    source = storage.readChapterOriginal(originalFile);
+                    if (source == null) throw new IOException("نسخهٔ اصلی این Chapter پیدا نشد.");
+                } else {
+                    source = currentText;
+                    if (!storage.writeChapterOriginal(originalFile, source)) {
+                        throw new IOException(storage.lastError());
+                    }
+                }
+                output = restoreOriginal ? source : extensionManager.transformColloquializer(source, true);
+            } catch (Exception error) {
+                errorMessage = error.getMessage() == null
+                        ? error.getClass().getSimpleName() : error.getMessage();
+            }
+            final String original = source;
+            final String transformed = output;
+            final String failure = errorMessage;
+            runOnUiThread(() -> {
+                if (targetSpinner != null) targetSpinner.setVisibility(View.GONE);
+                if (targetIcon != null) targetIcon.setVisibility(View.VISIBLE);
+                if (targetButton != null) targetButton.setEnabled(true);
+                if (targetBottomBar != null) {
+                    for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
+                        targetBottomBar.getChildAt(i).setEnabled(true);
+                    }
+                }
+                targetEditor.setEnabled(true);
+                if (!"reader".equals(page) || chapterEditor != targetEditor
+                        || !targetBookId.equals(activeBookId) || targetChapterIndex != activeChapter) return;
+                if (failure != null || transformed == null) {
+                    toast("محاوره‌ای‌سازی ناموفق بود: " + failure);
+                    return;
+                }
+
+                if (restoreOriginal || transformed.equals(original)) {
+                    if (wasColloquialized || restoreOriginal) {
+                        setChapterColloquializerText(original, false);
+                        if (saveCurrentChapter()) storage.deleteChapterOriginal(originalFile);
+                    } else {
+                        storage.deleteChapterOriginal(originalFile);
+                    }
+                    if (!restoreOriginal) toast("تغییری برای اعمال پیدا نشد.");
+                    else toast("متن اصلی Chapter برگشت.");
+                    return;
+                }
+
+                setChapterColloquializerText(transformed, true);
+                if (saveCurrentChapter()) toast("متن محاوره‌ای Chapter ذخیره شد.");
+            });
+        });
+    }
+
+    private void removeChapterFormalAnnotations() {
+        if (chapterEditor == null) return;
+        String cleaned = stripFormalAnnotations(chapterEditor.getText().toString());
+        if (cleaned.equals(chapterEditor.getText().toString())) {
+            toast("نشانه‌ای برای حذف پیدا نشد.");
+            return;
+        }
+        setChapterColloquializerText(cleaned, chapterColloquialized);
+        if (saveCurrentChapter()) toast("نشانه‌های عبارت رسمی حذف شدند.");
+    }
+
+    private void setChapterColloquializerText(String value, boolean colloquialized) {
+        if (chapterEditor == null) return;
+        String current = chapterEditor.getText().toString();
+        chapterUndoStack.addLast(current);
+        while (chapterUndoStack.size() > 80) chapterUndoStack.removeFirst();
+        chapterRedoStack.clear();
+        int selection = Math.max(0, chapterEditor.getSelectionStart());
+        chapterColloquialized = colloquialized;
+        applyingChapterColloquializer = true;
+        chapterEditor.setText(value);
+        chapterEditor.setSelection(Math.min(selection, value.length()));
+        applyingChapterColloquializer = false;
+        chapterText = value;
+        chapterWordCount = countWords(visibleChapterText(value));
+        chapterDirty = true;
+        JSONObject chapter = activeChapterObject();
+        if (chapter != null) putJson(chapter, "colloquialized", colloquialized);
+        applyRuleSpans(chapterEditor.getText());
+        updateTokenSuggestions();
+        updateProgress();
     }
 
     private void runExtensionAction(ExtensionManager.Action action) {
@@ -2369,10 +2515,7 @@ public final class MainActivity extends Activity {
                 if (plugin == null || !extensionManager.isEnabled(action.pluginId)) {
                     throw new IOException("افزونه نصب یا فعال نیست.");
                 }
-                boolean tagVariableChanges = "colloquializer".equals(action.pluginId)
-                        && getSharedPreferences("extensions", MODE_PRIVATE)
-                        .getBoolean("colloquializer.hide.variable.matches", false);
-                output = extensionManager.runTextReplacement(plugin, action, source, tagVariableChanges);
+                output = extensionManager.runTextReplacement(plugin, action, source, false);
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
@@ -2729,10 +2872,7 @@ public final class MainActivity extends Activity {
     }
 
     private boolean drawerSwipeAvailable() {
-        return "collections".equals(page) || "collectionBooks".equals(page) || "allBooks".equals(page)
-                || "authorBooks".equals(page) || "authors".equals(page)
-                || "settings".equals(page) || "recommendations".equals(page)
-                || "recommendationSettings".equals(page) || "tagSettings".equals(page);
+        return !"reader".equals(page);
     }
 
     private void beginDrawerGesture(float progress) {
@@ -6438,6 +6578,10 @@ public final class MainActivity extends Activity {
         readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; });
         chapterEditor.addTextChangedListener(watcher(() -> {
             chapterText = chapterEditor.getText().toString();
+            if (!applyingChapterColloquializer && chapterColloquialized) {
+                chapterColloquialized = false;
+                putJson(chapter, "colloquialized", false);
+            }
             chapterWordCount = countWords(visibleChapterText(chapterText));
             chapterDirty = true;
             applyRuleSpans(chapterEditor.getText());
@@ -6493,25 +6637,13 @@ public final class MainActivity extends Activity {
                         putReplacementPair(rules, ruleSource, replacement, exceptions);
                         extensionManager.saveColloquializerRules(rules.toString());
                     }
-                    boolean tagVariableChanges = getSharedPreferences("extensions", MODE_PRIVATE)
-                            .getBoolean("colloquializer.hide.variable.matches", false);
-                    String updated = TextReplacementEngine.transform(current, singlePair.toString(), tagVariableChanges);
+                    String updated = TextReplacementEngine.transform(current, singlePair.toString(), true);
                     String transformedPrefix = TextReplacementEngine.transform(
-                            current.substring(0, safeStart), singlePair.toString(), tagVariableChanges);
-                    int markerLength = tagVariableChanges && containsAsciiLetter(ruleSource.replace("b", ""))
-                            ? current.substring(safeStart, Math.min(current.length(), safeStart + source.length())).length() + 7 : 0;
+                            current.substring(0, safeStart), singlePair.toString(), true);
+                    int markerLength = source.length() + 2;
                     applyChapterText(updated, Math.min(transformedPrefix.length() + markerLength
                             + replacement.length(), updated.length()));
                 });
-    }
-
-    private boolean containsAsciiLetter(String value) {
-        if (value == null) return false;
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
-        }
-        return false;
     }
 
     private void putReplacementPair(JSONArray rules, String source, String replacement,
@@ -6653,11 +6785,9 @@ public final class MainActivity extends Activity {
         JSONObject book = activeBook();
         if (book == null) return;
         JSONObject chapterForFile = book.optJSONArray("chapters").optJSONObject(index);
-        String base = "chapter-" + (book.optString("id") + ":"
-                + chapterStorageIndex(chapterForFile, index)).replaceAll("[^A-Za-z0-9._-]", "-");
         String loadedText;
         try {
-            loadedText = storage.read(base + ".md");
+            loadedText = storage.read(chapterStorageFileName(book.optString("id"), chapterForFile, index));
         } catch (Exception error) {
             toast("خواندن Chapter ناموفق بود: " + storage.lastError());
             return;
@@ -6669,6 +6799,8 @@ public final class MainActivity extends Activity {
         lastUndoWasTyping = false;
         lastUndoEnd = -1;
         chapterText = loadedText == null ? "" : loadedText;
+        chapterColloquialized = activeChapterObject() != null
+                && activeChapterObject().optBoolean("colloquialized", false);
         chapterWordCount = countWords(visibleChapterText(chapterText));
         chapterDirty = false;
         JSONObject chapter = activeChapterObject();
@@ -6705,11 +6837,11 @@ public final class MainActivity extends Activity {
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
         putJson(chapter, "hasEndMarker", containsVisibleEndMarker(chapterText));
+        putJson(chapter, "colloquialized", chapterColloquialized);
         rememberRecentReading();
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
         putJson(chapter, "scroll", readerScroll == null ? 0 : readerScroll.getScrollY());
-        String file = "chapter-" + (activeBookId + ":"
-                + chapterStorageIndex(chapter, activeChapter)).replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
+        String file = chapterStorageFileName(activeBookId, chapter, activeChapter);
         if (chapterDirty) {
             if (!storage.write(file, chapterText)) {
                 toast("ذخیرهٔ Chapter ناموفق بود: " + storage.lastError());
@@ -6719,6 +6851,18 @@ public final class MainActivity extends Activity {
         }
         boolean saved = saveLibrary();
         return saved;
+    }
+
+    private String chapterStorageFileName(String bookId, JSONObject chapter, int position) {
+        String key = (bookId == null ? "" : bookId) + ":" + chapterStorageIndex(chapter, position);
+        return "chapter-" + key.replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
+    }
+
+    private String chapterOriginalFileName() {
+        JSONObject chapter = activeChapterObject();
+        if (chapter == null) return null;
+        return chapterStorageFileName(activeBookId, chapter, activeChapter)
+                .replace(".md", "-original.md");
     }
 
     private void rememberRecentReading() {
@@ -6893,35 +7037,48 @@ public final class MainActivity extends Activity {
     }
 
     private boolean containsVisibleEndMarker(String text) {
-        if (text == null) return false;
+        return text != null && visibleChapterText(text).contains("%end%");
+    }
+
+    private String visibleChapterText(String text) {
+        if (text == null) return "";
+        StringBuilder visible = new StringBuilder(text.length());
         for (int index = 0; index < text.length();) {
-            if (text.regionMatches(true, index, "%hid{", 0, 5)) {
-                int hiddenEnd = text.indexOf("}%", index + 5);
-                if (hiddenEnd < 0) return false;
-                index = hiddenEnd + 2;
-            } else if (text.regionMatches(true, index, "%end%", 0, 5)) {
-                return true;
-            } else {
-                index++;
-            }
+            int annotationEnd = formalAnnotationEnd(text, index);
+            if (annotationEnd > index) { index = annotationEnd; continue; }
+            visible.append(text.charAt(index++));
+        }
+        return visible.toString();
+    }
+
+    private int formalAnnotationEnd(String text, int start) {
+        if (text.regionMatches(true, start, "%hid{", 0, 5)) {
+            int end = text.indexOf("}%", start + 5);
+            return end < 0 ? -1 : end + 2;
+        }
+        if (start >= text.length() || text.charAt(start) != '{') return -1;
+        int close = text.indexOf('}', start + 1);
+        if (close <= start + 1 || close + 1 >= text.length()) return -1;
+        return Character.isLetterOrDigit(text.codePointAt(close + 1)) ? close + 1 : -1;
+    }
+
+    private boolean containsFormalAnnotations(String text) {
+        if (text == null) return false;
+        for (int index = 0; index < text.length(); index++) {
+            if (formalAnnotationEnd(text, index) > index) return true;
         }
         return false;
     }
 
-    private String visibleChapterText(String text) {
-        if (text == null || !text.contains("%hid{")) return text == null ? "" : text;
-        StringBuilder visible = new StringBuilder(text.length());
+    private String stripFormalAnnotations(String text) {
+        if (text == null || text.isEmpty()) return text == null ? "" : text;
+        StringBuilder output = new StringBuilder(text.length());
         for (int index = 0; index < text.length();) {
-            if (text.regionMatches(true, index, "%hid{", 0, 5)) {
-                int hiddenEnd = text.indexOf("}%", index + 5);
-                if (hiddenEnd >= 0) {
-                    index = hiddenEnd + 2;
-                    continue;
-                }
-            }
-            visible.append(text.charAt(index++));
+            int annotationEnd = formalAnnotationEnd(text, index);
+            if (annotationEnd > index) { index = annotationEnd; continue; }
+            output.append(text.charAt(index++));
         }
-        return visible.toString();
+        return output.toString();
     }
 
     private void showQuickScroll(boolean toTop) {
@@ -8801,11 +8958,31 @@ public final class MainActivity extends Activity {
     private final class SwipeRoot extends FrameLayout {
         private float startX, startY, startProgress, lastProgress;
         private boolean gestureCandidate, trackingDrawer;
+        private final GestureDetector gestureDetector;
 
-        SwipeRoot(Context context) { super(context); }
+        SwipeRoot(Context context) {
+            super(context);
+            gestureDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
+                @Override public boolean onFling(MotionEvent first, MotionEvent last,
+                                                float velocityX, float velocityY) {
+                    if (first == null || last == null || !drawerSwipeAvailable()) return false;
+                    float horizontal = first.getX() - last.getX();
+                    float vertical = Math.abs(first.getY() - last.getY());
+                    boolean startedAtRightEdge = first.getX() >= getWidth() - dp(64);
+                    if (startedAtRightEdge && horizontal > dp(SWIPE_MIN_DISTANCE)
+                            && Math.abs(velocityX) > dp(SWIPE_THRESHOLD_VELOCITY)
+                            && velocityX < 0f && vertical < dp(SWIPE_MAX_OFF_PATH)) {
+                        openDrawer();
+                        return true;
+                    }
+                    return false;
+                }
+            });
+        }
 
         @Override public boolean dispatchTouchEvent(MotionEvent event) {
             int action = event.getActionMasked();
+            gestureDetector.onTouchEvent(event);
             if (action == MotionEvent.ACTION_DOWN) {
                 startX = event.getX();
                 startY = event.getY();
@@ -9513,13 +9690,15 @@ public final class MainActivity extends Activity {
             if (newline < 0) break;
             start = newline + 1;
         }
-        int hiddenStart = source.indexOf("%hid{");
-        while (hiddenStart >= 0) {
-            int hiddenEnd = source.indexOf("}%", hiddenStart + 5);
-            if (hiddenEnd < 0) break;
-            editable.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), hiddenStart, hiddenEnd + 2,
-                    Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
-            hiddenStart = source.indexOf("%hid{", hiddenEnd + 2);
+        for (int index = 0; index < source.length();) {
+            int annotationEnd = formalAnnotationEnd(source, index);
+            if (annotationEnd > index) {
+                editable.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), index, annotationEnd,
+                        Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                index = annotationEnd;
+            } else {
+                index++;
+            }
         }
     }
 

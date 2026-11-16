@@ -100,7 +100,7 @@ final class TextReplacementEngine {
             if (advanced != hasVerbToken) continue;
             if (!advanced) {
                 rules.add(compileRule(raw.source, raw.replacement, raw.exceptions,
-                        nounsByFirstCharacter, hasAsciiLetter(raw.source.replace("b", ""))));
+                        nounsByFirstCharacter));
                 continue;
             }
             if (!hasVerbToken(raw.source)) {
@@ -112,7 +112,7 @@ final class TextReplacementEngine {
                 String expandedReplacement = replacementTemplate.replace("vh", stem.colloquial)
                         .replace("vg", stem.colloquial);
                 rules.add(compileRule(expandedSource, expandedReplacement, raw.exceptions,
-                        nounsByFirstCharacter, hasAsciiLetter(raw.source.replace("b", ""))));
+                        nounsByFirstCharacter));
             }
         }
         rules.sort((left, right) -> Integer.compare(right.priorityLength, left.priorityLength));
@@ -205,19 +205,18 @@ final class TextReplacementEngine {
                     || countPair(raw.source, "vg") > 1 || countPair(raw.replacement, "vh") > 1) {
                 throw new JSONException("Verb rules must pair one vg source with one vh destination.");
             }
-            boolean tagPattern = hasAsciiLetter(raw.source.replace("b", ""));
             if (hasPastVariable) {
                 for (VerbStem stem : verbStems) {
                     rules.add(compileRule(raw.source.replace("vg", stem.past),
                             raw.replacement.replace("vh", stem.colloquial), raw.exceptions,
-                            nounsByFirstCharacter, tagPattern));
+                            nounsByFirstCharacter));
                 }
             } else {
                 if (raw.replacement.contains("vh")) {
                     throw new JSONException("vh can only be used with vg in the source.");
                 }
                 rules.add(compileRule(raw.source, raw.replacement, raw.exceptions,
-                        nounsByFirstCharacter, tagPattern));
+                        nounsByFirstCharacter));
             }
         }
 
@@ -240,7 +239,7 @@ final class TextReplacementEngine {
     }
 
     private static Rule compileRule(String source, String replacement, List<String> exceptions,
-                                    Map<Character, List<String>> nouns, boolean tagPattern) throws JSONException {
+                                    Map<Character, List<String>> nouns) throws JSONException {
         ArrayList<Segment> segments = new ArrayList<>();
         StringBuilder literal = new StringBuilder();
         boolean ignoreBoundaries = false;
@@ -284,21 +283,13 @@ final class TextReplacementEngine {
             throw new JSONException("Destination variables must also appear in the source.");
         }
         return new Rule(source, replacement, segments, new ArrayList<>(exceptions), nouns,
-                ignoreBoundaries, tagPattern);
+                ignoreBoundaries);
     }
 
     private static void flushLiteral(List<Segment> segments, StringBuilder literal) {
         if (literal.length() == 0) return;
         segments.add(new Segment(SegmentType.LITERAL, literal.toString()));
         literal.setLength(0);
-    }
-
-    private static boolean hasAsciiLetter(String value) {
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
-        }
-        return false;
     }
 
     private static boolean isArabicWord(String value) {
@@ -375,6 +366,13 @@ final class TextReplacementEngine {
     private static boolean hasAdjacentException(String text, int start, int end, List<String> exceptions) {
         for (String exception : exceptions) {
             if (matchesAdjacentException(text, start, end, exception)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isExactException(String text, int start, int end, List<String> exceptions) {
+        for (String exception : exceptions) {
+            if (matchLiteralEnd(text, start, exception) == end) return true;
         }
         return false;
     }
@@ -511,6 +509,7 @@ final class TextReplacementEngine {
                 if (!rule.ignoreBoundaries && !hasWordBoundary(sourceText, index)) continue;
                 Match candidate = matchAt(sourceText, index, rule);
                 if (candidate != null && (rule.ignoreBoundaries || hasWordBoundary(sourceText, candidate.end))
+                        && !isExactException(sourceText, index, candidate.end, rule.exceptions)
                         && !hasAdjacentException(sourceText, index, candidate.end, rule.exceptions)) {
                     matchedRule = rule;
                     matched = candidate;
@@ -524,8 +523,8 @@ final class TextReplacementEngine {
 
             result.append(sourceText, originalCursor, index);
             String replacement = expandReplacement(matchedRule, matched.captures);
-            if (tagVariableChanges && matchedRule.hasAsciiKey) {
-                result.append("%hid{").append(sourceText, index, matched.end).append("}%");
+            if (tagVariableChanges && !replacement.contentEquals(sourceText.subSequence(index, matched.end))) {
+                result.append('{').append(sourceText, index, matched.end).append('}');
             }
             result.append(replacement);
             originalCursor = matched.end;
@@ -594,18 +593,16 @@ final class TextReplacementEngine {
         final List<String> exceptions;
         final Map<Character, List<String>> nouns;
         final boolean ignoreBoundaries;
-        final boolean hasAsciiKey;
         final int priorityLength;
 
         Rule(String source, String replacement, List<Segment> segments, List<String> exceptions,
-             Map<Character, List<String>> nouns, boolean ignoreBoundaries, boolean hasAsciiKey) {
+             Map<Character, List<String>> nouns, boolean ignoreBoundaries) {
             this.source = source;
             this.replacement = replacement;
             this.segments = segments;
             this.exceptions = exceptions;
             this.nouns = nouns;
             this.ignoreBoundaries = ignoreBoundaries;
-            this.hasAsciiKey = hasAsciiKey;
             this.priorityLength = source.length();
         }
     }

@@ -208,9 +208,13 @@ final class ExtensionManager {
     }
 
     String transformColloquializer(String input) throws Exception {
+        return transformColloquializer(input, false);
+    }
+
+    String transformColloquializer(String input, boolean annotateChanges) throws Exception {
         Plugin plugin = load("colloquializer");
         if (plugin == null || plugin.actions.isEmpty()) throw new IOException("محاوره‌ای‌ساز نصب نشده است.");
-        return runTextReplacement(plugin, plugin.actions.get(0), input);
+        return runTextReplacement(plugin, plugin.actions.get(0), input, annotateChanges);
     }
 
     void saveColloquializerRules(String rulesJson) throws Exception {
