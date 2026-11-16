@@ -224,6 +224,7 @@ public final class MainActivity extends Activity {
     private int activeChapter;
     private String chapterText = "";
     private long chapterWordCount;
+    private boolean chapterHasEndMarker;
     private boolean chapterDirty;
     private boolean chapterColloquialized;
     private boolean applyingChapterColloquializer;
@@ -296,9 +297,19 @@ public final class MainActivity extends Activity {
     private ScrollView readerScroll;
     private ScrollView settingsScroll;
     private View readerProgress;
+    private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
     private FrameLayout quickScrollButton;
     private NativeIconView quickScrollIcon;
+    private TextView readerMetricsHud;
+    private Runnable readerMetricsRunnable;
+    private long readerMetricsYearWordsBase;
+    private long readerMetricsYearMillisBase;
+    private long readerMetricsAllWordsAtOpen;
+    private long readerMetricsAllMillisAtOpen;
+    private long readerMetricsProgressWords;
+    private long readerMetricsLastChapterWords;
+    private String readerMetricsChapterKey;
     private TextView toastView;
     private FrameLayout splashOverlay;
     private ProgressBar splashProgress;
@@ -321,6 +332,7 @@ public final class MainActivity extends Activity {
     private boolean statsDetailsVisible;
     private boolean readingTimerRunning;
     private long lastReadingTickAt;
+    private long lastReadingWallAt;
     private Runnable readingTickRunnable;
     private Runnable readingIdleRunnable;
     private boolean recommendationDetailsVisible;
@@ -2571,6 +2583,11 @@ public final class MainActivity extends Activity {
         body.addView(readerDisplayTitle);
         addReaderDisplaySwitch(body, "نمایش درصد باتری", "show_battery");
         addReaderDisplaySwitch(body, "نمایش ساعت", "show_clock");
+        TextView debugTitle = text("عیب‌یابی موقت", 15, MUTED);
+        debugTitle.setPadding(0, dp(16), 0, dp(7));
+        body.addView(debugTitle);
+        addPreferenceSwitch(body, "نمایش آمار زنده هنگام مطالعه", "debug",
+                "reader_metrics_enabled", false);
         TextView recommendationTitle = text("پیشنهاد کتاب", 15, MUTED);
         recommendationTitle.setPadding(0, dp(16), 0, dp(7));
         body.addView(recommendationTitle);
@@ -3402,7 +3419,7 @@ public final class MainActivity extends Activity {
         coverFrame.addView(cover, new FrameLayout.LayoutParams(-1, -1));
         NativeIconView bookIcon = new NativeIconView(this, "book", PURPLE);
         coverFrame.addView(bookIcon, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
-        if (recommendedRecord != null) bindCover(cover, bookIcon, recommendedRecord.optString("cover", ""));
+        if (recommendedRecord != null) bindBookCover(cover, bookIcon, recommendedRecord);
         coverFrame.setClickable(true);
         coverFrame.setOnClickListener(v -> {
             if (recommendedRecord == null) return;
@@ -5603,7 +5620,7 @@ public final class MainActivity extends Activity {
                     toggleCollectionSelection(collection);
                     return;
                 }
-                showCollectionInfo(collection);
+                showAllBooksForCollection(collection.optString("id"));
             }
         });
         collectionsGrid.setOnItemLongClickListener((parent, view, position, id) -> {
@@ -5630,8 +5647,12 @@ public final class MainActivity extends Activity {
             header = makeHeader("کتابخانه مجموعه‌ها", "", "menu", "add",
                     this::openDrawer, this::showCreateCollectionDialog);
         } else {
-            header = makeHeader(selectedCollectionIds.size() + " انتخاب‌شده", "", "close", null,
-                    this::clearCollectionSelection, null);
+            boolean singleSelection = selectedCollectionIds.size() == 1;
+            String selectedId = singleSelection ? selectedCollectionIds.iterator().next() : null;
+            header = makeHeader(selectedCollectionIds.size() + " انتخاب‌شده", "",
+                    "close", singleSelection ? "exclamation" : null,
+                    this::clearCollectionSelection,
+                    singleSelection ? () -> showCollectionInfo(findCollectionById(selectedId)) : null);
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
     }
@@ -5714,10 +5735,9 @@ public final class MainActivity extends Activity {
             if (chapters == null) continue;
             for (int j = 0; j < chapters.length(); j++) {
                 JSONObject chapter = chapters.optJSONObject(j);
-                if (chapter == null || !chapter.optBoolean("hasEndMarker", false)) continue;
-                total += Math.max(0, chapter.optLong("totalWords", 0));
-                read += Math.min(Math.max(0, chapter.optLong("wordsRead", 0)),
-                        Math.max(0, chapter.optLong("totalWords", 0)));
+                if (chapter == null) continue;
+                total++;
+                if (chapter.optBoolean("done", false)) read++;
             }
         }
         return total == 0 ? 0 : (int) Math.min(100, read * 100 / total);
@@ -5828,11 +5848,12 @@ public final class MainActivity extends Activity {
         NativeIconView coverPlaceholder = new NativeIconView(this, "book", PURPLE);
         coverFrame.addView(coverPlaceholder,
                 new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
-        bindCover(cover, coverPlaceholder, book.optString("cover", ""));
+        bindBookCover(cover, coverPlaceholder, book);
         LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(dp(166), dp(230));
         coverParams.gravity = Gravity.CENTER_HORIZONTAL;
         coverParams.bottomMargin = dp(18);
         body.addView(coverFrame, coverParams);
+        addBookCoverFilterSwitch(body, book, cover, coverPlaceholder);
         addBookFeedbackRow(body, book);
 
         JSONArray chapters = book.optJSONArray("chapters");
@@ -5969,6 +5990,45 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(40));
         params.bottomMargin = dp(14);
         body.addView(feedback, params);
+    }
+
+    private void addBookCoverFilterSwitch(LinearLayout body, JSONObject book,
+                                          ImageView cover, View placeholder) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        row.setPadding(dp(14), 0, dp(12), 0);
+        row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
+        TextView label = text("پوشاندن جلد در فهرست‌ها", 14, TEXT);
+        row.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
+        Switch toggle = new Switch(this);
+        toggle.setChecked(book.optBoolean("coverFiltered", false));
+        if (Build.VERSION.SDK_INT >= 21) {
+            int[][] states = new int[][]{{android.R.attr.state_checked}, new int[0]};
+            toggle.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{PURPLE, MUTED}));
+            toggle.setTrackTintList(new android.content.res.ColorStateList(states,
+                    new int[]{Color.argb(100, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)), 0xFF625D66}));
+        }
+        android.widget.CompoundButton.OnCheckedChangeListener[] listener =
+                new android.widget.CompoundButton.OnCheckedChangeListener[1];
+        listener[0] = (button, checked) -> {
+            boolean previous = !checked;
+            putJson(book, "coverFiltered", checked);
+            if (!saveLibrary()) {
+                putJson(book, "coverFiltered", previous);
+                button.setOnCheckedChangeListener(null);
+                button.setChecked(previous);
+                button.setOnCheckedChangeListener(listener[0]);
+                return;
+            }
+            bindBookCover(cover, placeholder, book);
+        };
+        toggle.setOnCheckedChangeListener(listener[0]);
+        row.addView(toggle, new LinearLayout.LayoutParams(-2, -2));
+        row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked()));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
+        params.bottomMargin = dp(14);
+        body.addView(row, params);
     }
 
     private void addBookInterestRating(LinearLayout body, JSONObject book) {
@@ -6186,6 +6246,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showChapters() {
+        stopReaderMetricsHud();
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
@@ -6425,6 +6486,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showReader() {
+        stopReaderMetricsHud();
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
@@ -6446,6 +6508,7 @@ public final class MainActivity extends Activity {
 
         readerImeVisible = false;
         readerFrame = new FrameLayout(this); readerFrame.setBackgroundColor(BG);
+        lastReaderProgressWidth = -1;
         readerFrame.setFocusableInTouchMode(true);
         readerScroll = new ReaderScrollView(this);
         readerScroll.setFillViewport(true);
@@ -6578,6 +6641,7 @@ public final class MainActivity extends Activity {
         readerScroll.post(() -> { readerScroll.scrollTo(0, restore); updateProgress(); restoringScroll = false; });
         chapterEditor.addTextChangedListener(watcher(() -> {
             chapterText = chapterEditor.getText().toString();
+            chapterHasEndMarker = containsVisibleEndMarker(chapterText);
             if (!applyingChapterColloquializer && chapterColloquialized) {
                 chapterColloquialized = false;
                 putJson(chapter, "colloquialized", false);
@@ -6596,7 +6660,7 @@ public final class MainActivity extends Activity {
             JSONObject current = activeChapterObject();
             if (current != null) putJson(current, "scroll", y);
             updateProgress();
-            updateTokenSuggestions();
+            positionTokenSuggestions();
             scheduleProgressSave();
         });
         readerScroll.addOnLayoutChangeListener((v, left, top, right, bottomEdge, oldLeft, oldTop, oldRight, oldBottom) -> {
@@ -6616,7 +6680,7 @@ public final class MainActivity extends Activity {
                         chapterEditor.getWidth(), caretY + dp(60)), true);
             }, 170);
         });
-        startReadingTimer();
+        startReaderMetricsHud();
     }
 
     private void showSelectedPhraseRuleDialog(int start, String source) {
@@ -6799,6 +6863,7 @@ public final class MainActivity extends Activity {
         lastUndoWasTyping = false;
         lastUndoEnd = -1;
         chapterText = loadedText == null ? "" : loadedText;
+        chapterHasEndMarker = containsVisibleEndMarker(chapterText);
         chapterColloquialized = activeChapterObject() != null
                 && activeChapterObject().optBoolean("colloquialized", false);
         chapterWordCount = countWords(visibleChapterText(chapterText));
@@ -6806,7 +6871,7 @@ public final class MainActivity extends Activity {
         JSONObject chapter = activeChapterObject();
         if (chapter != null) {
             if (!chapterText.trim().isEmpty()) putJson(chapter, "hasText", true);
-            boolean hasEndMarker = containsVisibleEndMarker(chapterText);
+            boolean hasEndMarker = chapterHasEndMarker;
             putJson(chapter, "hasEndMarker", hasEndMarker);
             if (hasEndMarker && !chapter.has("wordsRead")) {
                 long total = countWords(visibleChapterText(chapterText));
@@ -6833,10 +6898,11 @@ public final class MainActivity extends Activity {
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
         chapterText = chapterEditor.getText().toString();
+        chapterHasEndMarker = containsVisibleEndMarker(chapterText);
         updateProgress();
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
-        putJson(chapter, "hasEndMarker", containsVisibleEndMarker(chapterText));
+        putJson(chapter, "hasEndMarker", chapterHasEndMarker);
         putJson(chapter, "colloquialized", chapterColloquialized);
         rememberRecentReading();
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
@@ -6887,14 +6953,16 @@ public final class MainActivity extends Activity {
         progressRunnable = () -> {
             if ("reader".equals(page)) saveLibrary();
         };
-        handler.postDelayed(progressRunnable, 450);
+        handler.postDelayed(progressRunnable, 900);
     }
 
     private void updateProgress() {
         if (chapterEditor == null || readerScroll == null || readerProgress == null) return;
         JSONObject chapter = activeChapterObject(); if (chapter == null) return;
-        boolean hasEndMarker = containsVisibleEndMarker(chapterText);
-        putJson(chapter, "hasEndMarker", hasEndMarker);
+        boolean hasEndMarker = chapterHasEndMarker;
+        if (chapter.optBoolean("hasEndMarker", false) != hasEndMarker) {
+            putJson(chapter, "hasEndMarker", hasEndMarker);
+        }
         if (!hasEndMarker && "reader".equals(page)) stopReadingTimer();
         int contentHeight = chapterEditor.getHeight();
         int range = Math.max(0, contentHeight - readerScroll.getHeight());
@@ -6924,8 +6992,13 @@ public final class MainActivity extends Activity {
             putJson(chapter, "wordsRead", 0);
         }
         int width = readerProgress.getParent() instanceof View ? ((View) readerProgress.getParent()).getWidth() : 0;
-        ViewGroup.LayoutParams lp = readerProgress.getLayoutParams(); lp.width = Math.round(width * percent / 100f); readerProgress.setLayoutParams(lp);
-        readerProgress.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 3));
+        int progressWidth = Math.round(width * percent / 100f);
+        if (progressWidth != lastReaderProgressWidth) {
+            ViewGroup.LayoutParams lp = readerProgress.getLayoutParams();
+            lp.width = progressWidth;
+            readerProgress.setLayoutParams(lp);
+            lastReaderProgressWidth = progressWidth;
+        }
         if (chapterAdapter != null && "chapters".equals(page)) chapterAdapter.notifyDataSetChanged();
     }
 
@@ -6991,22 +7064,24 @@ public final class MainActivity extends Activity {
     }
 
     private void startReadingTimer() {
-        if (!"reader".equals(page) || !containsVisibleEndMarker(chapterText)) {
+        if (!"reader".equals(page) || !chapterHasEndMarker) {
             stopReadingTimer();
             return;
         }
         if (!readingTimerRunning) {
             readingTimerRunning = true;
-            lastReadingTickAt = System.currentTimeMillis();
+            lastReadingTickAt = android.os.SystemClock.elapsedRealtime();
+            lastReadingWallAt = System.currentTimeMillis();
             readingTickRunnable = new Runnable() {
                 @Override public void run() {
                     if (!readingTimerRunning || !"reader".equals(page)) return;
-                    long tick = System.currentTimeMillis();
+                    long tick = android.os.SystemClock.elapsedRealtime();
                     if (readingStats != null) {
                         readingStats.addReadingMillis(activeBookId,
-                                Math.max(0, tick - lastReadingTickAt), lastReadingTickAt);
+                                Math.max(0, tick - lastReadingTickAt), lastReadingWallAt);
                     }
                     lastReadingTickAt = tick;
+                    lastReadingWallAt = System.currentTimeMillis();
                     handler.postDelayed(this, READING_TICK_MS);
                 }
             };
@@ -7021,17 +7096,97 @@ public final class MainActivity extends Activity {
         if (readingIdleRunnable != null) handler.removeCallbacks(readingIdleRunnable);
         readingIdleRunnable = null;
         if (!readingTimerRunning) return;
-        long now = System.currentTimeMillis();
+        long now = android.os.SystemClock.elapsedRealtime();
         if (now > lastReadingTickAt && readingStats != null) {
-            readingStats.addReadingMillis(activeBookId, now - lastReadingTickAt, lastReadingTickAt);
+            readingStats.addReadingMillis(activeBookId, now - lastReadingTickAt, lastReadingWallAt);
         }
         readingTimerRunning = false;
         if (readingTickRunnable != null) handler.removeCallbacks(readingTickRunnable);
         readingTickRunnable = null;
+        if (readingStats != null) readingStats.persist();
+    }
+
+    private void startReaderMetricsHud() {
+        stopReaderMetricsHud();
+        if (readerFrame == null || !getSharedPreferences("debug", MODE_PRIVATE)
+                .getBoolean("reader_metrics_enabled", false)) return;
+        readerMetricsHud = text("", 11, TEXT);
+        readerMetricsHud.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        readerMetricsHud.setPadding(dp(9), dp(6), dp(9), dp(6));
+        readerMetricsHud.setBackground(roundDrawable(SURFACE_ALT, 0x665A4B69, 10));
+        readerMetricsHud.setElevation(dp(5));
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2,
+                Gravity.TOP | Gravity.LEFT);
+        params.leftMargin = dp(9);
+        params.topMargin = dp(9);
+        readerFrame.addView(readerMetricsHud, params);
+        long now = System.currentTimeMillis();
+        readerMetricsYearWordsBase = readingStats == null ? 0 : readingStats.totalForCurrentYear(true, now);
+        readerMetricsYearMillisBase = readingStats == null ? 0 : readingStats.totalForCurrentYear(false, now);
+        readerMetricsAllWordsAtOpen = readingStats == null ? 0 : readingStats.totalWords();
+        readerMetricsAllMillisAtOpen = readingStats == null ? 0 : readingStats.totalReadingMillis();
+        readerMetricsProgressWords = totalWordsRead();
+        JSONObject chapter = activeChapterObject();
+        readerMetricsLastChapterWords = chapter == null ? 0 : chapter.optLong("wordsRead", 0);
+        readerMetricsChapterKey = readerMetricsChapterKey(chapter);
+        updateReaderMetricsHud();
+        readerMetricsRunnable = new Runnable() {
+            @Override public void run() {
+                if (!"reader".equals(page) || readerMetricsHud == null) {
+                    readerMetricsRunnable = null;
+                    return;
+                }
+                updateReaderMetricsHud();
+                handler.postDelayed(this, 1_000L);
+            }
+        };
+        handler.postDelayed(readerMetricsRunnable, 1_000L);
+    }
+
+    private void updateReaderMetricsHud() {
+        if (readerMetricsHud == null) return;
+        long words = readerMetricsYearWordsBase;
+        long millis = readerMetricsYearMillisBase;
+        if (readingStats != null) {
+            words += Math.max(0, readingStats.totalWords() - readerMetricsAllWordsAtOpen);
+            millis += Math.max(0, readingStats.totalReadingMillis() - readerMetricsAllMillisAtOpen);
+        }
+        if (readingTimerRunning) millis += Math.max(0,
+                android.os.SystemClock.elapsedRealtime() - lastReadingTickAt);
+        JSONObject chapter = activeChapterObject();
+        long chapterWords = chapter == null ? 0 : chapter.optLong("wordsRead", 0);
+        String chapterKey = readerMetricsChapterKey(chapter);
+        if (chapterKey != null && !chapterKey.equals(readerMetricsChapterKey)) {
+            readerMetricsProgressWords = totalWordsRead();
+            readerMetricsLastChapterWords = chapterWords;
+            readerMetricsChapterKey = chapterKey;
+        } else if (chapterWords != readerMetricsLastChapterWords) {
+            readerMetricsProgressWords = Math.max(0,
+                    readerMetricsProgressWords + chapterWords - readerMetricsLastChapterWords);
+            readerMetricsLastChapterWords = chapterWords;
+        }
+        long durationSeconds = millis / 1_000L;
+        String duration = String.format(Locale.ROOT, "%02d:%02d:%02d",
+                durationSeconds / 3600, (durationSeconds / 60) % 60, durationSeconds % 60);
+        readerMetricsHud.setText("آمار سال جاری: " + formatCount(words) + " کلمه • " + duration
+                + "\nپیشرفت Chapterها: " + formatCount(readerMetricsProgressWords) + " کلمه");
+    }
+
+    private String readerMetricsChapterKey(JSONObject chapter) {
+        return chapter == null ? null : activeBookId + ":" + chapterStorageIndex(chapter, activeChapter);
+    }
+
+    private void stopReaderMetricsHud() {
+        if (readerMetricsRunnable != null) handler.removeCallbacks(readerMetricsRunnable);
+        readerMetricsRunnable = null;
+        if (readerMetricsHud != null && readerMetricsHud.getParent() instanceof ViewGroup) {
+            ((ViewGroup) readerMetricsHud.getParent()).removeView(readerMetricsHud);
+        }
+        readerMetricsHud = null;
     }
 
     private void markReadingActivity() {
-        if ("reader".equals(page) && containsVisibleEndMarker(chapterText)) {
+        if ("reader".equals(page) && chapterHasEndMarker) {
             startReadingTimer();
         }
     }
@@ -8146,21 +8301,29 @@ public final class MainActivity extends Activity {
             });
         }
         tokenSuggestions.setVisibility(View.VISIBLE);
-        tokenSuggestions.post(() -> {
-            if (chapterEditor == null || chapterEditor.getLayout() == null || tokenSuggestions.getVisibility() != View.VISIBLE) return;
-            android.text.Layout layout = chapterEditor.getLayout();
-            int safeCaret = Math.max(0, Math.min(chapterEditor.getSelectionStart(), chapterEditor.length()));
-            int line = layout.getLineForOffset(safeCaret);
-            float caretX = chapterEditor.getLeft() + chapterEditor.getCompoundPaddingLeft() + layout.getPrimaryHorizontal(safeCaret);
-            int x = Math.max(dp(8), Math.min(Math.round(caretX), readerFrame.getWidth() - dp(180)));
-            int caretY = readerScroll.getTop() + chapterEditor.getTop() + chapterEditor.getTotalPaddingTop()
-                    + layout.getLineBottom(line) - readerScroll.getScrollY() + dp(8);
-            int y = caretY + dp(46) > readerFrame.getHeight() ? caretY - dp(54) : caretY;
-            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) tokenSuggestions.getLayoutParams();
+        tokenSuggestions.post(this::positionTokenSuggestions);
+    }
+
+    private void positionTokenSuggestions() {
+        if (chapterEditor == null || readerScroll == null || readerFrame == null
+                || tokenSuggestions == null || tokenSuggestions.getVisibility() != View.VISIBLE
+                || chapterEditor.getLayout() == null) return;
+        android.text.Layout layout = chapterEditor.getLayout();
+        int safeCaret = Math.max(0, Math.min(chapterEditor.getSelectionStart(), chapterEditor.length()));
+        int line = layout.getLineForOffset(safeCaret);
+        float caretX = chapterEditor.getLeft() + chapterEditor.getCompoundPaddingLeft()
+                + layout.getPrimaryHorizontal(safeCaret);
+        int x = Math.max(dp(8), Math.min(Math.round(caretX), readerFrame.getWidth() - dp(180)));
+        int caretY = readerScroll.getTop() + chapterEditor.getTop() + chapterEditor.getTotalPaddingTop()
+                + layout.getLineBottom(line) - readerScroll.getScrollY() + dp(8);
+        int y = caretY + dp(46) > readerFrame.getHeight() ? caretY - dp(54) : caretY;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) tokenSuggestions.getLayoutParams();
+        int top = Math.max(dp(4), Math.min(y, readerFrame.getHeight() - dp(50)));
+        if (params.leftMargin != x || params.topMargin != top) {
             params.leftMargin = x;
-            params.topMargin = Math.max(dp(4), Math.min(y, readerFrame.getHeight() - dp(50)));
+            params.topMargin = top;
             tokenSuggestions.setLayoutParams(params);
-        });
+        }
     }
 
     private void chooseBookCover() {
@@ -8335,6 +8498,16 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void bindBookCover(ImageView image, View placeholder, JSONObject book) {
+        if (book != null && book.optBoolean("coverFiltered", false)) {
+            image.setTag("filtered:" + book.optString("id"));
+            image.setImageDrawable(null);
+            placeholder.setVisibility(View.VISIBLE);
+            return;
+        }
+        bindCover(image, placeholder, book == null ? "" : book.optString("cover", ""));
+    }
+
     private void bindCover(ImageView image, View placeholder, String name) {
         image.setTag(name);
         image.setImageDrawable(null);
@@ -8500,7 +8673,9 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        if ("reader".equals(page)) startReadingTimer();
+        if ("reader".equals(page)) {
+            startReaderMetricsHud();
+        }
         if (!batteryReceiverRegistered) {
             IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
             Intent sticky = Build.VERSION.SDK_INT >= 33
@@ -8514,7 +8689,9 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {
         if ("reader".equals(page)) {
             stopReadingTimer();
+            stopReaderMetricsHud();
             saveCurrentChapter();
+            if (readingStats != null) readingStats.persist();
         }
         if (batteryReceiverRegistered) {
             unregisterReceiver(batteryReceiver);
@@ -8525,6 +8702,8 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         stopReadingTimer();
+        stopReaderMetricsHud();
+        if (readingStats != null) readingStats.persist();
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
         if (resumePromptDismiss != null) handler.removeCallbacks(resumePromptDismiss);
@@ -8714,8 +8893,16 @@ public final class MainActivity extends Activity {
         FrameLayout button = new FrameLayout(this);
         if (circular) styleIconButton(button, selected);
         else button.setBackgroundColor(Color.TRANSPARENT);
-        NativeIconView glyph = new NativeIconView(this, icon, color);
-        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER); button.addView(glyph, p);
+        View glyph;
+        if ("exclamation".equals(icon)) {
+            TextView marker = text("!", 24, color);
+            marker.setGravity(Gravity.CENTER);
+            glyph = marker;
+        } else {
+            glyph = new NativeIconView(this, icon, color);
+        }
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER);
+        button.addView(glyph, p);
         button.setContentDescription(iconDescription(icon)); button.setClickable(true); button.setFocusable(true);
         applyPressScale(button);
         if (action != null) button.setOnClickListener(v -> action.run());
@@ -8775,6 +8962,7 @@ public final class MainActivity extends Activity {
             case "delete": return "حذف"; case "image": return "تصویر جلد"; case "settings": return "تنظیمات";
             case "favorite": return "افزودن به علاقه‌مندی‌ها";
             case "select": return "انتخاب کتاب";
+            case "exclamation": return "جزئیات مجموعه";
             default: return icon;
         }
     }
@@ -9518,7 +9706,7 @@ public final class MainActivity extends Activity {
             NativeIconView placeholder = new NativeIconView(MainActivity.this, "book", PURPLE);
             artwork.addView(placeholder, new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER));
             artwork.setTag(placeholder);
-            bindCover(cover, placeholder, book.optString("cover", ""));
+            bindBookCover(cover, placeholder, book);
             FrameLayout selectionBadge = new FrameLayout(MainActivity.this);
             selectionBadge.setBackground(roundDrawable(selected ? PURPLE : 0x99000000,
                     selected ? PURPLE : Color.TRANSPARENT, 20));

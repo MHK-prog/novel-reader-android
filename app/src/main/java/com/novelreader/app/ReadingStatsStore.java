@@ -50,6 +50,7 @@ final class ReadingStatsStore {
     private static final String WORDS = "words";
     private static final String TIME = "millis";
     private static final String BOOKS = "byBook";
+    private static final long PERSIST_INTERVAL_MS = 5_000L;
     private static final int[] JALALI_BREAKS = {
             -61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181,
             1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178
@@ -61,6 +62,10 @@ final class ReadingStatsStore {
 
     private final SharedPreferences preferences;
     private JSONObject buckets;
+    private long cachedWords;
+    private long cachedMillis;
+    private long lastPersistAt;
+    private boolean dirty;
 
     ReadingStatsStore(SharedPreferences preferences) {
         this.preferences = preferences;
@@ -69,6 +74,7 @@ final class ReadingStatsStore {
         } catch (JSONException ignored) {
             buckets = new JSONObject();
         }
+        refreshTotals();
     }
 
     synchronized void addWords(long count, long timeMillis) {
@@ -120,8 +126,57 @@ final class ReadingStatsStore {
         } catch (JSONException ignored) {
             return;
         }
+        if (WORDS.equals(metric)) cachedWords += amount;
+        else cachedMillis += amount;
+        dirty = true;
         prune(timeMillis);
+        long now = System.currentTimeMillis();
+        if (lastPersistAt == 0 || now - lastPersistAt >= PERSIST_INTERVAL_MS) persist();
+    }
+
+    synchronized long totalWords() { return cachedWords; }
+
+    synchronized long totalReadingMillis() { return cachedMillis; }
+
+    synchronized long totalForCurrentYear(boolean words, long nowMillis) {
+        Calendar today = Calendar.getInstance();
+        today.setTimeInMillis(nowMillis);
+        JalaliDate jalali = fromGregorian(today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1,
+                today.get(Calendar.DAY_OF_MONTH));
+        int[] startDate = toGregorian(jalali.year, 1, 1);
+        int[] endDate = toGregorian(jalali.year + 1, 1, 1);
+        String startKey = hourKey(calendar(startDate[0], startDate[1], startDate[2]).getTimeInMillis());
+        String endKey = hourKey(calendar(endDate[0], endDate[1], endDate[2]).getTimeInMillis());
+        String metric = words ? WORDS : TIME;
+        long total = 0;
+        java.util.Iterator<String> keys = buckets.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (key.compareTo(startKey) < 0 || key.compareTo(endKey) >= 0) continue;
+            JSONObject hour = buckets.optJSONObject(key);
+            if (hour != null) total += hour.optLong(metric, 0);
+        }
+        return total;
+    }
+
+    /** Persist accumulated scroll and timer updates without serializing the full history on every event. */
+    synchronized void persist() {
+        if (!dirty) return;
         preferences.edit().putString(KEY, buckets.toString()).apply();
+        lastPersistAt = System.currentTimeMillis();
+        dirty = false;
+    }
+
+    private void refreshTotals() {
+        cachedWords = 0;
+        cachedMillis = 0;
+        java.util.Iterator<String> keys = buckets.keys();
+        while (keys.hasNext()) {
+            JSONObject hour = buckets.optJSONObject(keys.next());
+            if (hour == null) continue;
+            cachedWords += hour.optLong(WORDS, 0);
+            cachedMillis += hour.optLong(TIME, 0);
+        }
     }
 
     synchronized long totalForBook(String bookId, boolean words) {
@@ -332,7 +387,14 @@ final class ReadingStatsStore {
             String key = keys.next();
             if (key.compareTo(cutoffKey) < 0) remove.add(key);
         }
-        for (String key : remove) buckets.remove(key);
+        for (String key : remove) {
+            JSONObject hour = buckets.optJSONObject(key);
+            if (hour != null) {
+                cachedWords -= hour.optLong(WORDS, 0);
+                cachedMillis -= hour.optLong(TIME, 0);
+            }
+            buckets.remove(key);
+        }
     }
 
     private String hourKey(long timeMillis) {
