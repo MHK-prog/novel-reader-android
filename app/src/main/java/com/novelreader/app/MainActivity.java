@@ -213,12 +213,8 @@ public final class MainActivity extends Activity {
     private String activeBookId;
     private String activeCollectionId = "other";
     private String activeAuthor = "";
-    private String bookShelfAuthorFilter = "";
-    private String bookShelfCollectionFilterId = "";
-    private String bookShelfGenreFilter = "";
     private String bookShelfSearchQuery = "";
     private String bookShelfReturnPage = "collections";
-    private String authorBooksReturnPage = "authors";
     private String collectionBooksReturnPage = "collections";
     private String genreBooksReturnPage = "genreInfo";
     private String activeGenre = "";
@@ -302,15 +298,6 @@ public final class MainActivity extends Activity {
     private FrameLayout readerFrame;
     private FrameLayout quickScrollButton;
     private NativeIconView quickScrollIcon;
-    private TextView readerMetricsHud;
-    private Runnable readerMetricsRunnable;
-    private long readerMetricsYearWordsBase;
-    private long readerMetricsYearMillisBase;
-    private long readerMetricsAllWordsAtOpen;
-    private long readerMetricsAllMillisAtOpen;
-    private long readerMetricsProgressWords;
-    private long readerMetricsLastChapterWords;
-    private String readerMetricsChapterKey;
     private TextView toastView;
     private FrameLayout splashOverlay;
     private ProgressBar splashProgress;
@@ -2584,11 +2571,6 @@ public final class MainActivity extends Activity {
         body.addView(readerDisplayTitle);
         addReaderDisplaySwitch(body, "نمایش درصد باتری", "show_battery");
         addReaderDisplaySwitch(body, "نمایش ساعت", "show_clock");
-        TextView debugTitle = text("عیب‌یابی موقت", 15, MUTED);
-        debugTitle.setPadding(0, dp(16), 0, dp(7));
-        body.addView(debugTitle);
-        addPreferenceSwitch(body, "نمایش آمار زنده هنگام مطالعه", "debug",
-                "reader_metrics_enabled", false);
         TextView recommendationTitle = text("پیشنهاد کتاب", 15, MUTED);
         recommendationTitle.setPadding(0, dp(16), 0, dp(7));
         body.addView(recommendationTitle);
@@ -2603,6 +2585,8 @@ public final class MainActivity extends Activity {
         body.addView(bookEntryTitle);
         addPreferenceSwitch(body, "به هوش مصنوعی دسترسی ندارم؛ نمایش کامل فرم", "general",
                 "no_ai_access", false);
+        body.addView(textButton("ویرایش متن پرایمت ورود JSON", "edit", PURPLE,
+                this::showBookJsonPromptSettings), fieldParams());
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     }
@@ -2843,7 +2827,7 @@ public final class MainActivity extends Activity {
         else if ("colloquialVerbs".equals(page)) showColloquialVerbs();
         else if ("authors".equals(page)) showAuthors();
         else if ("genres".equals(page)) showGenres();
-        else if ("authorBooks".equals(page)) showBookShelfContent(true, activeAuthor);
+        else if ("authorBooks".equals(page)) showAllBooksForAuthor(activeAuthor);
         else if ("allBooks".equals(page)) showBookShelfPage(true);
         else if ("collectionBooks".equals(page)) showBookShelf();
         else if ("collections".equals(page)) showCollections();
@@ -2967,7 +2951,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showAuthorLibraryHelp() {
-        TextView help = text("روی کارت نویسنده بزن تا کتاب‌هایش را ببینی. قلب، نویسنده را به علاقه‌مندی‌ها اضافه می‌کند. برای تعیین جنسیت، آیکون کارت را لمس کن.", 15, TEXT);
+        TextView help = text("برای دیدن جزئیات، روی کارت نویسنده بزن. دکمهٔ کتاب‌های این نویسنده، کتابخانهٔ اصلی را با جستجوی همان نویسنده باز می‌کند. قلب، نویسنده را به علاقه‌مندی‌ها اضافه می‌کند و آیکون کارت برای تعیین جنسیت است.", 15, TEXT);
         help.setGravity(Gravity.CENTER);
         help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         help.setPadding(dp(10), dp(12), dp(10), dp(12));
@@ -2975,30 +2959,6 @@ public final class MainActivity extends Activity {
                 .setView(dialogPadding(help)).setPositiveButton("بستن", null).create();
         dialog.show();
         styleDialogWindow(dialog);
-    }
-
-    private void showAuthorBooks(String author) {
-        activeAuthor = author == null ? "" : author.trim();
-        authorBooksReturnPage = "authors";
-        selectedAuthorNames.clear();
-        selectedBookIds.clear();
-        activeGenreFilter.clear();
-        showBookShelfContent(true, activeAuthor);
-    }
-
-    private void addAuthorBooksHeader() {
-        View header;
-        if (selectedBookIds.isEmpty()) {
-            header = makeHeader(activeAuthor, "", "menu", null, this::openDrawer, null);
-        } else if (selectedBookIds.size() == 1) {
-            JSONObject selected = findBookById(selectedBookIds.iterator().next());
-            header = makeHeader("1 انتخاب‌شده", "", "delete", "edit", this::confirmDeleteSelected,
-                    () -> { if (selected != null) showBookDialog(selected); }, 10, 118);
-        } else {
-            header = makeHeader(selectedBookIds.size() + " انتخاب‌شده", "", "delete", null,
-                    this::confirmDeleteSelected, null);
-        }
-        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
     }
 
     private String authorGender(String author) {
@@ -3173,7 +3133,6 @@ public final class MainActivity extends Activity {
         addBookInfoLine(body, "کلمات خوانده‌شده", formatCount(wordsRead));
         addBookInfoLine(body, "زمان مطالعه", formatReadingTime(readingMillis));
         body.addView(textButton("کتاب‌های این نویسنده", "book", PURPLE, () -> {
-            authorBooksReturnPage = "authors";
             showAllBooksForAuthor(activeAuthor);
         }), new LinearLayout.LayoutParams(-1, dp(50)));
         scroll.addView(body);
@@ -3319,15 +3278,12 @@ public final class MainActivity extends Activity {
                 .start();
     }
 
-    private boolean showingAllBooks() { return "allBooks".equals(page) || "authorBooks".equals(page); }
+    private boolean showingAllBooks() { return "allBooks".equals(page); }
 
     private void showAllBooks() {
         selectedBookIds.clear();
         activeGenreFilter.clear();
         activeCollectionId = "other";
-        bookShelfAuthorFilter = "";
-        bookShelfCollectionFilterId = "";
-        bookShelfGenreFilter = "";
         bookShelfSearchQuery = "";
         bookShelfReturnPage = "collections";
         showBookShelfPage(true);
@@ -3338,10 +3294,7 @@ public final class MainActivity extends Activity {
         selectedBookIds.clear();
         activeGenreFilter.clear();
         activeCollectionId = "other";
-        bookShelfAuthorFilter = author == null ? "" : author.trim();
-        bookShelfCollectionFilterId = "";
-        bookShelfGenreFilter = "";
-        bookShelfSearchQuery = bookShelfAuthorFilter;
+        bookShelfSearchQuery = author == null ? "" : author.trim();
         bookShelfReturnPage = "authors";
         showBookShelfContent(true, null);
     }
@@ -3351,10 +3304,7 @@ public final class MainActivity extends Activity {
         if (collection == null) return;
         selectedBookIds.clear();
         activeGenreFilter.clear();
-        activeCollectionId = collectionId;
-        bookShelfAuthorFilter = "";
-        bookShelfCollectionFilterId = collectionId;
-        bookShelfGenreFilter = "";
+        activeCollectionId = "other";
         bookShelfSearchQuery = collection.optString("title", "");
         bookShelfReturnPage = "collections";
         showBookShelfContent(true, null);
@@ -3363,13 +3313,9 @@ public final class MainActivity extends Activity {
     private void showAllBooksForGenre(String genre) {
         selectedBookIds.clear();
         activeCollectionId = "other";
-        bookShelfAuthorFilter = "";
-        bookShelfCollectionFilterId = "";
-        bookShelfGenreFilter = genre == null ? "" : genre.trim();
-        bookShelfSearchQuery = bookShelfGenreFilter;
+        bookShelfSearchQuery = genre == null ? "" : genre.trim();
         bookShelfReturnPage = "genreInfo";
         activeGenreFilter.clear();
-        if (!bookShelfGenreFilter.isEmpty()) activeGenreFilter.add(bookShelfGenreFilter);
         showBookShelfContent(true, null);
     }
 
@@ -4030,7 +3976,6 @@ public final class MainActivity extends Activity {
         item = new JSONObject();
         putJson(item, "name", genre.trim());
         putJson(item, "description", "");
-        putJson(item, "parent", "");
         putJson(item, "orderIndex", nextOrderIndex(genreDetails()));
         genreDetails().put(item);
         return item;
@@ -4040,27 +3985,13 @@ public final class MainActivity extends Activity {
         String before = genreDetails().toString();
         JSONArray genres = allGenres();
         for (int i = 0; i < genres.length(); i++) ensureGenreDetail(genres.optString(i));
-        ensureOrderIndexesByName(genreDetails(), "name");
-        if (!before.equals(genreDetails().toString())) saveLibrary();
-    }
-
-    private boolean isGenreGroupParent(String genre) {
         JSONArray details = genreDetails();
         for (int i = 0; i < details.length(); i++) {
-            JSONObject item = details.optJSONObject(i);
-            if (item != null && item.optString("parent").equalsIgnoreCase(genre)) return true;
+            JSONObject detail = details.optJSONObject(i);
+            if (detail != null) detail.remove("parent");
         }
-        return false;
-    }
-
-    private boolean isGenreChild(String genre) {
-        JSONObject item = findGenreDetail(genre);
-        return item != null && !item.optString("parent").trim().isEmpty();
-    }
-
-    private String genreParent(String genre) {
-        JSONObject item = findGenreDetail(genre);
-        return item == null ? "" : item.optString("parent", "");
+        ensureOrderIndexesByName(genreDetails(), "name");
+        if (!before.equals(genreDetails().toString())) saveLibrary();
     }
 
     private void showGenres() {
@@ -4071,7 +4002,7 @@ public final class MainActivity extends Activity {
         animatePageTransition();
         addGenreLibraryHeader();
         genresGrid = new GridView(this);
-        genresGrid.setNumColumns(2);
+        genresGrid.setNumColumns(1);
         genresGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
         genresGrid.setVerticalScrollBarEnabled(false);
         genresGrid.setHorizontalScrollBarEnabled(false);
@@ -4109,17 +4040,15 @@ public final class MainActivity extends Activity {
             header = makeHeader("کتابخانه ژانرها", "", "menu", "add", this::openDrawer,
                     this::showAddGenreDialog);
         } else {
-            LinearLayout actions = new LinearLayout(this);
-            actions.setGravity(Gravity.CENTER_VERTICAL);
-            FrameLayout group = iconButton("folder", PURPLE, false, this::createGenreGroup);
-            group.setContentDescription("ساخت گروه ژانر");
-            if (selectedGenreNames.size() < 2) group.setAlpha(.45f);
-            actions.addView(group, new LinearLayout.LayoutParams(dp(48), dp(48)));
-            header = makeHeader(selectedGenreNames.size() + " انتخاب", "", "close", null,
-                    this::clearGenreSelection, null);
-            if (header instanceof FrameLayout) {
-                ((FrameLayout) header).addView(actions, new FrameLayout.LayoutParams(-2, -1,
-                        Gravity.RIGHT | Gravity.CENTER_VERTICAL));
+            String label = selectedGenreNames.size() + " انتخاب";
+            if (selectedGenreNames.size() == 1) {
+                String selected = selectedGenreNames.iterator().next();
+                header = makeHeader(label, "", "delete", "edit",
+                        this::confirmDeleteSelectedGenres,
+                        () -> showEditGenreInfoDialog(selected), 10, 118);
+            } else {
+                header = makeHeader(label, "", "delete", null,
+                        this::confirmDeleteSelectedGenres, null, 10);
             }
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
@@ -4140,6 +4069,25 @@ public final class MainActivity extends Activity {
         appColumn.removeViewAt(0);
         addGenreLibraryHeader();
         if (genreAdapter != null) genreAdapter.notifyDataSetChanged();
+    }
+
+    private void confirmDeleteSelectedGenres() {
+        if (selectedGenreNames.isEmpty()) return;
+        List<String> deleting = new ArrayList<>(selectedGenreNames);
+        String message = deleting.size() == 1
+                ? "ژانر «" + deleting.get(0) + "» از فهرست و کتاب‌های مرتبط حذف شود؟"
+                : deleting.size() + " ژانر و پیوندهایشان از کتاب‌ها حذف شوند؟";
+        AlertDialog dialog = new AlertDialog.Builder(this).setMessage(message)
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("حذف", (ignored, which) -> {
+                    for (String genre : deleting) {
+                        if (!deleteTag(genre, null, null)) return;
+                    }
+                    selectedGenreNames.clear();
+                    showGenres();
+                }).create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void showAddGenreDialog() {
@@ -4183,9 +4131,6 @@ public final class MainActivity extends Activity {
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(18), dp(18), dp(18), dp(24));
         addBookInfoLine(body, "تعداد کتاب", Integer.toString(genreBookCount(activeGenre)));
-        String parent = genreParent(activeGenre);
-        if (!parent.isEmpty()) addBookInfoLine(body, "گروه", parent);
-        if (isGenreGroupParent(activeGenre)) addBookInfoLine(body, "زیرژانرها", genreChildrenSummary(activeGenre));
         LinearLayout feedback = new LinearLayout(this);
         feedback.setGravity(Gravity.CENTER);
         feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
@@ -4227,17 +4172,8 @@ public final class MainActivity extends Activity {
         return count;
     }
 
-    private String genreChildrenSummary(String parent) {
-        List<String> children = new ArrayList<>();
-        JSONArray details = genreDetails();
-        for (int i = 0; i < details.length(); i++) {
-            JSONObject item = details.optJSONObject(i);
-            if (item != null && parent.equalsIgnoreCase(item.optString("parent"))) children.add(item.optString("name"));
-        }
-        return children.isEmpty() ? "—" : android.text.TextUtils.join(", ", children);
-    }
-
     private void showEditGenreInfoDialog(String oldGenre) {
+        boolean fromGenreInfo = "genreInfo".equals(page);
         JSONObject detail = ensureGenreDetail(oldGenre);
         EditText name = edit("نام ژانر", false);
         name.setText(oldGenre);
@@ -4263,59 +4199,37 @@ public final class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 String renamed = canonicalGenre(titleCaseWords(name.getText().toString()));
                 if (renamed.isEmpty()) { name.setError("نام ژانر را وارد کن"); return; }
+                String existing = findGenreName(allGenres(), renamed);
+                if (existing != null && !existing.equalsIgnoreCase(oldGenre)) {
+                    AlertDialog merge = new AlertDialog.Builder(this)
+                            .setMessage("ژانر «" + existing + "» از قبل وجود دارد. کتاب‌های دارای «"
+                                    + oldGenre + "» به آن منتقل شوند و ژانر قبلی حذف شود؟")
+                            .setNegativeButton("لغو", null)
+                            .setPositiveButton("ادغام", (ignoredDialog, which) -> {
+                                if (!renameTag(oldGenre, existing)) return;
+                                dialog.dismiss();
+                                selectedGenreNames.clear();
+                                if (fromGenreInfo) showGenreInfo(existing);
+                                else showGenres();
+                            }).create();
+                    merge.show();
+                    styleDialogWindow(merge);
+                    return;
+                }
                 if (!renamed.equalsIgnoreCase(oldGenre) && !renameTag(oldGenre, renamed)) return;
                 JSONObject saved = ensureGenreDetail(renamed);
                 if (saved != null) putJson(saved, "description", description.getText().toString().trim());
                 if (saveLibrary()) {
                     dialog.dismiss();
-                    showGenreInfo(renamed);
+                    selectedGenreNames.clear();
+                    if (fromGenreInfo) showGenreInfo(renamed);
+                    else showGenres();
                 }
             });
         });
         dialog.show();
         styleDialogWindow(dialog);
         dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
-    }
-
-    private void createGenreGroup() {
-        if (selectedGenreNames.size() < 2) return;
-        List<String> eligibleParents = new ArrayList<>();
-        for (String genre : selectedGenreNames) if (!isGenreChild(genre)) eligibleParents.add(genre);
-        if (eligibleParents.isEmpty()) {
-            toast("زیرژانر نمی‌تواند سرگروه باشد.");
-            return;
-        }
-        String[] options = eligibleParents.toArray(new String[0]);
-        int[] selected = {0};
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("سرگروه را انتخاب کن")
-                .setSingleChoiceItems(options, 0, (d, which) -> selected[0] = which)
-                .setNegativeButton("لغو", null).setPositiveButton("ساخت گروه", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String parent = options[selected[0]];
-            JSONObject parentInfo = ensureGenreDetail(parent);
-            if (parentInfo != null && !parentInfo.optString("parent").isEmpty()) {
-                toast("سرگروه نمی‌تواند زیرگروه باشد.");
-                return;
-            }
-            for (String child : selectedGenreNames) {
-                if (child.equalsIgnoreCase(parent)) continue;
-                if (isGenreGroupParent(child)) {
-                    toast("سرگروه موجود نمی‌تواند زیرگروه شود: " + child);
-                    return;
-                }
-            }
-            String before = library.toString();
-            for (String child : selectedGenreNames) if (!child.equalsIgnoreCase(parent)) {
-                JSONObject item = ensureGenreDetail(child);
-                if (item != null) putJson(item, "parent", parent);
-            }
-            putJson(parentInfo, "parent", "");
-            if (!saveLibrary()) { restoreLibrary(before); return; }
-            dialog.dismiss();
-            showGenres();
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
     }
 
     private void ensureFavoriteTagsDefined() {
@@ -4428,7 +4342,8 @@ public final class MainActivity extends Activity {
                 String existing = findGenreName(library.optJSONArray("genres"), newTag);
                 if (existing != null && !existing.equalsIgnoreCase(oldTag)) {
                     AlertDialog merge = new AlertDialog.Builder(this)
-                            .setMessage("همهٔ کتاب‌های دارای «" + oldTag + "» به «" + existing + "» تغییر کنند؟")
+                            .setMessage("ژانر «" + existing + "» از قبل وجود دارد. کتاب‌های دارای «"
+                                    + oldTag + "» به آن منتقل شوند و ژانر قبلی حذف شود؟")
                             .setNegativeButton("لغو", null)
                             .setPositiveButton("ادغام", (ignoredDialog, which) -> {
                                 if (renameTag(oldTag, existing)) {
@@ -4454,6 +4369,7 @@ public final class MainActivity extends Activity {
     private boolean renameTag(String oldTag, String newTag) {
         JSONArray tags = library.optJSONArray("genres");
         String existing = tags == null ? null : findGenreName(tags, newTag);
+        boolean mergingIntoExisting = existing != null && !existing.equalsIgnoreCase(oldTag);
         if (existing != null && !existing.equalsIgnoreCase(oldTag)) newTag = existing;
         if (oldTag.equals(newTag)) return true;
         String before = library.toString();
@@ -4492,20 +4408,33 @@ public final class MainActivity extends Activity {
             }
             library.put("genreEquivalents", renamedGroups);
             JSONArray details = genreDetails();
+            JSONArray renamedDetails = new JSONArray();
+            boolean keptTargetDetail = false;
             for (int i = 0; i < details.length(); i++) {
                 JSONObject detail = details.optJSONObject(i);
                 if (detail == null) continue;
-                if (detail.optString("name").equalsIgnoreCase(oldTag)) putJson(detail, "name", newTag);
-                if (detail.optString("parent").equalsIgnoreCase(oldTag)) putJson(detail, "parent", newTag);
+                String name = detail.optString("name", "");
+                if (name.equalsIgnoreCase(oldTag)) {
+                    if (mergingIntoExisting) continue;
+                    putJson(detail, "name", newTag);
+                    name = newTag;
+                }
+                detail.remove("parent");
+                if (name.equalsIgnoreCase(newTag)) {
+                    if (keptTargetDetail) continue;
+                    keptTargetDetail = true;
+                }
+                renamedDetails.put(detail);
             }
+            library.put("genreDetails", renamedDetails);
             canonicalizeLibraryGenres();
+            ensureGenreDetail(newTag);
         } catch (JSONException ignored) { return false; }
         replaceSetValue(favoriteGenrePreferences, oldTag, newTag);
         replaceSetValue(dislikedGenrePreferences, oldTag, newTag);
         replaceSetValue(activeGenreFilter, oldTag, newTag);
         replaceSetValue(selectedGenreNames, oldTag, newTag);
         if (activeGenre.equalsIgnoreCase(oldTag)) activeGenre = newTag;
-        if (bookShelfGenreFilter.equalsIgnoreCase(oldTag)) bookShelfGenreFilter = newTag;
         if (!saveLibrary()) {
             restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
@@ -4582,7 +4511,7 @@ public final class MainActivity extends Activity {
             for (int i = 0; i < details.length(); i++) {
                 JSONObject detail = details.optJSONObject(i);
                 if (detail == null || detail.optString("name").equalsIgnoreCase(tag)) continue;
-                if (detail.optString("parent").equalsIgnoreCase(tag)) putJson(detail, "parent", "");
+                detail.remove("parent");
                 keptDetails.put(detail);
             }
             library.put("genreDetails", keptDetails);
@@ -4592,7 +4521,6 @@ public final class MainActivity extends Activity {
         removeIgnoreCase(activeGenreFilter, tag);
         removeIgnoreCase(selectedGenreNames, tag);
         if (activeGenre.equalsIgnoreCase(tag)) activeGenre = "";
-        if (bookShelfGenreFilter.equalsIgnoreCase(tag)) bookShelfGenreFilter = "";
         if (!saveLibrary()) {
             restoreLibrary(before);
             favoriteGenrePreferences.clear(); favoriteGenrePreferences.addAll(oldFavorites);
@@ -5761,12 +5689,12 @@ public final class MainActivity extends Activity {
 
     private void showBookShelfContent(boolean allBooks, String author) {
         boolean authorShelf = author != null;
-        if (authorShelf) bookShelfAuthorFilter = author.trim();
-        page = authorShelf ? "authorBooks" : allBooks ? "allBooks" : "collectionBooks";
+        if (allBooks || authorShelf) activeCollectionId = "other";
+        if (authorShelf) bookShelfSearchQuery = author.trim();
+        page = allBooks || authorShelf ? "allBooks" : "collectionBooks";
         appColumn.removeAllViews();
         animatePageTransition();
-        if (authorShelf) addAuthorBooksHeader();
-        else addDashboardHeader();
+        addDashboardHeader();
         LinearLayout filters = new LinearLayout(this);
         filters.setGravity(Gravity.CENTER_VERTICAL);
         filters.setPadding(dp(14), dp(7), dp(14), dp(7));
@@ -5789,8 +5717,8 @@ public final class MainActivity extends Activity {
         bookAdapter = new BookAdapter(); booksGrid.setAdapter(bookAdapter);
         FrameLayout listFrame = new FrameLayout(this);
         listFrame.addView(booksGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel(authorShelf ? "کتابی از این نویسنده ثبت نشده"
-                : allBooks ? "کتابی در کتابخانه نیست" : "کتابی در این مجموعه نیست");
+        TextView empty = emptyLabel(allBooks || authorShelf ? "کتابی در کتابخانه نیست"
+                : "کتابی در این مجموعه نیست");
         listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1)); booksGrid.setEmptyView(empty);
         appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         TextView version = text("نسخهٔ " + appVersionName(), 10, MUTED); version.setGravity(Gravity.CENTER);
@@ -6192,11 +6120,10 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshDashboardSelection() {
-        if ((!"collectionBooks".equals(page) && !"allBooks".equals(page) && !"authorBooks".equals(page))
+        if ((!"collectionBooks".equals(page) && !"allBooks".equals(page))
                 || appColumn == null) return;
         if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
-        if ("authorBooks".equals(page)) addAuthorBooksHeader();
-        else addDashboardHeader();
+        addDashboardHeader();
         if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
     }
 
@@ -6247,7 +6174,6 @@ public final class MainActivity extends Activity {
     }
 
     private void showChapters() {
-        stopReaderMetricsHud();
         JSONObject book = activeBook();
         if (book == null) { showDashboard(); return; }
         page = "chapters"; appColumn.removeAllViews();
@@ -6472,7 +6398,6 @@ public final class MainActivity extends Activity {
     }
 
     private void showReader() {
-        stopReaderMetricsHud();
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         page = "reader"; appColumn.removeAllViews();
@@ -6666,7 +6591,6 @@ public final class MainActivity extends Activity {
                         chapterEditor.getWidth(), caretY + dp(60)), true);
             }, 170);
         });
-        startReaderMetricsHud();
     }
 
     private void showSelectedPhraseRuleDialog(int start, String source) {
@@ -7090,85 +7014,6 @@ public final class MainActivity extends Activity {
         if (readingTickRunnable != null) handler.removeCallbacks(readingTickRunnable);
         readingTickRunnable = null;
         if (readingStats != null) readingStats.persist();
-    }
-
-    private void startReaderMetricsHud() {
-        stopReaderMetricsHud();
-        if (readerFrame == null || !getSharedPreferences("debug", MODE_PRIVATE)
-                .getBoolean("reader_metrics_enabled", false)) return;
-        readerMetricsHud = text("", 11, TEXT);
-        readerMetricsHud.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        readerMetricsHud.setPadding(dp(9), dp(6), dp(9), dp(6));
-        readerMetricsHud.setBackground(roundDrawable(SURFACE_ALT, 0x665A4B69, 10));
-        readerMetricsHud.setElevation(dp(5));
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2,
-                Gravity.TOP | Gravity.LEFT);
-        params.leftMargin = dp(9);
-        params.topMargin = dp(9);
-        readerFrame.addView(readerMetricsHud, params);
-        long now = System.currentTimeMillis();
-        readerMetricsYearWordsBase = readingStats == null ? 0 : readingStats.totalForCurrentYear(true, now);
-        readerMetricsYearMillisBase = readingStats == null ? 0 : readingStats.totalForCurrentYear(false, now);
-        readerMetricsAllWordsAtOpen = readingStats == null ? 0 : readingStats.totalWords();
-        readerMetricsAllMillisAtOpen = readingStats == null ? 0 : readingStats.totalReadingMillis();
-        readerMetricsProgressWords = totalWordsRead();
-        JSONObject chapter = activeChapterObject();
-        readerMetricsLastChapterWords = chapter == null ? 0 : chapter.optLong("wordsRead", 0);
-        readerMetricsChapterKey = readerMetricsChapterKey(chapter);
-        updateReaderMetricsHud();
-        readerMetricsRunnable = new Runnable() {
-            @Override public void run() {
-                if (!"reader".equals(page) || readerMetricsHud == null) {
-                    readerMetricsRunnable = null;
-                    return;
-                }
-                updateReaderMetricsHud();
-                handler.postDelayed(this, 1_000L);
-            }
-        };
-        handler.postDelayed(readerMetricsRunnable, 1_000L);
-    }
-
-    private void updateReaderMetricsHud() {
-        if (readerMetricsHud == null) return;
-        long words = readerMetricsYearWordsBase;
-        long millis = readerMetricsYearMillisBase;
-        if (readingStats != null) {
-            words += Math.max(0, readingStats.totalWords() - readerMetricsAllWordsAtOpen);
-            millis += Math.max(0, readingStats.totalReadingMillis() - readerMetricsAllMillisAtOpen);
-        }
-        if (readingTimerRunning) millis += Math.max(0,
-                android.os.SystemClock.elapsedRealtime() - lastReadingTickAt);
-        JSONObject chapter = activeChapterObject();
-        long chapterWords = chapter == null ? 0 : chapter.optLong("wordsRead", 0);
-        String chapterKey = readerMetricsChapterKey(chapter);
-        if (chapterKey != null && !chapterKey.equals(readerMetricsChapterKey)) {
-            readerMetricsProgressWords = totalWordsRead();
-            readerMetricsLastChapterWords = chapterWords;
-            readerMetricsChapterKey = chapterKey;
-        } else if (chapterWords != readerMetricsLastChapterWords) {
-            readerMetricsProgressWords = Math.max(0,
-                    readerMetricsProgressWords + chapterWords - readerMetricsLastChapterWords);
-            readerMetricsLastChapterWords = chapterWords;
-        }
-        long durationSeconds = millis / 1_000L;
-        String duration = String.format(Locale.ROOT, "%02d:%02d:%02d",
-                durationSeconds / 3600, (durationSeconds / 60) % 60, durationSeconds % 60);
-        readerMetricsHud.setText("آمار سال جاری: " + formatCount(words) + " کلمه • " + duration
-                + "\nپیشرفت Chapterها: " + formatCount(readerMetricsProgressWords) + " کلمه");
-    }
-
-    private String readerMetricsChapterKey(JSONObject chapter) {
-        return chapter == null ? null : activeBookId + ":" + chapterStorageIndex(chapter, activeChapter);
-    }
-
-    private void stopReaderMetricsHud() {
-        if (readerMetricsRunnable != null) handler.removeCallbacks(readerMetricsRunnable);
-        readerMetricsRunnable = null;
-        if (readerMetricsHud != null && readerMetricsHud.getParent() instanceof ViewGroup) {
-            ((ViewGroup) readerMetricsHud.getParent()).removeView(readerMetricsHud);
-        }
-        readerMetricsHud = null;
     }
 
     private void markReadingActivity() {
@@ -7611,42 +7456,92 @@ public final class MainActivity extends Activity {
         target.showDetails.run();
     }
 
-    private void showBookJsonPrompt() {
+    private String defaultBookJsonPrompt() {
         try (InputStream input = getAssets().open("book_info_prompt.txt")) {
-            String prompt = readUtf8(input);
-            BookJsonImportTarget target = activeBookJsonImportTarget;
-            if (target != null) {
-                prompt = fillBookPromptField(prompt, "عنوان کتاب:", target.title.getText().toString());
-                prompt = fillBookPromptField(prompt, "نویسنده:", target.author.getText().toString());
-                JSONObject collection = "other".equals(target.collectionId[0])
-                        ? null : findCollectionById(target.collectionId[0]);
-                prompt = fillBookPromptField(prompt, "مجموعه:",
-                        collection == null ? "" : collection.optString("title", ""));
-            }
-            final String promptText = prompt;
-            TextView content = text(promptText, 14, TEXT);
-            content.setTextIsSelectable(true);
-            content.setGravity(Gravity.RIGHT | Gravity.TOP);
-            content.setPadding(dp(14), dp(12), dp(14), dp(12));
-            setRtlTextAlignment(content);
-            ScrollView scroll = new ScrollView(this);
-            scroll.setVerticalScrollBarEnabled(false);
-            scroll.addView(content);
-            AlertDialog dialog = new AlertDialog.Builder(this)
-                    .setTitle("نمونه برای هوش مصنوعی")
-                    .setView(dialogPadding(scroll))
-                    .setNegativeButton("بستن", null)
-                    .setNeutralButton("اشتراک‌گذاری", (ignored, which) -> shareBookPrompt(promptText))
-                    .setPositiveButton("کپی متن", (ignored, which) -> {
-                        copyToClipboard("book-json-prompt", promptText);
-                        toast("متن نمونه کپی شد.");
-                    })
-                    .create();
-            dialog.show();
-            styleDialogWindow(dialog);
+            return readUtf8(input);
         } catch (IOException error) {
-            toast("خواندن فایل نمونه ناموفق بود.");
+            return "";
         }
+    }
+
+    private String bookJsonPromptTemplate() {
+        SharedPreferences preferences = getSharedPreferences("general", MODE_PRIVATE);
+        String saved = preferences.getString("book_json_prompt", null);
+        return saved == null ? defaultBookJsonPrompt() : saved;
+    }
+
+    private void showBookJsonPromptSettings() {
+        EditText promptEditor = edit("متن پرایمت", true);
+        promptEditor.setText(bookJsonPromptTemplate());
+        promptEditor.setMinLines(12);
+        promptEditor.setMaxLines(22);
+        promptEditor.setGravity(Gravity.RIGHT | Gravity.TOP);
+        promptEditor.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
+        promptEditor.setVerticalScrollBarEnabled(true);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("متن پرایمت ورود JSON")
+                .setView(dialogPadding(promptEditor))
+                .setNegativeButton("لغو", null)
+                .setNeutralButton("پیش‌فرض", null)
+                .setPositiveButton("ذخیره", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v ->
+                    promptEditor.setText(defaultBookJsonPrompt()));
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String value = promptEditor.getText().toString().trim();
+                if (value.isEmpty()) {
+                    promptEditor.setError("متن پرایمت نمی‌تواند خالی باشد");
+                    return;
+                }
+                getSharedPreferences("general", MODE_PRIVATE).edit()
+                        .putString("book_json_prompt", value).apply();
+                dialog.dismiss();
+                toast("متن پرایمت ذخیره شد.");
+            });
+        });
+        dialog.show();
+        styleDialogWindow(dialog);
+        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+    }
+
+    private void showBookJsonPrompt() {
+        String prompt = bookJsonPromptTemplate();
+        if (prompt.trim().isEmpty()) {
+            toast("متن پرایمت خالی است؛ آن را در تنظیمات عمومی بنویس.");
+            return;
+        }
+        BookJsonImportTarget target = activeBookJsonImportTarget;
+        if (target != null) {
+            prompt = fillBookPromptField(prompt, "عنوان کتاب:", target.title.getText().toString());
+            prompt = fillBookPromptField(prompt, "نویسنده:", target.author.getText().toString());
+            JSONObject collection = "other".equals(target.collectionId[0])
+                    ? null : findCollectionById(target.collectionId[0]);
+            prompt = fillBookPromptField(prompt, "مجموعه:",
+                    collection == null ? "" : collection.optString("title", ""));
+        }
+        final String promptText = prompt;
+        TextView content = text(promptText, 14, TEXT);
+        content.setTextIsSelectable(true);
+        content.setGravity(Gravity.RIGHT | Gravity.TOP);
+        content.setPadding(dp(14), dp(12), dp(14), dp(12));
+        setRtlTextAlignment(content);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(content);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("نمونه برای هوش مصنوعی")
+                .setView(dialogPadding(scroll))
+                .setNegativeButton("بستن", null)
+                .setNeutralButton("اشتراک‌گذاری", (ignored, which) -> shareBookPrompt(promptText))
+                .setPositiveButton("کپی متن", (ignored, which) -> {
+                    copyToClipboard("book-json-prompt", promptText);
+                    toast("متن نمونه کپی شد.");
+                })
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private String fillBookPromptField(String prompt, String label, String value) {
@@ -8659,8 +8554,7 @@ public final class MainActivity extends Activity {
             refreshGenreSelection();
             return;
         }
-        if (!selectedBookIds.isEmpty() && ("collectionBooks".equals(page) || "allBooks".equals(page)
-                || "authorBooks".equals(page))) {
+        if (!selectedBookIds.isEmpty() && ("collectionBooks".equals(page) || "allBooks".equals(page))) {
             selectedBookIds.clear();
             refreshDashboardSelection();
             return;
@@ -8680,7 +8574,6 @@ public final class MainActivity extends Activity {
         else if ("authorInfo".equals(page)) showAuthors();
         else if ("collectionInfo".equals(page)) showCollections();
         else if ("genreInfo".equals(page)) showGenres();
-        else if ("authorBooks".equals(page)) { selectedBookIds.clear(); showAuthors(); }
         else if ("authors".equals(page)) showDashboard();
         else if ("genres".equals(page)) showDashboard();
         else if ("collectionBooks".equals(page)) { selectedBookIds.clear(); showCollections(); }
@@ -8701,7 +8594,7 @@ public final class MainActivity extends Activity {
 
     private void showBookShelfForPage(String target) {
         if ("allBooks".equals(target)) showBookShelfContent(true, null);
-        else if ("authorBooks".equals(target)) showBookShelfContent(true, activeAuthor);
+        else if ("authorBooks".equals(target)) showAllBooksForAuthor(activeAuthor);
         else if ("authors".equals(target)) showAuthors();
         else if ("authorInfo".equals(target)) showAuthorInfoPage(activeAuthor);
         else if ("collectionInfo".equals(target)) showCollectionInfo(findCollectionById(activeCollectionId));
@@ -8720,9 +8613,6 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        if ("reader".equals(page)) {
-            startReaderMetricsHud();
-        }
         if (!batteryReceiverRegistered) {
             IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
             Intent sticky = Build.VERSION.SDK_INT >= 33
@@ -8736,7 +8626,6 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {
         if ("reader".equals(page)) {
             stopReadingTimer();
-            stopReaderMetricsHud();
             saveCurrentChapter();
             if (readingStats != null) readingStats.persist();
         }
@@ -8749,7 +8638,6 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         stopReadingTimer();
-        stopReaderMetricsHud();
         if (readingStats != null) readingStats.persist();
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
@@ -9554,49 +9442,28 @@ public final class MainActivity extends Activity {
         @Override public View getView(int position, View convertView, ViewGroup parent) {
             String genre = getGenre(position);
             boolean selected = selectedGenreNames.contains(genre);
-            boolean groupParent = isGenreGroupParent(genre);
             FrameLayout frame = new FrameLayout(MainActivity.this);
             frame.setTag(genre);
-            frame.setClickable(true);
-            frame.setFocusable(true);
-            frame.setOnClickListener(v -> {
-                if (!selectedGenreNames.isEmpty()) toggleGenreSelection(genre);
-                else showGenreInfo(genre);
-            });
-            frame.setOnLongClickListener(v -> {
-                if (selectedGenreNames.contains(genre)) return startReorderDrag(frame, "genre", genre);
-                toggleGenreSelection(genre);
-                return true;
-            });
             setReorderDropTarget(frame, "genre", genre);
             LinearLayout card = new LinearLayout(MainActivity.this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setGravity(Gravity.CENTER);
-            card.setPadding(dp(12), dp(12), dp(12), dp(10));
-            int fill = selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C)
-                    : groupParent ? (lightTheme ? 0xFFE7F0FF : 0xFF1B2B40) : SURFACE;
-            int stroke = selected ? PURPLE : groupParent ? 0xFF5A9CEB : 0xFF503C68;
-            card.setBackground(roundDrawable(fill, stroke, 20));
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            card.setPadding(dp(14), dp(7), dp(14), dp(7));
+            card.setBackground(roundDrawable(selected
+                    ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
+                    selected ? PURPLE : 0xFF29242F, 12));
             card.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
-            NativeIconView icon = new NativeIconView(MainActivity.this,
-                    selected ? "reorder" : groupParent ? "folder" : "tag",
-                    groupParent ? 0xFF5A9CEB : PURPLE);
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(42), dp(42));
-            iconParams.bottomMargin = dp(7);
-            card.addView(icon, iconParams);
             TextView title = text(genre, 15, TEXT);
-            title.setGravity(Gravity.CENTER);
-            title.setMaxLines(2);
+            title.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+            title.setMaxLines(1);
             title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            card.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
-            String subtitle = groupParent ? "گروه ژانرها" : !genreParent(genre).isEmpty() ? genreParent(genre) : "";
-            TextView parentLabel = text(subtitle, 11, groupParent ? 0xFF5A9CEB : MUTED);
-            parentLabel.setGravity(Gravity.CENTER);
-            parentLabel.setMaxLines(1);
-            parentLabel.setVisibility(subtitle.isEmpty() ? View.INVISIBLE : View.VISIBLE);
-            card.addView(parentLabel, new LinearLayout.LayoutParams(-1, dp(20)));
+            card.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
+            NativeIconView icon = new NativeIconView(MainActivity.this, selected ? "reorder" : "tag", PURPLE);
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(30), dp(30));
+            iconParams.leftMargin = dp(9);
+            card.addView(icon, iconParams);
             frame.addView(card, new FrameLayout.LayoutParams(-1, -1));
-            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(132)));
+            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(68)));
             applyPressScale(frame, .96f);
             return frame;
         }
@@ -9684,12 +9551,7 @@ public final class MainActivity extends Activity {
             query = searchField == null ? "" : searchField.getText().toString().trim().toLowerCase(Locale.ROOT);
             for (int i = 0; i < books.length(); i++) {
                 JSONObject book = books.optJSONObject(i); if (book == null) continue;
-                if (!bookShelfAuthorFilter.isEmpty()
-                        && !bookShelfAuthorFilter.equalsIgnoreCase(book.optString("author", "").trim())) continue;
-                if (!bookShelfCollectionFilterId.isEmpty()
-                        && !bookShelfCollectionFilterId.equals(book.optString("collectionId", "other"))) continue;
-                if (bookShelfAuthorFilter.isEmpty() && bookShelfCollectionFilterId.isEmpty()
-                        && !showingAllBooks()
+                if (!showingAllBooks()
                         && !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
                 boolean queryMatch = query.isEmpty()
                         || book.optString("title").toLowerCase(Locale.ROOT).contains(query)
@@ -9698,17 +9560,17 @@ public final class MainActivity extends Activity {
                 if (!queryMatch && genres != null) for (int j = 0; j < genres.length(); j++) {
                     if (genres.optString(j).toLowerCase(Locale.ROOT).contains(query)) { queryMatch = true; break; }
                 }
-                if (!queryMatch && !bookShelfCollectionFilterId.isEmpty()) {
-                    JSONObject collection = findCollectionById(bookShelfCollectionFilterId);
-                    queryMatch = collection != null && collection.optString("title").toLowerCase(Locale.ROOT).contains(query);
+                if (!queryMatch && !query.isEmpty()) {
+                    JSONObject collection = findCollectionById(book.optString("collectionId", "other"));
+                    queryMatch = collection != null
+                            && collection.optString("title").toLowerCase(Locale.ROOT).contains(query);
                 }
                 if (!queryMatch) continue;
                 boolean match = true;
                 for (String selectedGenre : activeGenreFilter) { boolean found = false; if (genres != null) for (int j = 0; j < genres.length(); j++) if (selectedGenre.equals(genres.optString(j))) found = true; if (!found) { match = false; break; } }
                 if (match) result.add(book);
             }
-            if ((!showingAllBooks() && !"other".equals(activeCollectionId))
-                    || !bookShelfCollectionFilterId.isEmpty()) {
+            if (!showingAllBooks() && !"other".equals(activeCollectionId)) {
                 Collections.sort(result, (first, second) -> Integer.compare(
                         seriesBookNumber(first), seriesBookNumber(second)));
             }
