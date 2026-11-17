@@ -6263,21 +6263,6 @@ public final class MainActivity extends Activity {
                 subtitleView.setOnClickListener(v -> copyBookCredits(book));
             }
         }
-        JSONArray bookGenres = book.optJSONArray("genres");
-        if (bookGenres != null && bookGenres.length() > 0) {
-            StringBuilder labels = new StringBuilder();
-            for (int i = 0; i < bookGenres.length(); i++) {
-                if (i > 0) labels.append("  ·  ");
-                labels.append(bookGenres.optString(i));
-            }
-            HorizontalScrollView genreScroller = new HorizontalScrollView(this);
-            genreScroller.setVerticalScrollBarEnabled(false); genreScroller.setHorizontalScrollBarEnabled(false);
-            TextView genreLine = text(labels.toString(), 12, PURPLE);
-            genreLine.setSingleLine(true);
-            genreLine.setPadding(dp(16), 0, dp(16), 0);
-            genreScroller.addView(genreLine, new HorizontalScrollView.LayoutParams(-2, dp(36)));
-            appColumn.addView(genreScroller, new LinearLayout.LayoutParams(-1, dp(38)));
-        }
         chaptersList = new ListView(this);
         chaptersList.setDivider(null); chaptersList.setCacheColorHint(Color.TRANSPARENT); chaptersList.setBackgroundColor(BG);
         chaptersList.setVerticalScrollBarEnabled(false); chaptersList.setHorizontalScrollBarEnabled(false);
@@ -7300,19 +7285,19 @@ public final class MainActivity extends Activity {
         final View descriptionEntry;
         final View genreEntry;
         final Runnable refreshCollectionChoice;
+        final Runnable showDetails;
         final boolean isNew;
-        final LinearLayout detailsPanel;
-        final TextView detailsToggle;
         final ImageView coverPreview;
         final View coverRemoveButton;
         final String originalCoverName;
+        final ArrayList<String> createdCollectionIds = new ArrayList<>();
         TextView saveButton;
 
         BookJsonImportTarget(EditText title, EditText author, EditText count, EditText seriesNumber,
                              String[] description, String[] collectionId,
                              LinkedHashSet<String> selectedGenres, ArrayList<String> availableGenres,
                              View descriptionEntry, View genreEntry, Runnable refreshCollectionChoice,
-                             boolean isNew, LinearLayout detailsPanel, TextView detailsToggle,
+                             Runnable showDetails, boolean isNew,
                              ImageView coverPreview, View coverRemoveButton, String originalCoverName) {
             this.title = title;
             this.author = author;
@@ -7325,9 +7310,8 @@ public final class MainActivity extends Activity {
             this.descriptionEntry = descriptionEntry;
             this.genreEntry = genreEntry;
             this.refreshCollectionChoice = refreshCollectionChoice;
+            this.showDetails = showDetails;
             this.isNew = isNew;
-            this.detailsPanel = detailsPanel;
-            this.detailsToggle = detailsToggle;
             this.coverPreview = coverPreview;
             this.coverRemoveButton = coverRemoveButton;
             this.originalCoverName = originalCoverName == null ? "" : originalCoverName;
@@ -7498,7 +7482,7 @@ public final class MainActivity extends Activity {
         if (data.hasCollection && !data.collection.isEmpty()) {
             String collectionId = findCollectionIdByTitle(data.collection);
             appendPreviewLine(preview, "مجموعه", collectionId == null
-                    ? data.collection + " (در برنامه پیدا نشد؛ انتخاب فعلی می‌ماند)" : data.collection);
+                    ? data.collection + " (ساخته و انتخاب می‌شود)" : data.collection);
         }
         if (data.hasSeriesNumber) appendPreviewLine(preview, "شماره در مجموعه",
                 data.seriesNumber > 0 ? Integer.toString(data.seriesNumber) : "نامعتبر؛ بدون تغییر");
@@ -7508,10 +7492,14 @@ public final class MainActivity extends Activity {
                 .setTitle("بازبینی اطلاعات JSON")
                 .setMessage(preview.toString())
                 .setNegativeButton("لغو", null)
-                .setPositiveButton("اعمال به فرم", (ignored, which) -> applyBookJson(data, target))
+                .setPositiveButton("اعمال تغییرات", null)
                 .create();
         dialog.show();
         styleDialogWindow(dialog);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            dialog.dismiss();
+            applyBookJson(data, target);
+        });
     }
 
     private void appendPreviewLine(StringBuilder text, String label, String value) {
@@ -7536,6 +7524,45 @@ public final class MainActivity extends Activity {
         return null;
     }
 
+    private String createCollectionForBookJson(String title, BookJsonImportTarget target) {
+        String collectionTitle = titleCaseWords(title);
+        if (collectionTitle.isEmpty()) return null;
+        String existingId = findCollectionIdByTitle(collectionTitle);
+        if (existingId != null) return existingId;
+        String id = UUID.randomUUID().toString();
+        try {
+            collectionArray().put(new JSONObject().put("id", id).put("title", collectionTitle)
+                    .put("orderIndex", nextOrderIndex(collectionArray())));
+            target.createdCollectionIds.add(id);
+            return id;
+        } catch (JSONException error) {
+            return null;
+        }
+    }
+
+    private void removeJsonCreatedCollections(BookJsonImportTarget target) {
+        if (target == null || target.createdCollectionIds.isEmpty()) return;
+        JSONArray current = collectionArray();
+        JSONArray kept = new JSONArray();
+        boolean removed = false;
+        for (int i = 0; i < current.length(); i++) {
+            JSONObject collection = current.optJSONObject(i);
+            if (collection != null && target.createdCollectionIds.contains(collection.optString("id"))) {
+                removed = true;
+            } else if (collection != null) {
+                kept.put(collection);
+            }
+        }
+        target.createdCollectionIds.clear();
+        if (!removed) return;
+        try {
+            library.put("collections", kept);
+        } catch (JSONException ignored) {
+            return;
+        }
+        saveLibrary();
+    }
+
     private void applyBookJson(BookJsonData data, BookJsonImportTarget target) {
         if (activeBookJsonImportTarget != target) {
             toast("فرم کتاب بسته شده است.");
@@ -7543,10 +7570,6 @@ public final class MainActivity extends Activity {
         }
         if (data.hasTitle) target.title.setText(data.title);
         if (data.hasAuthor) target.author.setText(data.author);
-        if (target.isNew && target.detailsPanel.getVisibility() != View.VISIBLE) {
-            target.detailsPanel.setVisibility(View.VISIBLE);
-            if (target.detailsToggle != null) target.detailsToggle.setText("پنهان کردن جزئیات");
-        }
         if (data.hasDescription) {
             target.description[0] = data.description;
             updateBookDialogEntryButton(target.descriptionEntry, descriptionButtonSummary(data.description));
@@ -7576,13 +7599,15 @@ public final class MainActivity extends Activity {
         }
         if (data.hasCollection && !data.collection.isEmpty()) {
             String matchingCollection = findCollectionIdByTitle(data.collection);
+            if (matchingCollection == null) matchingCollection = createCollectionForBookJson(data.collection, target);
             if (matchingCollection != null) {
                 target.collectionId[0] = matchingCollection;
                 target.refreshCollectionChoice.run();
             }
         }
         if (data.hasCoverUrl) downloadBookCover(data.coverUrl, target);
-        toast("اطلاعات به فرم اضافه شد؛ برای ذخیره، ثبت اطلاعات را بزن.");
+        toast("اطلاعات اضافه شد؛ جزئیات را بررسی کن.");
+        target.showDetails.run();
     }
 
     private void showBookJsonPrompt() {
@@ -7643,6 +7668,35 @@ public final class MainActivity extends Activity {
         share.putExtra(Intent.EXTRA_TEXT, prompt);
         try { startActivity(Intent.createChooser(share, "اشتراک‌گذاری نمونه")); }
         catch (Exception error) { toast("اشتراک‌گذاری در دسترس نیست."); }
+    }
+
+    private void showBookDetailsDialog(LinearLayout detailsPanel) {
+        if (detailsPanel == null || isFinishing()) return;
+        detailsPanel.setVisibility(View.VISIBLE);
+        if (detailsPanel.getParent() instanceof ViewGroup) {
+            ((ViewGroup) detailsPanel.getParent()).removeView(detailsPanel);
+        }
+        ScrollView detailsScroll = new ScrollView(this);
+        detailsScroll.setFillViewport(false);
+        detailsScroll.setVerticalScrollBarEnabled(false);
+        detailsScroll.setHorizontalScrollBarEnabled(false);
+        detailsScroll.addView(detailsPanel, new ScrollView.LayoutParams(-1, -2));
+        AlertDialog detailsDialog = new AlertDialog.Builder(this)
+                .setTitle("جزئیات کتاب")
+                .setView(dialogPadding(detailsScroll))
+                .setNegativeButton("بازگشت", null)
+                .setPositiveButton("انجام شد", null)
+                .create();
+        detailsDialog.setOnDismissListener(ignored -> {
+            if (detailsPanel.getParent() instanceof ViewGroup) {
+                ((ViewGroup) detailsPanel.getParent()).removeView(detailsPanel);
+            }
+        });
+        detailsDialog.show();
+        styleDialogWindow(detailsDialog);
+        if (detailsDialog.getWindow() != null) {
+            detailsDialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        }
     }
 
     private View bookDialogEntryButton(String title, String summary, String icon, Runnable action) {
@@ -7858,20 +7912,6 @@ public final class MainActivity extends Activity {
         detailsPanel.addView(coverRow, coverRowParams);
         renderCoverPreview(bookCoverPreview, pendingCoverName);
 
-        LinearLayout importRow = new LinearLayout(this);
-        importRow.setOrientation(LinearLayout.HORIZONTAL);
-        importRow.setGravity(Gravity.CENTER_VERTICAL);
-        View importJsonButton = textButton("ورود JSON", "scan_text", PURPLE, this::chooseBookJson);
-        View promptButton = textButton("نمونه AI", "help", PURPLE, this::showBookJsonPrompt);
-        LinearLayout.LayoutParams importButtonParams = new LinearLayout.LayoutParams(0, dp(52), 1);
-        importButtonParams.bottomMargin = dp(9);
-        LinearLayout.LayoutParams promptButtonParams = new LinearLayout.LayoutParams(0, dp(52), 1);
-        promptButtonParams.leftMargin = dp(8);
-        promptButtonParams.bottomMargin = dp(9);
-        importRow.addView(importJsonButton, importButtonParams);
-        importRow.addView(promptButton, promptButtonParams);
-        detailsPanel.addView(importRow, new LinearLayout.LayoutParams(-1, dp(52)));
-
         EditText title = edit("نام کتاب", false);
         title.setText(isNew ? "" : existing.optString("title"));
         EditText author = edit("نام نویسنده", false);
@@ -7891,36 +7931,35 @@ public final class MainActivity extends Activity {
         titleAuthorFields.setOrientation(LinearLayout.VERTICAL);
         titleAuthorFields.addView(clearableInput(title), fieldParams());
         titleAuthorFields.addView(clearableInput(author), fieldParams());
-        if (compactNewBookForm) form.addView(titleAuthorFields);
-        else detailsPanel.addView(titleAuthorFields);
+        LinearLayout.LayoutParams titleAuthorParams = new LinearLayout.LayoutParams(-1, -2);
+        if (compactNewBookForm) form.addView(titleAuthorFields, titleAuthorParams);
+        else detailsPanel.addView(titleAuthorFields, titleAuthorParams);
 
-        final TextView[] detailsToggle = {null};
         if (compactNewBookForm) {
             LinearLayout quickActions = new LinearLayout(this);
+            quickActions.setOrientation(LinearLayout.HORIZONTAL);
             quickActions.setGravity(Gravity.CENTER_VERTICAL);
+            quickActions.setBaselineAligned(false);
+            quickActions.setClipChildren(false);
             View promptAction = textButton("ساخت پرامپت", "help", PURPLE, this::showBookJsonPrompt);
             View importAction = textButton("ورود پاسخ JSON", "scan_text", PURPLE, this::chooseBookJson);
-            LinearLayout.LayoutParams quickButtonParams = new LinearLayout.LayoutParams(0, dp(48), 1);
-            quickButtonParams.bottomMargin = dp(8);
-            LinearLayout.LayoutParams quickImportParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+            LinearLayout.LayoutParams quickButtonParams = new LinearLayout.LayoutParams(0, dp(50), 1);
+            LinearLayout.LayoutParams quickImportParams = new LinearLayout.LayoutParams(0, dp(50), 1);
             quickImportParams.leftMargin = dp(7);
-            quickImportParams.bottomMargin = dp(8);
             quickActions.addView(promptAction, quickButtonParams);
             quickActions.addView(importAction, quickImportParams);
-            form.addView(quickActions, new LinearLayout.LayoutParams(-1, dp(48)));
-            detailsToggle[0] = text("نمایش جزئیات", 14, TEXT);
-            detailsToggle[0].setGravity(Gravity.CENTER);
-            detailsToggle[0].setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
+            LinearLayout.LayoutParams quickActionsParams = new LinearLayout.LayoutParams(-1, dp(50));
+            quickActionsParams.bottomMargin = dp(8);
+            form.addView(quickActions, quickActionsParams);
+            TextView detailsButton = text("جزئیات بیشتر", 14, TEXT);
+            detailsButton.setGravity(Gravity.CENTER);
+            detailsButton.setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
             LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-1, dp(44));
             toggleParams.bottomMargin = dp(8);
-            form.addView(detailsToggle[0], toggleParams);
+            form.addView(detailsButton, toggleParams);
             detailsPanel.setVisibility(View.GONE);
-            detailsToggle[0].setOnClickListener(v -> {
-                boolean open = detailsPanel.getVisibility() != View.VISIBLE;
-                detailsPanel.setVisibility(open ? View.VISIBLE : View.GONE);
-                detailsToggle[0].setText(open ? "پنهان کردن جزئیات" : "نمایش جزئیات");
-            });
-            applyPressScale(detailsToggle[0]);
+            detailsButton.setOnClickListener(v -> showBookDetailsDialog(detailsPanel));
+            applyPressScale(detailsButton);
         }
         LinearLayout.LayoutParams descriptionEntryParams = new LinearLayout.LayoutParams(-1, dp(58));
         descriptionEntryParams.bottomMargin = dp(9);
@@ -7986,16 +8025,17 @@ public final class MainActivity extends Activity {
 
         activeBookJsonImportTarget = new BookJsonImportTarget(title, author, count, seriesNumber,
                 descriptionValue, chosenCollectionId, selected, availableGenres,
-                descriptionEntry[0], genreEntry[0], refreshCollectionChoice, isNew,
-                detailsPanel, detailsToggle[0], bookCoverPreview, coverRemoveButton, originalCoverName);
+                descriptionEntry[0], genreEntry[0], refreshCollectionChoice,
+                () -> showBookDetailsDialog(detailsPanel), isNew,
+                bookCoverPreview, coverRemoveButton, originalCoverName);
 
-        form.addView(detailsPanel, new LinearLayout.LayoutParams(-1, -2));
+        if (!compactNewBookForm) form.addView(detailsPanel, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setHorizontalScrollBarEnabled(false);
-        scroll.addView(form);
+        scroll.addView(form, new ScrollView.LayoutParams(-1, -2));
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(isNew ? "افزودن کتاب" : "ویرایش کتاب")
                 .setView(dialogPadding(scroll))
@@ -8006,6 +8046,7 @@ public final class MainActivity extends Activity {
             if (!coverCommitted[0] && pendingCoverName != null && !pendingCoverName.isEmpty()
                     && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
             if (activeBookJsonImportTarget != null && activeBookJsonImportTarget.title == title) {
+                if (!coverCommitted[0]) removeJsonCreatedCollections(activeBookJsonImportTarget);
                 activeBookJsonImportTarget = null;
             }
             bookCoverPreview = null;
@@ -8020,20 +8061,24 @@ public final class MainActivity extends Activity {
             String bookTitle = titleCaseWords(title.getText().toString());
             if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
             String bookAuthor = titleCaseWords(author.getText().toString());
-            if (compactNewBookForm && detailsPanel.getVisibility() != View.VISIBLE) {
-                detailsPanel.setVisibility(View.VISIBLE);
-                if (detailsToggle[0] != null) detailsToggle[0].setText("پنهان کردن جزئیات");
-                toast("اطلاعات تکمیلی را بررسی کن و تعداد Chapter را وارد کن.");
-                return;
-            }
             int chapterTotal = 0;
             if (isNew) {
                 String value = count.getText().toString().trim();
-                if (value.isEmpty()) { count.setError("تعداد Chapter را وارد کن"); return; }
+                if (value.isEmpty()) {
+                    count.setError("تعداد Chapter را وارد کن");
+                    if (compactNewBookForm) showBookDetailsDialog(detailsPanel);
+                    return;
+                }
                 try { chapterTotal = Integer.parseInt(value); }
-                catch (NumberFormatException error) { count.setError("تعداد Chapter معتبر نیست"); return; }
+                catch (NumberFormatException error) {
+                    count.setError("تعداد Chapter معتبر نیست");
+                    if (compactNewBookForm) showBookDetailsDialog(detailsPanel);
+                    return;
+                }
                 if (chapterTotal < 1 || chapterTotal > 5000) {
-                    count.setError("تعداد باید بین 1 تا 5000 باشد"); return;
+                    count.setError("تعداد باید بین 1 تا 5000 باشد");
+                    if (compactNewBookForm) showBookDetailsDialog(detailsPanel);
+                    return;
                 }
             }
             int bookNumber = 0;
@@ -8130,7 +8175,8 @@ public final class MainActivity extends Activity {
         });
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
     }
     private void showCollectionPicker(String[] selectedId, Runnable onSelected) {
         JSONArray collections = collectionArray();
