@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
-/** Small dependency-free recommendation helper. One candidate represents one book. */
+/** Small weighted book picker. Ratings affect only the matching book. */
 final class BookRecommendationEngine {
     private static final int DEFAULT_WEIGHT = 10;
     private static final double EXPLORATION_RATE = 0.15;
@@ -19,40 +19,33 @@ final class BookRecommendationEngine {
         final String title;
         final List<String> genres;
         final String author;
-        final boolean favorite;
         final boolean favoriteAuthor;
         final boolean dislikedAuthor;
-        final long wordsRead;
-        final long totalWordsRead;
-        final boolean useReadingShare;
+        final int rating;
 
         Book(long id, String title, List<String> genres, String author,
-             boolean favorite, boolean favoriteAuthor, boolean dislikedAuthor,
-             long wordsRead, long totalWordsRead, boolean useReadingShare) {
+             boolean favoriteAuthor, boolean dislikedAuthor, int rating) {
             this.id = id;
             this.title = title == null ? "" : title;
             this.genres = genres == null ? new ArrayList<>() : new ArrayList<>(genres);
             this.author = author == null ? "" : author;
-            this.favorite = favorite;
             this.favoriteAuthor = favoriteAuthor;
             this.dislikedAuthor = dislikedAuthor;
-            this.wordsRead = Math.max(0, wordsRead);
-            this.totalWordsRead = Math.max(0, totalWordsRead);
-            this.useReadingShare = useReadingShare;
+            this.rating = Math.max(0, Math.min(5, rating));
         }
     }
 
     static final class WeightBreakdown {
         final double genre;
-        final double personal;
-        final double reading;
+        final double author;
+        final double rating;
         final double total;
 
-        WeightBreakdown(double genre, double personal, double reading) {
+        WeightBreakdown(double genre, double author, double rating) {
             this.genre = genre;
-            this.personal = personal;
-            this.reading = reading;
-            this.total = Math.max(0.05, genre * personal * reading);
+            this.author = author;
+            this.rating = rating;
+            this.total = Math.max(0.05, genre * author * rating);
         }
     }
 
@@ -91,7 +84,6 @@ final class BookRecommendationEngine {
             if (book == null || !ids.add(book.id)) continue;
             if (seenBookIds == null || !seenBookIds.contains(book.id)) candidates.add(book);
         }
-        // Start a fresh recommendation cycle after every eligible book has appeared once.
         if (candidates.isEmpty()) {
             for (Book book : books) if (book != null) candidates.add(book);
             if (candidates.isEmpty()) return null;
@@ -99,7 +91,6 @@ final class BookRecommendationEngine {
         if (candidates.size() == 1 || random.nextDouble() < EXPLORATION_RATE) {
             return candidates.get(random.nextInt(candidates.size()));
         }
-
         double total = 0;
         for (Book book : candidates) total += bookWeight(book, temporaryGenreBoost);
         if (total <= 0) return candidates.get(random.nextInt(candidates.size()));
@@ -120,7 +111,7 @@ final class BookRecommendationEngine {
         if (boostedGenre == null || boostedGenre.isEmpty()) return parts.total;
         for (String genre : book.genres) {
             if (normalize(genre).equals(normalize(boostedGenre))) {
-                return Math.max(0.05, (parts.genre + 25) * parts.personal * parts.reading);
+                return Math.max(0.05, (parts.genre + 25) * parts.author * parts.rating);
             }
         }
         return parts.total;
@@ -134,15 +125,12 @@ final class BookRecommendationEngine {
             if (key.isEmpty() || "other".equals(key) || !uniqueGenres.add(key)) continue;
             totalGenreWeight += preferences.weightFor(key);
         }
-        // Averaging prevents books with many genres from receiving extra lottery tickets.
         double genreWeight = uniqueGenres.isEmpty() ? DEFAULT_WEIGHT
                 : totalGenreWeight / uniqueGenres.size();
-        double personalWeight = (book.favorite ? 1.3 : 1.0)
-                * (book.favoriteAuthor ? 1.15 : 1.0)
-                * (book.dislikedAuthor ? 0.35 : 1.0);
-        double readingShareWeight = !book.useReadingShare || book.totalWordsRead == 0 ? 1.0
-                : Math.max(0.05, Math.min(1.0, book.wordsRead / (double) book.totalWordsRead));
-        return new WeightBreakdown(genreWeight, personalWeight, readingShareWeight);
+        double authorWeight = book.favoriteAuthor ? 1.15 : book.dislikedAuthor ? 0.35 : 1.0;
+        // An unset rating is neutral. A manual score changes only this book's multiplier.
+        double ratingWeight = book.rating == 0 ? 1.0 : 0.65 + book.rating * 0.15;
+        return new WeightBreakdown(genreWeight, authorWeight, ratingWeight);
     }
 
     private static String normalize(String value) {

@@ -16,8 +16,8 @@ android {
         applicationId 'com.novelreader.app'
         minSdk 23
         targetSdk 36
-        versionCode 176
-        versionName '1.5.1'
+        versionCode 177
+        versionName '1.5.2'
     }
 
     compileOptions {
@@ -43,4 +43,10 @@ android {
             }
         }
     }
+}
+
+dependencies {
+    implementation 'androidx.room:room-runtime:2.8.5'
+    annotationProcessor 'androidx.room:room-compiler:2.8.5'
+    implementation 'io.noties.markwon:core:4.6.2'
 }
