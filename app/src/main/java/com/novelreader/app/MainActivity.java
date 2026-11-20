@@ -2121,7 +2121,7 @@ public final class MainActivity extends Activity {
                 if (plugin == null || !extensionManager.isEnabled(action.pluginId)) {
                     throw new IOException("افزونه نصب یا فعال نیست.");
                 }
-                output = extensionManager.runTextReplacement(plugin, action, source, false);
+                output = extensionManager.runTextReplacement(plugin, action, source);
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
