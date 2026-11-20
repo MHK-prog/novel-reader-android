@@ -23,7 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** SAF storage for the existing Documents/NovelReader library format. */
+/** SAF storage for NovelReader documents. */
 final class NovelStorage {
     private static final String PREFS = "novel_storage";
     private static final String TREE_URI = "tree_uri";
@@ -41,7 +41,6 @@ final class NovelStorage {
 
     private final MainActivity activity;
     private final SharedPreferences preferences;
-    private final File legacyPrivateCoverDirectory;
     private final File coverCacheDirectory;
     private final Map<String, Uri> coverDocuments = new HashMap<>();
     private Uri cachedCoverRoot;
@@ -54,7 +53,6 @@ final class NovelStorage {
     NovelStorage(MainActivity activity) {
         this.activity = activity;
         preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        legacyPrivateCoverDirectory = new File(activity.getFilesDir(), "covers");
         coverCacheDirectory = new File(activity.getCacheDir(), "covers");
     }
 
@@ -105,6 +103,18 @@ final class NovelStorage {
             Uri folder = chapterFolder(folderName, false);
             return folder != null && findChild(folder, fileName) != null;
         } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    boolean deleteChapterFile(String folderName, String fileName) {
+        if (!validFolderName(folderName) || !validChapterTextFileName(fileName)) return false;
+        try {
+            Uri folder = chapterFolder(folderName, false);
+            Uri file = folder == null ? null : findChild(folder, fileName);
+            return file == null || DocumentsContract.deleteDocument(activity.getContentResolver(), file);
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             return false;
         }
     }
@@ -184,53 +194,6 @@ final class NovelStorage {
         preferences.edit().putString(TREE_URI, selectedTree.toString()).putString(FOLDER_ID, folderId)
                 .remove(PLUGIN_DOCUMENT_ID).remove(PLUGIN_MARKER_DOCUMENT_ID).apply();
         clearCoverDocumentCache();
-    }
-
-    String read(String fileName) throws Exception {
-        Uri dir = directoryUri();
-        if (dir == null) { lastError = "No NovelReader folder is selected."; throw new IOException(lastError); }
-        if (!supportedName(fileName)) { lastError = "Only library JSON files are supported."; throw new IOException(lastError); }
-        try {
-            Uri file = findChild(dir, fileName);
-            if (file == null) { lastError = ""; return null; }
-            try (InputStream in = activity.getContentResolver().openInputStream(file);
-                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                if (in == null) throw new IOException("The storage provider returned no input stream.");
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = in.read(buffer)) >= 0) out.write(buffer, 0, count);
-                lastError = "";
-                return out.toString("UTF-8");
-            }
-        } catch (Exception error) {
-            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            android.util.Log.e("NovelReader", "Could not read " + fileName, error);
-            throw error;
-        }
-    }
-
-    boolean write(String fileName, String contents) {
-        Uri dir = directoryUri();
-        lastError = "";
-        if (dir == null) { lastError = "No NovelReader folder is selected."; return false; }
-        if (!supportedName(fileName)) { lastError = "Only library JSON files are supported."; return false; }
-        try {
-            String mime = "application/json";
-            Uri file = findChild(dir, fileName);
-            if (file == null) file = DocumentsContract.createDocument(
-                    activity.getContentResolver(), dir, mime, fileName);
-            if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
-            try (OutputStream out = activity.getContentResolver().openOutputStream(file, "rwt")) {
-                if (out == null) throw new IOException("The storage provider returned no output stream.");
-                out.write((contents == null ? "" : contents).getBytes(StandardCharsets.UTF_8));
-                out.flush();
-            }
-            return true;
-        } catch (Exception error) {
-            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            android.util.Log.e("NovelReader", "Could not write " + fileName, error);
-            return false;
-        }
     }
 
     List<String> listPluginIds() {
@@ -318,7 +281,7 @@ final class NovelStorage {
     }
 
     String readChapterOriginal(String fileName) throws Exception {
-        if (!safePluginFileName(fileName) || !(fileName.endsWith(".md") || fileName.endsWith(".txt"))) {
+        if (!safePluginFileName(fileName) || !fileName.endsWith(".txt")) {
             throw new IOException("Invalid chapter original file name.");
         }
         Uri directory = chapterOriginalsDirectory(false);
@@ -359,8 +322,7 @@ final class NovelStorage {
     }
 
     boolean deleteChapterOriginal(String fileName) {
-        if (!safePluginFileName(fileName)
-                || !(fileName.endsWith(".md") || fileName.endsWith(".txt"))) return false;
+        if (!safePluginFileName(fileName) || !fileName.endsWith(".txt")) return false;
         try {
             Uri directory = chapterOriginalsDirectory(false);
             if (directory == null) return true;
@@ -524,23 +486,7 @@ final class NovelStorage {
             }
         }
 
-        byte[] legacyShared = readLegacyImage(fileName);
-        if (legacyShared != null) {
-            if (writeImage(fileName, legacyShared)) deleteLegacyImage(fileName);
-            return legacyShared;
-        }
-
-        File legacyFile = legacyPrivateCoverFile(fileName);
-        if (!legacyFile.isFile()) return null;
-        try (InputStream in = new FileInputStream(legacyFile);
-             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            copy(in, out);
-            byte[] contents = out.toByteArray();
-            if (writeImage(fileName, contents) && !legacyFile.delete()) {
-                android.util.Log.w("NovelReader", "Could not remove migrated cover " + fileName);
-            }
-            return contents;
-        }
+        return null;
     }
 
     boolean writeImage(String fileName, byte[] contents) {
@@ -587,55 +533,8 @@ final class NovelStorage {
                     coverDocuments.remove(fileName);
                 }
             }
-            deleteLegacyImage(fileName);
-            File oldFile = legacyPrivateCoverFile(fileName);
-            if (oldFile.exists() && !oldFile.delete()) {
-                android.util.Log.w("NovelReader", "Could not delete legacy cover " + fileName);
-            }
         } catch (Exception error) {
             android.util.Log.w("NovelReader", "Could not delete " + fileName, error);
-        }
-    }
-
-    /** Moves old covers into NovelReader/.covers and prevents gallery indexing with .nomedia. */
-    void migrateLegacyImages() {
-        Uri coverDir;
-        try {
-            coverDir = coverDirectoryUri(true);
-            ensureMediaHidden(coverDir);
-        } catch (Exception error) {
-            android.util.Log.w("NovelReader", "Could not initialize hidden cover folder", error);
-            return;
-        }
-
-        for (String fileName : listNames()) {
-            if (!supportedImageName(fileName)) continue;
-            try {
-                byte[] contents = readLegacyImage(fileName);
-                if (contents == null || !writeImage(fileName, contents)) continue;
-                deleteLegacyImage(fileName);
-            } catch (Exception error) {
-                android.util.Log.w("NovelReader", "Could not migrate cover " + fileName, error);
-            }
-        }
-
-        File[] oldFiles = legacyPrivateCoverDirectory.listFiles();
-        if (oldFiles == null) return;
-        for (File oldFile : oldFiles) {
-            String fileName = oldFile.getName();
-            if (!supportedImageName(fileName) || !oldFile.isFile()) continue;
-            try {
-                byte[] contents;
-                try (InputStream in = new FileInputStream(oldFile);
-                     ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                    copy(in, out);
-                    contents = out.toByteArray();
-                }
-                if (!writeImage(fileName, contents)) continue;
-                if (!oldFile.delete()) android.util.Log.w("NovelReader", "Could not remove migrated cover " + fileName);
-            } catch (Exception error) {
-                android.util.Log.w("NovelReader", "Could not migrate private cover " + fileName, error);
-            }
         }
     }
 
@@ -776,13 +675,6 @@ final class NovelStorage {
         return new File(coverCacheDirectory, fileName);
     }
 
-    private byte[] readLegacyImage(String fileName) throws Exception {
-        Uri dir = directoryUri();
-        if (dir == null) return null;
-        Uri file = findChild(dir, fileName);
-        return file == null ? null : readDocumentBytes(file, "The storage provider returned no image stream.");
-    }
-
     private byte[] readDocumentBytes(Uri file, String missingStreamMessage) throws IOException {
         try (InputStream in = activity.getContentResolver().openInputStream(file);
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -792,21 +684,6 @@ final class NovelStorage {
         }
     }
 
-    private File legacyPrivateCoverFile(String fileName) throws IOException {
-        if (!supportedImageName(fileName)) throw new IOException("Invalid cover image name.");
-        return new File(legacyPrivateCoverDirectory, fileName);
-    }
-
-    private void deleteLegacyImage(String fileName) {
-        Uri dir = directoryUri();
-        if (dir == null) return;
-        try {
-            Uri file = findChild(dir, fileName);
-            if (file != null) DocumentsContract.deleteDocument(activity.getContentResolver(), file);
-        } catch (Exception error) {
-            android.util.Log.w("NovelReader", "Could not remove old cover " + fileName, error);
-        }
-    }
     private static void copy(InputStream in, OutputStream out) throws IOException {
         byte[] buffer = new byte[8192];
         int count;
@@ -814,21 +691,6 @@ final class NovelStorage {
     }
 
     String lastError() { return lastError; }
-
-    List<String> listNames() {
-        List<String> names = new ArrayList<>();
-        Uri dir = directoryUri();
-        if (dir == null) return names;
-        try {
-            String id = DocumentsContract.getDocumentId(dir);
-            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(dir, id);
-            String[] cols = { DocumentsContract.Document.COLUMN_DISPLAY_NAME };
-            try (Cursor cursor = activity.getContentResolver().query(children, cols, null, null, null)) {
-                if (cursor != null) while (cursor.moveToNext()) names.add(cursor.getString(0));
-            }
-        } catch (Exception ignored) { }
-        return names;
-    }
 
     private Uri directoryUri() {
         String tree = preferences.getString(TREE_URI, null);
@@ -863,10 +725,6 @@ final class NovelStorage {
     private static boolean safeName(String name) {
         return name != null && name.length() <= 180 && !name.contains("..")
                 && name.matches("[A-Za-z0-9][A-Za-z0-9._-]*");
-    }
-
-    private static boolean supportedName(String name) {
-        return safeName(name) && name.endsWith(".json");
     }
 
     private static boolean supportedImageName(String name) {

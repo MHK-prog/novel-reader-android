@@ -77,16 +77,8 @@ final class ReadingStatsStore {
         refreshTotals();
     }
 
-    synchronized void addWords(long count, long timeMillis) {
-        add(WORDS, null, count, timeMillis);
-    }
-
     synchronized void addWords(String bookId, long count, long timeMillis) {
         add(WORDS, bookId, count, timeMillis);
-    }
-
-    synchronized void addReadingMillis(long durationMillis, long timeMillis) {
-        addReadingMillis(null, durationMillis, timeMillis);
     }
 
     synchronized void addReadingMillis(String bookId, long durationMillis, long timeMillis) {
@@ -210,7 +202,6 @@ final class ReadingStatsStore {
                 current.add(Calendar.HOUR_OF_DAY, hour);
                 Map<String, Long> byBook = hourValues(current.getTimeInMillis(), metric);
                 long total = total(current.getTimeInMillis(), metric);
-                addLegacySegment(byBook, total);
                 String label = hour % 6 == 0 ? String.format(Locale.ROOT, "%02d", hour) : "";
                 result.add(new Point(label, total, byBook));
             }
@@ -227,7 +218,6 @@ final class ReadingStatsStore {
                         current.get(Calendar.DAY_OF_MONTH));
                 Map<String, Long> byBook = dayValues(current, metric);
                 long total = sumDay(current, metric);
-                addLegacySegment(byBook, total);
                 result.add(new Point(Integer.toString(jalali.day), total, byBook));
             }
             return result;
@@ -244,7 +234,6 @@ final class ReadingStatsStore {
                 current.add(Calendar.DAY_OF_YEAR, day);
                 Map<String, Long> byBook = dayValues(current, metric);
                 long total = sumDay(current, metric);
-                addLegacySegment(byBook, total);
                 String label = day % 5 == 0 || day == count - 1
                         ? Integer.toString(day + 1) : "";
                 result.add(new Point(label, total, byBook));
@@ -259,7 +248,6 @@ final class ReadingStatsStore {
             Calendar end = calendar(next[0], next[1], next[2]);
             Map<String, Long> byBook = rangeValues(start, end, metric);
             long total = sumRange(start, end, metric);
-            addLegacySegment(byBook, total);
             result.add(new Point(JALALI_MONTHS[month - 1], total, byBook));
         }
         return result;
@@ -343,17 +331,6 @@ final class ReadingStatsStore {
             Long previous = into.get(entry.getKey());
             into.put(entry.getKey(), (previous == null ? 0 : previous) + entry.getValue());
         }
-    }
-
-    private void addLegacySegment(Map<String, Long> values, long total) {
-        long remainder = Math.max(0, total - sumValues(values));
-        if (remainder > 0) values.put("__legacy__", remainder);
-    }
-
-    private long sumValues(Map<String, Long> values) {
-        long sum = 0;
-        for (long value : values.values()) sum += value;
-        return sum;
     }
 
     private long sumDay(Calendar day, String metric) {

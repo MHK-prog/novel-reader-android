@@ -36,7 +36,6 @@ final class ExtensionManager {
     ExtensionManager(NovelStorage storage, SharedPreferences preferences) {
         this.storage = storage;
         this.preferences = preferences;
-        this.preferences.edit().remove("colloquializer.mode.advanced").apply();
     }
 
     List<Plugin> installed() {
@@ -57,39 +56,8 @@ final class ExtensionManager {
         String manifestText = storage.readPluginFile(id, MANIFEST_FILE);
         if (manifestText == null) return null;
         JSONObject manifest = new JSONObject(manifestText);
-        if (migratePreviousDataManifest(id, manifest)) {
-            manifestText = manifest.toString();
-            if (!storage.writePluginFile(id, MANIFEST_FILE, manifestText)) throw new IOException(storage.lastError());
-        }
         validateManifest(manifest);
         return new Plugin(manifest, manifestText);
-    }
-
-    private boolean migratePreviousDataManifest(String id, JSONObject manifest) throws JSONException {
-        JSONObject files = manifest.optJSONObject("files");
-        if (manifest.has("apiVersion") || manifest.optInt("engineApi", 0) != 2
-                || manifest.optInt("rulesSchema", 0) != 3 || files == null
-                || files.optJSONObject("rules.json") == null) return false;
-        JSONArray actions = new JSONArray();
-        JSONObject action = new JSONObject();
-        action.put("id", "convert-text");
-        action.put("label", manifest.optString("name", "Text conversion"));
-        action.put("icon", "scan_text");
-        action.put("placement", "chapter_bottom");
-        action.put("capability", TEXT_REPLACEMENT);
-        action.put("dataFile", "rules.json");
-        action.put("confirmTitle", manifest.optString("name", "Text conversion"));
-        action.put("confirmMessage", "این افزونه متن فعلی Chapter را تغییر می‌دهد.");
-        actions.put(action);
-        manifest.put("apiVersion", API_VERSION);
-        manifest.put("description", "افزونهٔ تبدیل متن مبتنی بر جفت‌رشته‌ها.");
-        manifest.put("actions", actions);
-        manifest.remove("engineApi");
-        manifest.remove("rulesSchema");
-        if (!preferences.contains(enabledKey(id)) && preferences.contains(id + "-enabled")) {
-            preferences.edit().putBoolean(enabledKey(id), preferences.getBoolean(id + "-enabled", false)).apply();
-        }
-        return true;
     }
 
     boolean isEnabled(String id) {
@@ -158,13 +126,9 @@ final class ExtensionManager {
     }
 
     String transformColloquializer(String input) throws Exception {
-        return transformColloquializer(input, false);
-    }
-
-    String transformColloquializer(String input, boolean annotateChanges) throws Exception {
         Plugin plugin = load("colloquializer");
         if (plugin == null || plugin.actions.isEmpty()) throw new IOException("محاوره‌ای‌ساز نصب نشده است.");
-        return runTextReplacement(plugin, plugin.actions.get(0), input, annotateChanges);
+        return runTextReplacement(plugin, plugin.actions.get(0), input);
     }
 
     void saveColloquializerRules(String rulesJson) throws Exception {
@@ -200,8 +164,7 @@ final class ExtensionManager {
             throw new IOException(storage.lastError());
         }
         setEnabled("colloquializer", true);
-        preferences.edit().remove(sourceKey("colloquializer"))
-                .remove("colloquializer.mode.advanced").apply();
+        preferences.edit().remove(sourceKey("colloquializer")).apply();
     }
 
     private void addFileDescriptor(JSONObject files, String name, String content) throws Exception {
@@ -215,11 +178,6 @@ final class ExtensionManager {
     boolean removeColloquializer() { return remove("colloquializer"); }
 
     String runTextReplacement(Plugin plugin, Action action, String input) throws Exception {
-        return runTextReplacement(plugin, action, input, false);
-    }
-
-    String runTextReplacement(Plugin plugin, Action action, String input,
-                              boolean tagVariableChanges) throws Exception {
         if (plugin == null || action == null || !TEXT_REPLACEMENT.equals(action.capability)) {
             throw new IOException("Unsupported extension action.");
         }
@@ -230,7 +188,7 @@ final class ExtensionManager {
             throw new IOException("Extension data checksum does not match.");
         }
         validatePairs(content);
-        return TextReplacementEngine.transform(input, content, tagVariableChanges);
+        return TextReplacementEngine.transform(input, content);
     }
 
     boolean remove(String id) {

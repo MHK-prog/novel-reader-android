@@ -13,11 +13,11 @@ android {
     }
 
     defaultConfig {
-        applicationId 'com.novelreader.app'
+        applicationId 'com.novelreader.app.v2'
         minSdk 23
         targetSdk 36
-        versionCode 182
-        versionName '1.5.7'
+        versionCode 200
+        versionName '2.0.0'
     }
 
     compileOptions {

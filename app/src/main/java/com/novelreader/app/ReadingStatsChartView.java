@@ -56,7 +56,7 @@ final class ReadingStatsChartView extends View {
         for (ReadingStatsStore.Point point : this.points) bookIds.addAll(point.byBook.keySet());
         int colorIndex = 0;
         for (String id : bookIds) {
-            if (!"__legacy__".equals(id)) bookColors.put(id, BOOK_COLORS[colorIndex++ % BOOK_COLORS.length]);
+            bookColors.put(id, BOOK_COLORS[colorIndex++ % BOOK_COLORS.length]);
         }
         invalidate();
     }
@@ -159,7 +159,6 @@ final class ReadingStatsChartView extends View {
     }
 
     int colorForBook(String id) {
-        if ("__legacy__".equals(id)) return 0xFF77717D;
         Integer color = bookColors.get(id);
         return color == null ? BOOK_COLORS[(id.hashCode() & 0x7FFFFFFF) % BOOK_COLORS.length] : color;
     }

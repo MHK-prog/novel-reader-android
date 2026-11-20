@@ -119,12 +119,6 @@ public final class MainActivity extends Activity {
     private static final int BLUE = Color.rgb(90, 169, 255);
     private static final int GREEN = Color.rgb(86, 201, 135);
     private static final int RED = Color.rgb(255, 76, 76);
-    // Kept only to migrate saved single-color theme selections to a nearby gradient once.
-    private static final int[] LEGACY_FLAT_ACCENT_COLORS = {
-            Color.rgb(187, 134, 252), Color.rgb(79, 195, 247), Color.rgb(77, 182, 172),
-            Color.rgb(129, 199, 132), Color.rgb(255, 183, 77), Color.rgb(255, 138, 101),
-            Color.rgb(240, 98, 146)
-    };
     private static final int[][] GRADIENT_COLORS = {
             {0xFFFAD95C, 0xFFF9C251, 0xFFFFA270, 0xFFFD80A4, 0xFFFE66CD, 0xFFFE59D2},
             {0xFF030712, 0xFF040917, 0xFF050D1D, 0xFF071225, 0xFF0A172D, 0xFF0D1D36, 0xFF10233F, 0xFF122946, 0xFF142F4E, 0xFF163556, 0xFF173C5E, 0xFF184366, 0xFF194B6D, 0xFF185274, 0xFF175A7A, 0xFF15617F, 0xFF146984, 0xFF147189, 0xFF167A8E, 0xFF1A8395, 0xFF1B8D9D, 0xFF1A98A6, 0xFF1CA4AF, 0xFF23B0B8, 0xFF32BBC1, 0xFF47C6CA, 0xFF62D1D3, 0xFF7FDCDD, 0xFF9BE7E8, 0xFFB5F1F1, 0xFFCAF9F9, 0xFFD9FFFF},
@@ -378,7 +372,6 @@ public final class MainActivity extends Activity {
         readingStats = new ReadingStatsStore(getSharedPreferences("reading_stats", MODE_PRIVATE));
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
-        migrateGradientThemeSelection(appearance);
         lightTheme = appearance.getBoolean("light", false);
         accentIndex = Math.max(0, Math.min(themeCount() - 1, appearance.getInt("accent", 0)));
         if (appearance.getBoolean("random_each_launch", false)) {
@@ -396,10 +389,8 @@ public final class MainActivity extends Activity {
         showStartupSplash();
         handler.postDelayed(() -> {
             if (storage.isReady()) {
-                migrateCoversThen(() -> {
-                    loadLibraryAndDashboard();
-                    finishStartupSplash();
-                });
+                loadLibraryAndDashboard();
+                finishStartupSplash();
             } else {
                 showStorageGate();
                 finishStartupSplash();
@@ -453,66 +444,6 @@ public final class MainActivity extends Activity {
         int[] colors = new int[storedColors.length()];
         for (int i = 0; i < storedColors.length(); i++) colors[i] = storedColors.optInt(i, PURPLE);
         return colors;
-    }
-
-    private void migrateGradientThemeSelection(SharedPreferences appearance) {
-        if (appearance.getBoolean("gradient_theme_indices_v1", false)) return;
-        int oldBuiltinCount = LEGACY_FLAT_ACCENT_COLORS.length + GRADIENT_COLORS.length;
-        JSONArray rawThemes = rawCustomThemes();
-        JSONArray gradients = new JSONArray();
-        List<Integer> oldGradientPositions = new ArrayList<>();
-        for (int i = 0; i < rawThemes.length(); i++) {
-            JSONObject theme = rawThemes.optJSONObject(i);
-            JSONArray colors = theme == null ? null : theme.optJSONArray("colors");
-            if (colors != null && colors.length() >= 2) {
-                gradients.put(theme);
-                oldGradientPositions.add(i);
-            }
-        }
-        int oldAccent = appearance.getInt("accent", 0);
-        int newAccent;
-        if (oldAccent < LEGACY_FLAT_ACCENT_COLORS.length) {
-            newAccent = nearestGradientTheme(LEGACY_FLAT_ACCENT_COLORS[Math.max(0,
-                    Math.min(LEGACY_FLAT_ACCENT_COLORS.length - 1, oldAccent))]);
-        } else if (oldAccent < oldBuiltinCount) {
-            newAccent = oldAccent - LEGACY_FLAT_ACCENT_COLORS.length;
-        } else {
-            int newCustomIndex = oldGradientPositions.indexOf(oldAccent - oldBuiltinCount);
-            newAccent = newCustomIndex < 0 ? nearestGradientTheme(LEGACY_FLAT_ACCENT_COLORS[0])
-                    : BUILTIN_THEME_COUNT + newCustomIndex;
-        }
-        Set<Integer> oldFavorites = new HashSet<>();
-        for (String value : appearance.getString("favorite_builtin_themes", "").split(",")) {
-            try { if (!value.isEmpty()) oldFavorites.add(Integer.parseInt(value)); }
-            catch (NumberFormatException ignored) { }
-        }
-        StringBuilder migratedFavorites = new StringBuilder();
-        for (Integer oldIndex : oldFavorites) {
-            if (oldIndex < LEGACY_FLAT_ACCENT_COLORS.length) continue;
-            if (oldIndex >= oldBuiltinCount) continue; // Custom favorite state stays on each theme object.
-            int migrated = oldIndex - LEGACY_FLAT_ACCENT_COLORS.length;
-            if (migrated < 0 || migrated >= BUILTIN_THEME_COUNT) continue;
-            if (migratedFavorites.length() > 0) migratedFavorites.append(',');
-            migratedFavorites.append(migrated);
-        }
-        appearance.edit().putInt("accent", Math.max(0, Math.min(themeCount() - 1, newAccent)))
-                .putString("favorite_builtin_themes", migratedFavorites.toString())
-                .putString("custom_themes", gradients.toString())
-                .putBoolean("gradient_theme_indices_v1", true).apply();
-    }
-
-    private int nearestGradientTheme(int color) {
-        long bestDistance = Long.MAX_VALUE;
-        int bestIndex = 0;
-        for (int i = 0; i < GRADIENT_COLORS.length; i++) {
-            int candidate = GRADIENT_COLORS[i][GRADIENT_COLORS[i].length / 2];
-            long red = Color.red(color) - Color.red(candidate);
-            long green = Color.green(color) - Color.green(candidate);
-            long blue = Color.blue(color) - Color.blue(candidate);
-            long distance = red * red + green * green + blue * blue;
-            if (distance < bestDistance) { bestDistance = distance; bestIndex = i; }
-        }
-        return bestIndex;
     }
 
     private String themeName(int index) {
@@ -827,11 +758,9 @@ public final class MainActivity extends Activity {
         if (resultCode == RESULT_OK && data != null && data.getData() != null) {
             try {
                 storage.acceptFolder(data.getData(), data.getFlags());
-                migrateCoversThen(() -> {
-                    loadLibraryAndDashboard();
-                    if (returnToSettingsAfterPicker) showSettings();
-                    returnToSettingsAfterPicker = false;
-                });
+                loadLibraryAndDashboard();
+                if (returnToSettingsAfterPicker) showSettings();
+                returnToSettingsAfterPicker = false;
                 return;
             } catch (Exception error) {
                 returnToSettingsAfterPicker = false;
@@ -844,32 +773,19 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void migrateCoversThen(Runnable completion) {
-        try {
-            imageExecutor.execute(() -> {
-                storage.migrateLegacyImages();
-                runOnUiThread(() -> { if (!isFinishing()) completion.run(); });
-            });
-        } catch (java.util.concurrent.RejectedExecutionException error) {
-            completion.run();
-        }
-    }
-
     private void loadLibraryAndDashboard() {
         String saved;
         try {
             saved = libraryStore.read();
-            if (saved == null) saved = storage.read("library.json");
         } catch (Exception error) {
             toast("خواندن کتابخانه ناموفق بود: " + error.getMessage());
             showStorageGate();
             return;
         }
         try {
-            library = saved == null ? new JSONObject() : new JSONObject(saved);
-            normalizeLibrary();
+            library = saved == null ? newEmptyLibrary() : new JSONObject(saved);
         } catch (Exception error) {
-            android.util.Log.e("NovelReader", "library.json is invalid; preserving the file", error);
+            android.util.Log.e("NovelReader", "Library data could not be loaded.", error);
             toast("فهرست کتاب‌ها خوانده نشد؛ فایل قبلی دست‌نخورده باقی ماند.");
             showStorageGate();
             return;
@@ -880,6 +796,13 @@ public final class MainActivity extends Activity {
         persistRecommendationState();
         showDashboard();
         showResumePromptOnce();
+    }
+
+    private JSONObject newEmptyLibrary() throws JSONException {
+        JSONArray collections = new JSONArray().put(
+                new JSONObject().put("id", "other").put("title", "سایر"));
+        return new JSONObject().put("books", new JSONArray())
+                .put("genres", new JSONArray()).put("collections", collections);
     }
 
     private final class ResumeTarget {
@@ -973,235 +896,6 @@ public final class MainActivity extends Activity {
     private static int coverCacheBudgetKb() {
         long heapKb = Runtime.getRuntime().maxMemory() / 1024L;
         return (int) Math.max(8 * 1024L, Math.min(32 * 1024L, heapKb / 8L));
-    }
-
-    private void normalizeLibrary() throws JSONException {
-        JSONArray books = library.optJSONArray("books");
-        if (books == null) {
-            books = new JSONArray();
-            JSONArray works = library.optJSONArray("works");
-            if (works != null) for (int w = 0; w < works.length(); w++) {
-                JSONObject work = works.optJSONObject(w);
-                JSONArray children = work == null ? null : work.optJSONArray("books");
-                if (children == null) continue;
-                for (int b = 0; b < children.length(); b++) {
-                    JSONObject book = children.optJSONObject(b);
-                    if (book != null) {
-                        if (book.optString("author").isEmpty()) book.put("author", work.optString("author"));
-                        if (book.optJSONArray("genres") == null && book.optJSONArray("tags") == null) {
-                            book.put("genres", new JSONArray());
-                        }
-                        books.put(book);
-                    }
-                }
-            }
-        }
-        JSONArray genres = library.optJSONArray("genres");
-        if (genres == null) genres = new JSONArray();
-        JSONArray legacyTags = library.optJSONArray("tags");
-        if (legacyTags != null) {
-            for (int i = 0; i < legacyTags.length(); i++) appendUniqueGenre(genres, legacyTags.optString(i));
-        }
-        JSONArray collections = library.optJSONArray("collections");
-        if (collections == null) collections = new JSONArray();
-        JSONObject otherCollection = null;
-        for (int i = 0; i < collections.length(); i++) {
-            JSONObject collection = collections.optJSONObject(i);
-            if (collection == null) continue;
-            if (collection.optString("id").isEmpty()) collection.put("id", UUID.randomUUID().toString());
-            if (collection.optString("title").trim().isEmpty()) collection.put("title", "بدون نام");
-            if ("other".equals(collection.optString("id"))) otherCollection = collection;
-        }
-        if (otherCollection == null) {
-            otherCollection = new JSONObject().put("id", "other").put("title", "سایر");
-            collections.put(otherCollection);
-        }
-        ensureOrderIndexes(collections, false);
-        library.put("books", books).put("genres", genres).put("collections", collections);
-        library.remove("tags");
-        activeCollectionId = "other";
-        Set<String> all = new HashSet<>();
-        Set<String> bookCodes = new HashSet<>();
-        Set<Long> recommendationIds = new HashSet<>();
-        long nextRecommendationId = 1;
-        for (int i = 0; i < genres.length(); i++) {
-            String genre = canonicalGenre(genres.optString(i));
-            if (!genre.isEmpty() && !"Other".equalsIgnoreCase(genre)) all.add(genre);
-        }
-        for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book == null) continue;
-            String bookCode = book.optString("id", "");
-            if (bookCode.isEmpty() || !bookCodes.add(bookCode)) {
-                bookCode = UUID.randomUUID().toString();
-                book.put("id", bookCode);
-                bookCodes.add(bookCode);
-            }
-            if (book.optString("title").isEmpty()) book.put("title", "بدون عنوان");
-            book.put("userRating", Math.max(0, Math.min(5, book.optInt("userRating", 0))));
-            long recommendationId = book.optLong("recommendationId", -1);
-            if (recommendationId <= 0 || !recommendationIds.add(recommendationId)) {
-                while (recommendationIds.contains(nextRecommendationId)) nextRecommendationId++;
-                recommendationId = nextRecommendationId++;
-                book.put("recommendationId", recommendationId);
-                recommendationIds.add(recommendationId);
-            } else if (recommendationId >= nextRecommendationId && recommendationId < Long.MAX_VALUE) {
-                nextRecommendationId = recommendationId + 1;
-            }
-            String collectionId = book.optString("collectionId", "other");
-            if (findCollectionById(collectionId) == null) collectionId = "other";
-            book.put("collectionId", collectionId);
-            // Hidden-library data is no longer used; keep old books visible in all shelves.
-            book.remove("hidden");
-            JSONArray bookGenres = book.optJSONArray("genres");
-            if (bookGenres == null) bookGenres = book.optJSONArray("tags");
-            if (bookGenres == null) bookGenres = new JSONArray();
-            book.remove("tags");
-            String oldGenre = book.optString("genre", "").trim();
-            if (!oldGenre.isEmpty() && !"Other".equalsIgnoreCase(oldGenre)) appendUniqueGenre(bookGenres, oldGenre);
-            book.remove("genre");
-            JSONArray canonicalBookGenres = new JSONArray();
-            for (int j = 0; j < bookGenres.length(); j++) {
-                String genre = canonicalGenre(bookGenres.optString(j));
-                if (genre.isEmpty() || "Other".equalsIgnoreCase(genre)) continue;
-                appendUniqueGenre(canonicalBookGenres, genre);
-                all.add(genre);
-            }
-            book.put("genres", canonicalBookGenres);
-            JSONArray chapters = book.optJSONArray("chapters");
-            if (chapters == null) { chapters = new JSONArray(); book.put("chapters", chapters); }
-            Set<String> chapterCodes = new HashSet<>();
-            for (int j = 0; j < chapters.length(); j++) {
-                JSONObject chapter = chapters.optJSONObject(j);
-                if (chapter == null) { chapter = new JSONObject(); chapters.put(j, chapter); }
-                String chapterCode = chapter.optString("id", "");
-                if (chapterCode.isEmpty() || !chapterCodes.add(chapterCode)) {
-                    chapterCode = UUID.randomUUID().toString();
-                    chapter.put("id", chapterCode);
-                    chapterCodes.add(chapterCode);
-                }
-                if (chapter.optString("title").trim().isEmpty()) chapter.put("title", "Chapter " + (j + 1));
-                chapter.put("end", chapter.optBoolean("end", false));
-                chapter.put("hasText", chapter.optBoolean("hasText", false));
-                chapter.put("percent", Math.max(0, Math.min(100, chapter.optInt("percent", 0))));
-                chapter.put("done", chapter.optBoolean("done", false));
-                chapter.put("scroll", Math.max(0, chapter.optInt("scroll", 0)));
-                if (chapter.has("wordsRead") && !chapter.has("totalWords")) {
-                    chapter.put("totalWords", Math.max(0, chapter.optLong("wordsRead", 0)));
-                }
-            }
-            ensureChapterStorageIndexes(chapters);
-            ensureOrderIndexes(chapters, true);
-        }
-        ensureOrderIndexes(books, false);
-        Map<String, Integer> nextSeriesNumbers = new HashMap<>();
-        for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book == null || "other".equals(book.optString("collectionId", "other"))) continue;
-            String collectionId = book.optString("collectionId");
-            int number = book.optInt("seriesNumber", 0);
-            if (number <= 0) {
-                number = nextSeriesNumbers.containsKey(collectionId) ? nextSeriesNumbers.get(collectionId) : 1;
-                book.put("seriesNumber", number);
-            }
-            nextSeriesNumbers.put(collectionId, Math.max(nextSeriesNumbers.containsKey(collectionId)
-                    ? nextSeriesNumbers.get(collectionId) : 1, number + 1));
-        }
-        JSONArray cleanGenres = new JSONArray();
-        List<String> sorted = new ArrayList<>(all);
-        Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
-        for (String genre : sorted) cleanGenres.put(genre);
-        library.put("genres", cleanGenres);
-        normalizeCompositeGenresOnce();
-        canonicalizeGenrePreferences();
-    }
-
-    private void normalizeCompositeGenresOnce() {
-        if (library.optInt("compositeGenreCleanupVersion", 0) >= 1) return;
-        JSONArray genres = library.optJSONArray("genres");
-        JSONArray books = library.optJSONArray("books");
-        if (genres == null || books == null) {
-            putJson(library, "compositeGenreCleanupVersion", 1);
-            return;
-        }
-
-        LinkedHashSet<String> knownNames = new LinkedHashSet<>();
-        for (int i = 0; i < genres.length(); i++) {
-            String value = canonicalGenre(genres.optString(i));
-            if (!value.isEmpty()) knownNames.add(value);
-        }
-        for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            JSONArray values = book == null ? null : book.optJSONArray("genres");
-            if (values != null) for (int j = 0; j < values.length(); j++) {
-                String value = canonicalGenre(values.optString(j));
-                if (!value.isEmpty()) knownNames.add(value);
-            }
-        }
-
-        Map<String, List<String>> replacements = new HashMap<>();
-        for (String value : knownNames) {
-            String[] parts = value.trim().split("\\s+");
-            if (parts.length < 2) continue;
-            ArrayList<String> matchedParts = new ArrayList<>();
-            boolean allKnown = true;
-            for (String part : parts) {
-                String match = findGenreName(knownNames, part);
-                if (match == null) { allKnown = false; break; }
-                matchedParts.add(match);
-            }
-            if (allKnown) replacements.put(value.toLowerCase(Locale.ROOT), matchedParts);
-        }
-
-        if (!replacements.isEmpty()) {
-            for (int i = 0; i < books.length(); i++) {
-                JSONObject book = books.optJSONObject(i);
-                JSONArray values = book == null ? null : book.optJSONArray("genres");
-                if (values == null) continue;
-                JSONArray rebuilt = new JSONArray();
-                for (int j = 0; j < values.length(); j++) {
-                    String value = canonicalGenre(values.optString(j));
-                    List<String> parts = replacements.get(value.toLowerCase(Locale.ROOT));
-                    if (parts == null) appendUniqueGenre(rebuilt, value);
-                    else for (String part : parts) appendUniqueGenre(rebuilt, part);
-                }
-                putJson(book, "genres", rebuilt);
-            }
-
-            JSONArray rebuiltGenres = new JSONArray();
-            for (int i = 0; i < genres.length(); i++) {
-                String value = canonicalGenre(genres.optString(i));
-                if (!replacements.containsKey(value.toLowerCase(Locale.ROOT))) appendUniqueGenre(rebuiltGenres, value);
-            }
-            for (List<String> parts : replacements.values()) for (String part : parts) appendUniqueGenre(rebuiltGenres, part);
-            putJson(library, "genres", rebuiltGenres);
-
-            JSONArray details = library.optJSONArray("genreDetails");
-            if (details != null) {
-                JSONArray keptDetails = new JSONArray();
-                for (int i = 0; i < details.length(); i++) {
-                    JSONObject detail = details.optJSONObject(i);
-                    if (detail == null) continue;
-                    String name = canonicalGenre(detail.optString("name", ""));
-                    if (!replacements.containsKey(name.toLowerCase(Locale.ROOT))) keptDetails.put(detail);
-                }
-                putJson(library, "genreDetails", keptDetails);
-            }
-
-            replaceGenreSetEntries(favoriteGenrePreferences, replacements);
-            replaceGenreSetEntries(dislikedGenrePreferences, replacements);
-            replaceGenreSetEntries(activeGenreFilter, replacements);
-        }
-        putJson(library, "compositeGenreCleanupVersion", 1);
-    }
-
-    private void replaceGenreSetEntries(Set<String> values, Map<String, List<String>> replacements) {
-        for (String value : new ArrayList<>(values)) {
-            List<String> parts = replacements.get(value.trim().toLowerCase(Locale.ROOT));
-            if (parts == null) continue;
-            removeIgnoreCase(values, value);
-            values.addAll(parts);
-        }
     }
 
     /** Initializes each list alphabetically once, then follows its saved orderIndex. */
@@ -2327,7 +2021,7 @@ public final class MainActivity extends Activity {
                         throw new IOException(storage.lastError());
                     }
                 }
-                output = restoreOriginal ? source : extensionManager.transformColloquializer(source, true);
+                output = restoreOriginal ? source : extensionManager.transformColloquializer(source);
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null
                         ? error.getClass().getSimpleName() : error.getMessage();
@@ -3873,8 +3567,7 @@ public final class MainActivity extends Activity {
                 int swatchColor = chart.colorForBook(id);
                 swatch.setBackground(roundDrawable(swatchColor, Color.TRANSPARENT, 5));
                 item.addView(swatch, new LinearLayout.LayoutParams(dp(12), dp(12)));
-                String label = "__legacy__".equals(id) ? "آمار قدیمی"
-                        : bookLabels.containsKey(id) ? bookLabels.get(id) : "کتاب حذف‌شده";
+                String label = bookLabels.containsKey(id) ? bookLabels.get(id) : "کتاب حذف‌شده";
                 TextView name = text(label, 11, MUTED);
                 LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(-2, dp(24));
                 nameParams.leftMargin = dp(5);
@@ -6193,11 +5886,11 @@ public final class MainActivity extends Activity {
             header = makeHeader(displayBookTitle(book), book.optString("author"), "add", null,
                     this::addChapter, null);
         } else if (selectedChapterKeys.size() == 1) {
-            header = makeHeader(selectedChapterKeys.size() + " Chapter selected", "", "edit", "close",
-                    this::renameSelectedChapter, this::clearChapterSelection, 0, 118);
+            header = makeHeader(selectedChapterKeys.size() + " Chapter selected", "", "edit", "delete",
+                    this::renameSelectedChapter, this::confirmDeleteSelectedChapters, 0, 118);
         } else {
-            header = makeHeader(selectedChapterKeys.size() + " Chapters selected", "", "close", null,
-                    this::clearChapterSelection, null);
+            header = makeHeader(selectedChapterKeys.size() + " Chapters selected", "", "delete", null,
+                    this::confirmDeleteSelectedChapters, null);
         }
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
     }
@@ -6213,9 +5906,72 @@ public final class MainActivity extends Activity {
         refreshChapterSelection();
     }
 
-    private void clearChapterSelection() {
-        selectedChapterKeys.clear();
-        refreshChapterSelection();
+    private void confirmDeleteSelectedChapters() {
+        JSONObject book = activeBook();
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (chapters == null || selectedChapterKeys.isEmpty()) return;
+
+        Set<String> selected = new HashSet<>(selectedChapterKeys);
+        int count = 0;
+        for (int i = 0; i < chapters.length(); i++) {
+            JSONObject chapter = chapters.optJSONObject(i);
+            if (chapter != null && selected.contains(chapterSelectionKey(chapter, i))) count++;
+        }
+        if (count == 0) {
+            selectedChapterKeys.clear();
+            refreshChapterSelection();
+            return;
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setMessage(count == 1 ? "Delete the selected Chapter?"
+                        : "Delete " + count + " selected Chapters?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String before = library.toString();
+            String bookFolder = book.optString("id", "");
+            List<String> chapterFiles = new ArrayList<>();
+            List<String> originalFiles = new ArrayList<>();
+            JSONArray kept = new JSONArray();
+
+            for (int i = 0; i < chapters.length(); i++) {
+                JSONObject chapter = chapters.optJSONObject(i);
+                if (chapter == null || !selected.contains(chapterSelectionKey(chapter, i))) {
+                    kept.put(chapter);
+                    continue;
+                }
+                String chapterId = chapter.optString("id", "");
+                if (!chapterId.isEmpty()) {
+                    chapterFiles.add(chapterId + ".txt");
+                    originalFiles.add(chapterOriginalFileName(chapter));
+                }
+            }
+
+            for (int i = 0; i < kept.length(); i++) putJson(kept.optJSONObject(i), "orderIndex", i);
+            putJson(book, "chapters", kept);
+            if (!saveLibrary()) {
+                restoreLibrary(before);
+                dialog.dismiss();
+                toast("Could not delete the selected Chapters.");
+                return;
+            }
+
+            selectedChapterKeys.clear();
+            dialog.dismiss();
+            boolean filesDeleted = true;
+            for (String file : chapterFiles) {
+                if (!storage.deleteChapterFile(bookFolder, file)) filesDeleted = false;
+            }
+            for (String file : originalFiles) {
+                if (!storage.deleteChapterOriginal(file)) filesDeleted = false;
+            }
+            refreshChapterSelection();
+            if (!filesDeleted) toast("Chapters removed; some unused files could not be deleted.");
+        }));
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void refreshChapterSelection() {
@@ -6795,11 +6551,10 @@ public final class MainActivity extends Activity {
                         putReplacementPair(rules, ruleSource, replacement, exceptions);
                         extensionManager.saveColloquializerRules(rules.toString());
                     }
-                    String updated = TextReplacementEngine.transform(current, singlePair.toString(), true);
+                    String updated = TextReplacementEngine.transform(current, singlePair.toString());
                     String transformedPrefix = TextReplacementEngine.transform(
-                            current.substring(0, safeStart), singlePair.toString(), true);
-                    int markerLength = source.length() + 2;
-                    applyChapterText(updated, Math.min(transformedPrefix.length() + markerLength
+                            current.substring(0, safeStart), singlePair.toString());
+                    applyChapterText(updated, Math.min(transformedPrefix.length()
                             + replacement.length(), updated.length()));
                 });
     }
@@ -7088,8 +6843,13 @@ public final class MainActivity extends Activity {
 
     private String chapterOriginalFileName() {
         JSONObject chapter = activeChapterObject();
+        return chapterOriginalFileName(chapter);
+    }
+
+    private String chapterOriginalFileName(JSONObject chapter) {
         if (chapter == null) return null;
-        return "chapter-" + chapter.optString("id") + "-original.txt";
+        String id = chapter.optString("id", "");
+        return id.isEmpty() ? null : "chapter-" + id + "-original.txt";
     }
 
     private void rememberRecentReading() {

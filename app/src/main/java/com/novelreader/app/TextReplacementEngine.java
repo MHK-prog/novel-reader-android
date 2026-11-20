@@ -17,11 +17,7 @@ final class TextReplacementEngine {
     private TextReplacementEngine() { }
 
     static String transform(String text, String rulesJson) throws JSONException {
-        return transform(text, rulesJson, false);
-    }
-
-    static String transform(String text, String rulesJson, boolean tagChanges) throws JSONException {
-        return transformText(text, loadRules(rulesJson), tagChanges);
+        return transformText(text, loadRules(rulesJson));
     }
 
     private static synchronized CompiledRules loadRules(String json) throws JSONException {
@@ -109,7 +105,7 @@ final class TextReplacementEngine {
         literal.setLength(0);
     }
 
-    private static String transformText(String text, CompiledRules compiled, boolean tagChanges) {
+    private static String transformText(String text, CompiledRules compiled) {
         String source = text == null ? "" : text;
         if (source.isEmpty() || compiled.rules.isEmpty()) return source;
 
@@ -152,9 +148,6 @@ final class TextReplacementEngine {
             }
             output.append(source, copiedUntil, index);
             String replacement = expand(selectedRule.replacement, selectedMatch.captures);
-            if (tagChanges && !replacement.contentEquals(source.subSequence(index, selectedMatch.end))) {
-                output.append('{').append(source, index, selectedMatch.end).append('}');
-            }
             output.append(replacement);
             copiedUntil = selectedMatch.end;
             index = selectedMatch.end;
