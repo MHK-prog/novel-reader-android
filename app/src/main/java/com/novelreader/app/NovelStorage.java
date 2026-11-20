@@ -220,6 +220,20 @@ final class NovelStorage {
         }
     }
 
+    boolean deletePluginFile(String pluginId, String fileName) {
+        if (!isPluginId(pluginId) || !safePluginFileName(fileName)) return false;
+        try {
+            Uri directory = pluginDirectoryUri(pluginId, false);
+            if (directory == null) return true;
+            Uri file = findChild(directory, fileName);
+            return file == null || DocumentsContract.deleteDocument(activity.getContentResolver(), file);
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.w("NovelReader", "Could not remove extension file " + fileName, error);
+            return false;
+        }
+    }
+
     String readChapterOriginal(String fileName) throws Exception {
         if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) {
             throw new IOException("Invalid chapter original file name.");
