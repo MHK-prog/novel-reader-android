@@ -69,26 +69,6 @@ final class NovelStorage {
         }
     }
 
-    String readLegacyChapterFile(String fileName) throws Exception {
-        if (!validLegacyChapterFileName(fileName)) throw new IOException("Invalid old Chapter file name.");
-        Uri root = directoryUri();
-        if (root == null) throw new IOException("No NovelReader folder is selected.");
-        Uri file = findChild(root, fileName);
-        return file == null ? null : readDocument(file);
-    }
-
-    boolean deleteLegacyChapterFile(String fileName) {
-        if (!validLegacyChapterFileName(fileName)) return false;
-        try {
-            Uri root = directoryUri();
-            Uri file = root == null ? null : findChild(root, fileName);
-            return file == null || DocumentsContract.deleteDocument(activity.getContentResolver(), file);
-        } catch (Exception error) {
-            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            return false;
-        }
-    }
-
     String readChapterFile(String folderName, String fileName) throws Exception {
         if (!validFolderName(folderName) || !validChapterTextFileName(fileName)) {
             throw new IOException("Invalid Chapter text path.");
@@ -129,42 +109,6 @@ final class NovelStorage {
         }
     }
 
-    boolean migrateChapterOriginalsToTxt() {
-        try {
-            Uri directory = chapterOriginalsDirectory(false);
-            if (directory == null) return true;
-            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
-                    directory, DocumentsContract.getDocumentId(directory));
-            String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME };
-            ArrayList<String> oldNames = new ArrayList<>();
-            try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
-                if (cursor != null) {
-                    int nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
-                    while (cursor.moveToNext()) {
-                        String name = cursor.getString(nameColumn);
-                        if (name.startsWith("chapter-") && name.endsWith(".md") && safePluginFileName(name)) {
-                            oldNames.add(name);
-                        }
-                    }
-                }
-            }
-            for (String oldName : oldNames) {
-                String newName = oldName.substring(0, oldName.length() - 3) + ".txt";
-                if (readChapterOriginal(newName) == null) {
-                    String content = readChapterOriginal(oldName);
-                    if (content == null || !writeChapterOriginal(newName, content)) return false;
-                }
-                if (!deleteChapterOriginal(oldName)) return false;
-            }
-            return true;
-        } catch (Exception error) {
-            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            android.util.Log.e("NovelReader", "Could not migrate Chapter backups to txt", error);
-            return false;
-        }
-    }
-
     private Uri chapterFolder(String folderName, boolean create) throws Exception {
         Uri root = directoryUri();
         if (root == null) throw new IOException("No NovelReader folder is selected.");
@@ -194,12 +138,6 @@ final class NovelStorage {
             output.write((content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
             output.flush();
         }
-    }
-
-    private static boolean validLegacyChapterFileName(String name) {
-        return name != null && name.startsWith("chapter-") && name.length() <= 240
-                && !name.contains("/") && !name.contains("\\") && !name.contains("..")
-                && (name.endsWith(".md") || name.endsWith(".txt"));
     }
 
     private static boolean validFolderName(String name) {

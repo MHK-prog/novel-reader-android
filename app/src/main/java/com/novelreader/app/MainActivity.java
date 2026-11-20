@@ -868,10 +868,6 @@ public final class MainActivity extends Activity {
         try {
             library = saved == null ? new JSONObject() : new JSONObject(saved);
             normalizeLibrary();
-            if (storage.isReady() && !ChapterFileMigration.isDone(this)
-                    && !ChapterFileMigration.migrateOnce(this, storage, library)) {
-                toast("انتقال فایل‌های Chapter کامل نشد؛ فایل‌های قدیمی حفظ شدند و در ورود بعدی دوباره تلاش می‌شود.");
-            }
         } catch (Exception error) {
             android.util.Log.e("NovelReader", "library.json is invalid; preserving the file", error);
             toast("فهرست کتاب‌ها خوانده نشد؛ فایل قبلی دست‌نخورده باقی ماند.");
@@ -1085,8 +1081,7 @@ public final class MainActivity extends Activity {
                     chapterCodes.add(chapterCode);
                 }
                 if (chapter.optString("title").trim().isEmpty()) chapter.put("title", "Chapter " + (j + 1));
-                chapter.put("end", chapter.optBoolean("end", chapter.optBoolean("hasEndMarker", false)));
-                chapter.remove("hasEndMarker");
+                chapter.put("end", chapter.optBoolean("end", false));
                 chapter.put("hasText", chapter.optBoolean("hasText", false));
                 chapter.put("percent", Math.max(0, Math.min(100, chapter.optInt("percent", 0))));
                 chapter.put("done", chapter.optBoolean("done", false));
@@ -2230,7 +2225,6 @@ public final class MainActivity extends Activity {
         if (chapter == null || chapterEditor == null) return;
         chapterEnd = finished;
         putJson(chapter, "end", finished);
-        chapter.remove("hasEndMarker");
         if (!finished) {
             putJson(chapter, "done", false);
             putJson(chapter, "percent", 0);
@@ -6951,24 +6945,14 @@ public final class MainActivity extends Activity {
         showChapterLoadingOverlay();
         chapterIoExecutor.execute(() -> {
             String content = null;
-            boolean migratedEnd = false;
             String failure = null;
             try {
                 content = storage.readChapterFile(bookId, fileName);
-                if (content == null) {
-                    ChapterFileMigration.LegacyChapter legacy = ChapterFileMigration.migrateMissingChapter(
-                            storage, bookId, chapterForFile, index);
-                    if (legacy != null) {
-                        content = legacy.text;
-                        migratedEnd = legacy.end;
-                    }
-                }
             }
             catch (Exception error) {
                 failure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
             final String loaded = content;
-            final boolean legacyEnd = migratedEnd;
             final String loadFailure = failure;
             runOnUiThread(() -> {
                 if (generation != chapterLoadGeneration || isFinishing()) return;
@@ -6978,12 +6962,12 @@ public final class MainActivity extends Activity {
                     toast("خواندن Chapter ناموفق بود: " + loadFailure);
                     return;
                 }
-                finishOpenReader(bookId, index, loaded, legacyEnd);
+                finishOpenReader(bookId, index, loaded);
             });
         });
     }
 
-    private void finishOpenReader(String bookId, int index, String loadedText, boolean legacyEnd) {
+    private void finishOpenReader(String bookId, int index, String loadedText) {
         JSONObject book = findBookById(bookId);
         JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
         if (book == null || chapters == null || index < 0 || index >= chapters.length()) return;
@@ -7002,7 +6986,7 @@ public final class MainActivity extends Activity {
         lastUndoEnd = -1;
         chapterText = loadedText == null ? "" : loadedText;
         chapterEnd = activeChapterObject() != null
-                && (activeChapterObject().optBoolean("end", false) || legacyEnd);
+                && activeChapterObject().optBoolean("end", false);
         chapterColloquialized = activeChapterObject() != null
                 && activeChapterObject().optBoolean("colloquialized", false);
         chapterWordCount = ChapterTextFormatter.countWords(chapterText);
@@ -7011,7 +6995,6 @@ public final class MainActivity extends Activity {
         if (chapter != null) {
             putJson(chapter, "hasText", !chapterText.trim().isEmpty());
             putJson(chapter, "end", chapterEnd);
-            chapter.remove("hasEndMarker");
             if (chapterEnd && !chapter.has("wordsRead")) {
                 long total = ChapterTextFormatter.countWords(chapterText);
                 int savedPercent = chapter.optBoolean("done") ? 100
@@ -7077,7 +7060,6 @@ public final class MainActivity extends Activity {
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
         putJson(chapter, "end", chapterEnd);
-        chapter.remove("hasEndMarker");
         putJson(chapter, "colloquialized", chapterColloquialized);
         rememberRecentReading();
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
@@ -7169,7 +7151,6 @@ public final class MainActivity extends Activity {
         JSONObject chapter = activeChapterObject(); if (chapter == null) return;
         boolean finishedWriting = chapterEnd;
         if (chapter.optBoolean("end", false) != finishedWriting) putJson(chapter, "end", finishedWriting);
-        chapter.remove("hasEndMarker");
         if (!finishedWriting && "reader".equals(page)) stopReadingTimer();
         int contentHeight = readerContentHeight();
         int range = Math.max(0, contentHeight - readerScroll.getHeight());
