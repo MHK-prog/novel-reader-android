@@ -69,6 +69,152 @@ final class NovelStorage {
         }
     }
 
+    String readLegacyChapterFile(String fileName) throws Exception {
+        if (!validLegacyChapterFileName(fileName)) throw new IOException("Invalid old Chapter file name.");
+        Uri root = directoryUri();
+        if (root == null) throw new IOException("No NovelReader folder is selected.");
+        Uri file = findChild(root, fileName);
+        return file == null ? null : readDocument(file);
+    }
+
+    boolean deleteLegacyChapterFile(String fileName) {
+        if (!validLegacyChapterFileName(fileName)) return false;
+        try {
+            Uri root = directoryUri();
+            Uri file = root == null ? null : findChild(root, fileName);
+            return file == null || DocumentsContract.deleteDocument(activity.getContentResolver(), file);
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            return false;
+        }
+    }
+
+    String readChapterFile(String folderName, String fileName) throws Exception {
+        if (!validFolderName(folderName) || !validChapterTextFileName(fileName)) {
+            throw new IOException("Invalid Chapter text path.");
+        }
+        Uri folder = chapterFolder(folderName, false);
+        if (folder == null) return null;
+        Uri file = findChild(folder, fileName);
+        return file == null ? null : readDocument(file);
+    }
+
+    boolean writeChapterFile(String folderName, String fileName, String contents) {
+        if (!validFolderName(folderName) || !validChapterTextFileName(fileName)) {
+            lastError = "Invalid Chapter text path.";
+            return false;
+        }
+        try {
+            Uri folder = chapterFolder(folderName, true);
+            Uri file = findChild(folder, fileName);
+            if (file == null) file = DocumentsContract.createDocument(
+                    activity.getContentResolver(), folder, "text/plain", fileName);
+            if (file == null) throw new IOException("The storage provider could not create " + fileName + ".");
+            writeDocument(file, contents);
+            lastError = "";
+            return true;
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not write Chapter " + fileName, error);
+            return false;
+        }
+    }
+
+    boolean chapterFileExists(String folderName, String fileName) {
+        try {
+            Uri folder = chapterFolder(folderName, false);
+            return folder != null && findChild(folder, fileName) != null;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    boolean migrateChapterOriginalsToTxt() {
+        try {
+            Uri directory = chapterOriginalsDirectory(false);
+            if (directory == null) return true;
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
+                    directory, DocumentsContract.getDocumentId(directory));
+            String[] columns = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME };
+            ArrayList<String> oldNames = new ArrayList<>();
+            try (Cursor cursor = activity.getContentResolver().query(children, columns, null, null, null)) {
+                if (cursor != null) {
+                    int nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                    while (cursor.moveToNext()) {
+                        String name = cursor.getString(nameColumn);
+                        if (name.startsWith("chapter-") && name.endsWith(".md") && safePluginFileName(name)) {
+                            oldNames.add(name);
+                        }
+                    }
+                }
+            }
+            for (String oldName : oldNames) {
+                String newName = oldName.substring(0, oldName.length() - 3) + ".txt";
+                if (readChapterOriginal(newName) == null) {
+                    String content = readChapterOriginal(oldName);
+                    if (content == null || !writeChapterOriginal(newName, content)) return false;
+                }
+                if (!deleteChapterOriginal(oldName)) return false;
+            }
+            return true;
+        } catch (Exception error) {
+            lastError = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            android.util.Log.e("NovelReader", "Could not migrate Chapter backups to txt", error);
+            return false;
+        }
+    }
+
+    private Uri chapterFolder(String folderName, boolean create) throws Exception {
+        Uri root = directoryUri();
+        if (root == null) throw new IOException("No NovelReader folder is selected.");
+        Uri folder = findChild(root, folderName);
+        if (folder == null && create) {
+            folder = DocumentsContract.createDocument(activity.getContentResolver(), root,
+                    DIRECTORY_MIME, folderName);
+        }
+        if (folder == null) return null;
+        String type = activity.getContentResolver().getType(folder);
+        if (type != null && !DIRECTORY_MIME.equals(type)) throw new IOException("The book path is not a folder.");
+        return folder;
+    }
+
+    private String readDocument(Uri document) throws Exception {
+        try (InputStream input = activity.getContentResolver().openInputStream(document);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) throw new IOException("The storage provider returned no input stream.");
+            copy(input, output);
+            return output.toString("UTF-8");
+        }
+    }
+
+    private void writeDocument(Uri document, String content) throws Exception {
+        try (OutputStream output = activity.getContentResolver().openOutputStream(document, "rwt")) {
+            if (output == null) throw new IOException("The storage provider returned no output stream.");
+            output.write((content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+            output.flush();
+        }
+    }
+
+    private static boolean validLegacyChapterFileName(String name) {
+        return name != null && name.startsWith("chapter-") && name.length() <= 240
+                && !name.contains("/") && !name.contains("\\") && !name.contains("..")
+                && (name.endsWith(".md") || name.endsWith(".txt"));
+    }
+
+    private static boolean validFolderName(String name) {
+        return name != null && !name.isEmpty() && name.length() <= 120
+                && !".".equals(name) && !"..".equals(name)
+                && !name.contains("/") && !name.contains("\\") && !name.contains("..")
+                && name.indexOf('\u0000') < 0;
+    }
+
+    private static boolean validChapterTextFileName(String name) {
+        return name != null && name.length() <= 140 && name.endsWith(".txt")
+                && !name.startsWith(".") && !name.contains("/") && !name.contains("\\")
+                && !name.contains("..") && name.indexOf('\u0000') < 0;
+    }
+
     void openPicker() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         Uri documents = DocumentsContract.buildDocumentUri(
@@ -105,7 +251,7 @@ final class NovelStorage {
     String read(String fileName) throws Exception {
         Uri dir = directoryUri();
         if (dir == null) { lastError = "No NovelReader folder is selected."; throw new IOException(lastError); }
-        if (!supportedName(fileName)) { lastError = "Only .md and .json files are supported."; throw new IOException(lastError); }
+        if (!supportedName(fileName)) { lastError = "Only library JSON files are supported."; throw new IOException(lastError); }
         try {
             Uri file = findChild(dir, fileName);
             if (file == null) { lastError = ""; return null; }
@@ -129,10 +275,9 @@ final class NovelStorage {
         Uri dir = directoryUri();
         lastError = "";
         if (dir == null) { lastError = "No NovelReader folder is selected."; return false; }
-        if (!supportedName(fileName)) { lastError = "Only .md and .json files are supported."; return false; }
+        if (!supportedName(fileName)) { lastError = "Only library JSON files are supported."; return false; }
         try {
-            String mime = fileName.endsWith(".json") ? "application/json"
-                    : "text/markdown";
+            String mime = "application/json";
             Uri file = findChild(dir, fileName);
             if (file == null) file = DocumentsContract.createDocument(
                     activity.getContentResolver(), dir, mime, fileName);
@@ -235,7 +380,7 @@ final class NovelStorage {
     }
 
     String readChapterOriginal(String fileName) throws Exception {
-        if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) {
+        if (!safePluginFileName(fileName) || !(fileName.endsWith(".md") || fileName.endsWith(".txt"))) {
             throw new IOException("Invalid chapter original file name.");
         }
         Uri directory = chapterOriginalsDirectory(false);
@@ -251,7 +396,7 @@ final class NovelStorage {
     }
 
     boolean writeChapterOriginal(String fileName, String contents) {
-        if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) {
+        if (!safePluginFileName(fileName) || !fileName.endsWith(".txt")) {
             lastError = "Invalid chapter original file name.";
             return false;
         }
@@ -259,7 +404,7 @@ final class NovelStorage {
             Uri directory = chapterOriginalsDirectory(true);
             Uri file = findChild(directory, fileName);
             if (file == null) file = DocumentsContract.createDocument(
-                    activity.getContentResolver(), directory, "text/markdown", fileName);
+                    activity.getContentResolver(), directory, "text/plain", fileName);
             if (file == null) throw new IOException("Could not create the chapter original.");
             try (OutputStream output = activity.getContentResolver().openOutputStream(file, "rwt")) {
                 if (output == null) throw new IOException("The chapter original is unavailable.");
@@ -276,7 +421,8 @@ final class NovelStorage {
     }
 
     boolean deleteChapterOriginal(String fileName) {
-        if (!safePluginFileName(fileName) || !fileName.endsWith(".md")) return false;
+        if (!safePluginFileName(fileName)
+                || !(fileName.endsWith(".md") || fileName.endsWith(".txt"))) return false;
         try {
             Uri directory = chapterOriginalsDirectory(false);
             if (directory == null) return true;
@@ -782,7 +928,7 @@ final class NovelStorage {
     }
 
     private static boolean supportedName(String name) {
-        return safeName(name) && (name.endsWith(".md") || name.endsWith(".json"));
+        return safeName(name) && name.endsWith(".json");
     }
 
     private static boolean supportedImageName(String name) {

@@ -35,12 +35,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
 import android.text.Editable;
-import android.text.Html;
 import android.text.InputType;
-import android.text.Spanned;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
-import android.text.style.LineBackgroundSpan;
 import android.text.Layout;
 import android.view.Gravity;
 import android.view.GestureDetector;
@@ -77,7 +74,6 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import io.noties.markwon.Markwon;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -113,6 +109,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_COVER = 42;
     private static final int REQUEST_COLLOQUIALIZER = 43;
     private static final int REQUEST_BOOK_JSON = 44;
+    private static final int REQUEST_CHAPTER_TEXT = 45;
     private static final int SWIPE_MIN_DISTANCE = 50;
     private static final int SWIPE_THRESHOLD_VELOCITY = 100;
     private static final int SWIPE_MAX_OFF_PATH = 180;
@@ -202,7 +199,6 @@ public final class MainActivity extends Activity {
             new BookRecommendationEngine(recommendationPreferences);
     private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService pluginExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService markdownExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
     private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(coverCacheBudgetKb()) {
         @Override protected int sizeOf(String key, Bitmap value) { return Math.max(1, value.getByteCount() / 1024); }
@@ -212,7 +208,6 @@ public final class MainActivity extends Activity {
     private ReadingPositionStore readingPositionStore;
     private ResumeReadingPrompt resumeReadingPrompt;
     private Typeface vazir;
-    private Markwon markdownRenderer;
     private JSONObject library = new JSONObject();
     private String page = "dashboard";
     private final Deque<NavigationState> navigationHistory = new ArrayDeque<>();
@@ -223,6 +218,8 @@ public final class MainActivity extends Activity {
     private String activeBookId;
     private String activeCollectionId = "other";
     private String activeAuthor = "";
+    private String pendingChapterTextBookId;
+    private String pendingChapterTextChapterId;
     private String bookShelfSearchQuery = "";
     private String bookShelfReturnPage = "collections";
     private String collectionBooksReturnPage = "collections";
@@ -232,7 +229,7 @@ public final class MainActivity extends Activity {
     private String chapterText = "";
     private JSONObject readerRestoreState;
     private long chapterWordCount;
-    private boolean chapterHasEndMarker;
+    private boolean chapterEnd;
     private boolean chapterDirty;
     private boolean chapterColloquialized;
     private boolean applyingChapterColloquializer;
@@ -303,13 +300,12 @@ public final class MainActivity extends Activity {
     private EditText authorSearchField;
     private ChapterAdapter chapterAdapter;
     private EditText chapterEditor;
-    private TextView markdownPreview;
+    private TextView readerPreview;
     private FrameLayout readerContentContainer;
     private boolean readerEditing;
-    private boolean restoreMarkdownAfterRender;
-    private boolean hasPendingMarkdownScrollFraction;
-    private float pendingMarkdownScrollFraction;
-    private int markdownRenderGeneration;
+    private boolean restoreReaderAfterRender;
+    private boolean hasPendingReaderScrollFraction;
+    private float pendingReaderScrollFraction;
     private int chapterLoadGeneration;
     private View chapterLoadingOverlay;
     private ScrollView readerScroll;
@@ -325,10 +321,6 @@ public final class MainActivity extends Activity {
     private ObjectAnimator splashArtAnimator;
     private ImageView bookCoverPreview;
     private String pendingCoverName;
-    private LinearLayout tokenSuggestions;
-    private boolean pairingPercent;
-    private boolean completingSpecialToken;
-    private final Set<Integer> selectedSpecialRuleLines = new HashSet<>();
     private boolean restoringChapterUndo;
     private boolean lastUndoWasTyping;
     private long lastUndoAt;
@@ -377,7 +369,6 @@ public final class MainActivity extends Activity {
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT, systemBackCallback);
         }
         vazir = Typeface.createFromAsset(getAssets(), "fonts/Vazirmatn-Regular.ttf");
-        markdownRenderer = Markwon.builder(this).build();
         storage = new NovelStorage(this);
         readingPositionStore = new ReadingPositionStore(this);
         resumeReadingPrompt = new ResumeReadingPrompt(this);
@@ -823,6 +814,15 @@ public final class MainActivity extends Activity {
             }
             return;
         }
+        if (requestCode == REQUEST_CHAPTER_TEXT) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                importChapterText(data.getData());
+            } else {
+                pendingChapterTextBookId = null;
+                pendingChapterTextChapterId = null;
+            }
+            return;
+        }
         if (requestCode != REQUEST_FOLDER) return;
         if (resultCode == RESULT_OK && data != null && data.getData() != null) {
             try {
@@ -868,6 +868,10 @@ public final class MainActivity extends Activity {
         try {
             library = saved == null ? new JSONObject() : new JSONObject(saved);
             normalizeLibrary();
+            if (storage.isReady() && !ChapterFileMigration.isDone(this)
+                    && !ChapterFileMigration.migrateOnce(this, storage, library)) {
+                toast("انتقال فایل‌های Chapter کامل نشد؛ فایل‌های قدیمی حفظ شدند و در ورود بعدی دوباره تلاش می‌شود.");
+            }
         } catch (Exception error) {
             android.util.Log.e("NovelReader", "library.json is invalid; preserving the file", error);
             toast("فهرست کتاب‌ها خوانده نشد؛ فایل قبلی دست‌نخورده باقی ماند.");
@@ -1021,6 +1025,7 @@ public final class MainActivity extends Activity {
         library.remove("tags");
         activeCollectionId = "other";
         Set<String> all = new HashSet<>();
+        Set<String> bookCodes = new HashSet<>();
         Set<Long> recommendationIds = new HashSet<>();
         long nextRecommendationId = 1;
         for (int i = 0; i < genres.length(); i++) {
@@ -1030,7 +1035,12 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
             if (book == null) continue;
-            if (book.optString("id").isEmpty()) book.put("id", UUID.randomUUID().toString());
+            String bookCode = book.optString("id", "");
+            if (bookCode.isEmpty() || !bookCodes.add(bookCode)) {
+                bookCode = UUID.randomUUID().toString();
+                book.put("id", bookCode);
+                bookCodes.add(bookCode);
+            }
             if (book.optString("title").isEmpty()) book.put("title", "بدون عنوان");
             book.put("userRating", Math.max(0, Math.min(5, book.optInt("userRating", 0))));
             long recommendationId = book.optLong("recommendationId", -1);
@@ -1064,10 +1074,19 @@ public final class MainActivity extends Activity {
             book.put("genres", canonicalBookGenres);
             JSONArray chapters = book.optJSONArray("chapters");
             if (chapters == null) { chapters = new JSONArray(); book.put("chapters", chapters); }
+            Set<String> chapterCodes = new HashSet<>();
             for (int j = 0; j < chapters.length(); j++) {
                 JSONObject chapter = chapters.optJSONObject(j);
                 if (chapter == null) { chapter = new JSONObject(); chapters.put(j, chapter); }
+                String chapterCode = chapter.optString("id", "");
+                if (chapterCode.isEmpty() || !chapterCodes.add(chapterCode)) {
+                    chapterCode = UUID.randomUUID().toString();
+                    chapter.put("id", chapterCode);
+                    chapterCodes.add(chapterCode);
+                }
                 if (chapter.optString("title").trim().isEmpty()) chapter.put("title", "Chapter " + (j + 1));
+                chapter.put("end", chapter.optBoolean("end", chapter.optBoolean("hasEndMarker", false)));
+                chapter.remove("hasEndMarker");
                 chapter.put("hasText", chapter.optBoolean("hasText", false));
                 chapter.put("percent", Math.max(0, Math.min(100, chapter.optInt("percent", 0))));
                 chapter.put("done", chapter.optBoolean("done", false));
@@ -2114,7 +2133,7 @@ public final class MainActivity extends Activity {
 
     private List<ExtensionManager.Action> enabledExtensionActions() {
         List<ExtensionManager.Action> actions = new ArrayList<>();
-        if (!extensionManager.colloquializerEnabled()) return actions;
+        if (extensionManager == null || !extensionManager.colloquializerEnabled()) return actions;
         try {
             ExtensionManager.Plugin plugin = extensionManager.load("colloquializer");
             if (plugin != null) actions.addAll(plugin.actions);
@@ -2122,45 +2141,28 @@ public final class MainActivity extends Activity {
         return actions;
     }
 
-    private FrameLayout createExtensionActionButton(List<ExtensionManager.Action> actions) {
+    private FrameLayout createReaderOptionsButton() {
         FrameLayout button = new FrameLayout(this);
         styleIconButton(button, false);
-        button.setContentDescription(actions.size() == 1 ? actions.get(0).label : "اجرای افزونه‌ها");
+        button.setContentDescription("گزینه‌های Chapter");
         button.setClickable(true);
         button.setFocusable(true);
         applyPressScale(button);
-        button.setOnClickListener(view -> {
-            if (actions.size() == 1) confirmExtensionAction(actions.get(0));
-            else showExtensionActionChooser(actions);
-        });
+        button.setOnClickListener(view -> showReaderOptions());
         readerExtensionButton = button;
-        readerExtensionIcon = new NativeIconView(this,
-                actions.size() == 1 ? actions.get(0).icon : "scan_text", PURPLE);
-        button.addView(readerExtensionIcon, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        readerExtensionIcon = new NativeIconView(this, "menu", PURPLE);
+        button.addView(readerExtensionIcon,
+                new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
         readerExtensionSpinner = new ProgressBar(this);
         readerExtensionSpinner.setIndeterminate(true);
         if (Build.VERSION.SDK_INT >= 21) {
             readerExtensionSpinner.setIndeterminateTintList(
                     android.content.res.ColorStateList.valueOf(PURPLE));
-            readerExtensionSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE));
         }
         readerExtensionSpinner.setVisibility(View.GONE);
-        button.addView(readerExtensionSpinner, new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
+        button.addView(readerExtensionSpinner,
+                new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
         return button;
-    }
-
-    private void showExtensionActionChooser(List<ExtensionManager.Action> actions) {
-        String[] labels = new String[actions.size()];
-        for (int i = 0; i < actions.size(); i++) {
-            ExtensionManager.Action action = actions.get(i);
-            labels[i] = action.label + " · " + action.pluginName;
-        }
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("انتخاب افزونه")
-                .setItems(labels, (ignored, which) -> confirmExtensionAction(actions.get(which)))
-                .setNegativeButton("لغو", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
     }
 
     private void confirmExtensionAction(ExtensionManager.Action action) {
@@ -2186,20 +2188,111 @@ public final class MainActivity extends Activity {
         if (chapterColloquialized) {
             choices.add("بازگرداندن متن اصلی"); actions.add(1);
         }
-        if (ChapterTextFormatter.containsAnnotations(chapterText)) {
-            choices.add("حذف نشانه‌های عبارت رسمی"); actions.add(2);
-        }
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("محاوره‌ای‌ساز")
                 .setItems(choices.toArray(new String[0]), (ignored, which) -> {
                     int action = actions.get(which);
                     if (action == 0) runChapterColloquializer(false);
                     else if (action == 1) runChapterColloquializer(true);
-                    else removeChapterFormalAnnotations();
                 })
                 .setNegativeButton("لغو", null).create();
         dialog.show();
         styleDialogWindow(dialog);
+    }
+
+    private void showReaderOptions() {
+        if (!"reader".equals(page) || chapterEditor == null) return;
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<Runnable> actions = new ArrayList<>();
+        if (extensionManager != null && extensionManager.colloquializerEnabled()) {
+            labels.add("محاوره‌ای‌سازی");
+            actions.add(this::showChapterColloquializerDialog);
+        }
+        labels.add(chapterEnd ? "لغو پایان نوشتن Chapter" : "اعلام پایان نوشتن Chapter");
+        actions.add(() -> setChapterEnd(!chapterEnd));
+        labels.add("وارد کردن متن از فایل");
+        actions.add(this::pickChapterTextFile);
+        for (ExtensionManager.Action action : enabledExtensionActions()) {
+            if ("colloquializer".equals(action.pluginId)) continue;
+            labels.add(action.label + " · " + action.pluginName);
+            actions.add(() -> confirmExtensionAction(action));
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("گزینه‌های Chapter")
+                .setItems(labels.toArray(new String[0]), (ignored, which) -> actions.get(which).run())
+                .setNegativeButton("بستن", null).create();
+        dialog.show();
+        styleDialogWindow(dialog);
+    }
+
+    private void setChapterEnd(boolean finished) {
+        JSONObject chapter = activeChapterObject();
+        if (chapter == null || chapterEditor == null) return;
+        chapterEnd = finished;
+        putJson(chapter, "end", finished);
+        chapter.remove("hasEndMarker");
+        if (!finished) {
+            putJson(chapter, "done", false);
+            putJson(chapter, "percent", 0);
+            putJson(chapter, "wordsRead", 0);
+        }
+        updateProgress();
+        boolean saved = saveCurrentChapter();
+        if (saved) toast(finished ? "پایان نوشتن Chapter ثبت شد." : "پایان نوشتن Chapter لغو شد.");
+    }
+
+    private void pickChapterTextFile() {
+        JSONObject chapter = activeChapterObject();
+        if (!"reader".equals(page) || chapter == null) return;
+        pendingChapterTextBookId = activeBookId;
+        pendingChapterTextChapterId = chapter.optString("id", "");
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("text/*");
+        try {
+            startActivityForResult(intent, REQUEST_CHAPTER_TEXT);
+        } catch (Exception error) {
+            toast("انتخاب فایل متنی در دسترس نیست.");
+        }
+    }
+
+    private void importChapterText(Uri uri) {
+        final String targetBookId = pendingChapterTextBookId;
+        final String targetChapterId = pendingChapterTextChapterId;
+        pendingChapterTextBookId = null;
+        pendingChapterTextChapterId = null;
+        if (targetBookId == null || targetChapterId == null) return;
+        chapterIoExecutor.execute(() -> {
+            String imported = null;
+            String failure = null;
+            try (InputStream input = getContentResolver().openInputStream(uri);
+                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                if (input == null) throw new IOException("فایل خوانده نشد.");
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) >= 0) output.write(buffer, 0, count);
+                imported = output.toString("UTF-8");
+                if (imported.startsWith("\uFEFF")) imported = imported.substring(1);
+            } catch (Exception error) {
+                failure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            }
+            final String text = imported;
+            final String errorMessage = failure;
+            runOnUiThread(() -> {
+                JSONObject chapter = activeChapterObject();
+                if (!"reader".equals(page) || !targetBookId.equals(activeBookId) || chapter == null
+                        || !targetChapterId.equals(chapter.optString("id"))) return;
+                if (errorMessage != null || text == null) {
+                    toast("وارد کردن متن ناموفق بود: " + errorMessage);
+                    return;
+                }
+                applyChapterText(text, text.length());
+                chapterEnd = true;
+                putJson(chapter, "end", true);
+                updateProgress();
+                if (saveCurrentChapter()) toast("متن Chapter وارد و پایان نوشتن فعال شد.");
+            });
+        });
     }
 
     private void runChapterColloquializer(boolean restoreOriginal) {
@@ -2283,23 +2376,12 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void removeChapterFormalAnnotations() {
-        if (chapterEditor == null) return;
-        String cleaned = ChapterTextFormatter.stripAnnotations(chapterEditor.getText().toString());
-        if (cleaned.equals(chapterEditor.getText().toString())) {
-            toast("نشانه‌ای برای حذف پیدا نشد.");
-            return;
-        }
-        setChapterColloquializerText(cleaned, chapterColloquialized);
-        if (saveCurrentChapter()) toast("نشانه‌های عبارت رسمی حذف شدند.");
-    }
-
     private void setChapterColloquializerText(String value, boolean colloquialized) {
         if (chapterEditor == null) return;
-        boolean refreshPreview = !readerEditing && markdownPreview != null;
+        boolean refreshPreview = !readerEditing && readerPreview != null;
         if (refreshPreview) {
-            pendingMarkdownScrollFraction = readerScrollFraction();
-            hasPendingMarkdownScrollFraction = true;
+            pendingReaderScrollFraction = readerScrollFraction();
+            hasPendingReaderScrollFraction = true;
         }
         String current = chapterEditor.getText().toString();
         chapterUndoStack.addLast(current);
@@ -2312,16 +2394,14 @@ public final class MainActivity extends Activity {
         chapterEditor.setSelection(Math.min(selection, value.length()));
         applyingChapterColloquializer = false;
         chapterText = value;
-        chapterWordCount = ChapterTextFormatter.countWords(ChapterTextFormatter.visibleText(value));
+        chapterWordCount = ChapterTextFormatter.countWords(value);
         chapterDirty = true;
         JSONObject chapter = activeChapterObject();
         if (chapter != null) putJson(chapter, "colloquialized", colloquialized);
-        applyRuleSpans(chapterEditor.getText());
-        updateTokenSuggestions();
         updateProgress();
         if (refreshPreview) {
-            restoreMarkdownAfterRender = true;
-            renderMarkdownPreview();
+            restoreReaderAfterRender = true;
+            renderReaderPreview();
         }
     }
 
@@ -2375,12 +2455,10 @@ public final class MainActivity extends Activity {
                 }
                 if (source.equals(result)) { toast("تغییری برای اعمال پیدا نشد."); return; }
                 targetEditor.setText(result);
-                applyRuleSpans(targetEditor.getText());
                 targetEditor.setSelection(Math.min(selection, targetEditor.length()));
                 chapterText = result;
                 chapterDirty = true;
                 updateProgress();
-                updateTokenSuggestions();
                 if (saveCurrentChapter()) toast("متن Chapter با افزونه به‌روزرسانی شد.");
             });
         });
@@ -4095,7 +4173,7 @@ public final class MainActivity extends Activity {
                 ? "توضیحی ثبت نشده" : detail.optString("description"), 15,
                 detail == null || detail.optString("description").trim().isEmpty() ? MUTED : TEXT);
         String descriptionSource = detail == null ? "" : detail.optString("description", "").trim();
-        if (!descriptionSource.isEmpty()) description.setText(cachedGenreDescription(detail, descriptionSource));
+        if (!descriptionSource.isEmpty()) description.setText(descriptionSource);
         description.setGravity(Gravity.RIGHT);
         description.setPadding(0, dp(6), 0, dp(16));
         description.setLineSpacing(dp(2), 1.35f);
@@ -4117,47 +4195,6 @@ public final class MainActivity extends Activity {
                 if (genre.equalsIgnoreCase(genres.optString(j))) { count++; break; }
         }
         return count;
-    }
-
-    private CharSequence cachedGenreDescription(JSONObject detail, String source) {
-        String cachedSource = detail.optString("descriptionStyledSource", "");
-        String cachedHtml = detail.optString("descriptionStyledHtml", "");
-        if (source.equals(cachedSource) && !cachedHtml.isEmpty()) {
-            return Build.VERSION.SDK_INT >= 24
-                    ? Html.fromHtml(cachedHtml, Html.FROM_HTML_MODE_COMPACT)
-                    : Html.fromHtml(cachedHtml);
-        }
-        CharSequence styled;
-        try {
-            styled = markdownRenderer == null ? source : markdownRenderer.toMarkdown(source);
-        } catch (Exception ignored) {
-            styled = source;
-        }
-        cacheGenreDescription(detail, source, styled);
-        saveLibrary();
-        return styled;
-    }
-
-    private void cacheGenreDescription(JSONObject detail, String source) {
-        if (detail == null) return;
-        CharSequence styled;
-        try {
-            styled = markdownRenderer == null ? source : markdownRenderer.toMarkdown(source);
-        } catch (Exception ignored) {
-            styled = source;
-        }
-        cacheGenreDescription(detail, source, styled);
-    }
-
-    private void cacheGenreDescription(JSONObject detail, String source, CharSequence styled) {
-        if (detail == null) return;
-        String html = "";
-        try {
-            if (styled instanceof Spanned) html = Html.toHtml((Spanned) styled);
-            else html = Html.toHtml(android.text.SpannableString.valueOf(styled));
-        } catch (Exception ignored) { }
-        putJson(detail, "descriptionStyledSource", source == null ? "" : source);
-        putJson(detail, "descriptionStyledHtml", html);
     }
 
     private void showEditGenreInfoDialog(String oldGenre) {
@@ -5764,21 +5801,26 @@ public final class MainActivity extends Activity {
         JSONArray chapters = book.optJSONArray("chapters");
         int chapterCount = chapters == null ? 0 : chapters.length();
         int readPercent = bookReadPercent(book);
-        LinearLayout genresRow = addBookInfoLine(body, "ژانرها", genreSummary(book.optJSONArray("genres")));
-        genresRow.setContentDescription("کپی همهٔ ژانرها");
-        genresRow.setOnClickListener(v -> copyBookGenres(book));
-        if (genresRow.getChildCount() > 1 && genresRow.getChildAt(1) instanceof TextView) {
-            TextView genreText = (TextView) genresRow.getChildAt(1);
-            genreText.setSingleLine(true);
-            genreText.setMaxLines(1);
-            genreText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            genreText.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-            genreText.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_LTR);
-            LinearLayout.LayoutParams compactParams = new LinearLayout.LayoutParams(0, -2, 1);
-            compactParams.leftMargin = dp(10);
-            genresRow.removeView(genreText);
-            genresRow.addView(genreText, compactParams);
-        }
+        LinearLayout genresCard = new LinearLayout(this);
+        genresCard.setOrientation(LinearLayout.VERTICAL);
+        genresCard.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        genresCard.setPadding(dp(14), dp(10), dp(14), dp(10));
+        genresCard.setBackground(roundDrawable(SURFACE, 0xFF29242F, 12));
+        TextView genresLabel = text("ژانرها", 13, MUTED);
+        genresLabel.setSingleLine(true);
+        genresLabel.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        genresCard.addView(genresLabel, new LinearLayout.LayoutParams(-1, dp(22)));
+        TextView genresValue = text(genreSummary(book.optJSONArray("genres")), 14, TEXT);
+        genresValue.setGravity(Gravity.RIGHT | Gravity.TOP);
+        genresValue.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_LTR);
+        genresValue.setSingleLine(false);
+        LinearLayout.LayoutParams genresValueParams = new LinearLayout.LayoutParams(-1, -2);
+        genresValueParams.topMargin = dp(4);
+        genresCard.addView(genresValue, genresValueParams);
+        genresCard.setContentDescription("کپی همهٔ ژانرها");
+        genresCard.setOnClickListener(v -> copyBookGenres(book));
+        LinearLayout.LayoutParams genresCardParams = fieldParams();
+        body.addView(genresCard, genresCardParams);
         addBookSeriesNumberLine(body, book);
         addBookInfoLine(body, "تعداد Chapter", String.valueOf(chapterCount));
         addBookInfoLine(body, "میزان مطالعه", readPercent + "٪");
@@ -5859,8 +5901,8 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < chapters.length(); i++) {
             JSONObject chapter = chapters.optJSONObject(i);
             if (chapter == null) continue;
-            boolean hasEndMarker = chapter.optBoolean("hasEndMarker", false);
-            int percent = !hasEndMarker ? 0 : chapter.optBoolean("done")
+            boolean finishedWriting = chapter.optBoolean("end", false);
+            int percent = !finishedWriting ? 0 : chapter.optBoolean("done")
                     ? 100 : chapter.optInt("percent", 0);
             total += Math.max(0, Math.min(100, percent));
         }
@@ -6372,7 +6414,7 @@ public final class MainActivity extends Activity {
         if (chapters == null || chapters.length() == 0) return 0;
         for (int i = 0; i < chapters.length(); i++) {
             JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter == null || !chapter.optBoolean("hasEndMarker", false)
+            if (chapter == null || !chapter.optBoolean("end", false)
                     || !chapter.optBoolean("done")) return i;
         }
         return chapters.length() - 1;
@@ -6411,15 +6453,15 @@ public final class MainActivity extends Activity {
         readerScroll.setBackgroundColor(BG);
         readerContentContainer = new FrameLayout(this);
         readerContentContainer.setBackgroundColor(Color.TRANSPARENT);
-        markdownPreview = text("", 20, TEXT);
-        markdownPreview.setTextSize(20);
-        markdownPreview.setLineSpacing(dp(2), 1.52f);
-        markdownPreview.setGravity(Gravity.TOP | Gravity.START);
-        markdownPreview.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
-        markdownPreview.setTextAlignment(View.TEXT_ALIGNMENT_TEXT_START);
-        markdownPreview.setPadding(dp(22), dp(26), dp(22), dp(40));
-        markdownPreview.setBackgroundColor(Color.TRANSPARENT);
-        markdownPreview.setOnTouchListener((view, event) -> {
+        readerPreview = text("", 20, TEXT);
+        readerPreview.setTextSize(20);
+        readerPreview.setLineSpacing(dp(2), 1.52f);
+        readerPreview.setGravity(Gravity.TOP | Gravity.START);
+        readerPreview.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
+        readerPreview.setTextAlignment(View.TEXT_ALIGNMENT_TEXT_START);
+        readerPreview.setPadding(dp(22), dp(26), dp(22), dp(40));
+        readerPreview.setBackgroundColor(Color.TRANSPARENT);
+        readerPreview.setOnTouchListener((view, event) -> {
             if (readerEditing) return false;
             int touchSlop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
             switch (event.getActionMasked()) {
@@ -6441,7 +6483,7 @@ public final class MainActivity extends Activity {
                     if (!readerPreviewTouchMoved
                             && Math.abs(event.getX() - readerPreviewTouchX) <= touchSlop
                             && Math.abs(event.getY() - readerPreviewTouchY) <= touchSlop) {
-                        int cursor = markdownPreviewCursorOffset(event.getX(), event.getY());
+                        int cursor = readerPreviewCursorOffset(event.getX(), event.getY());
                         enterReaderEditMode(true, cursor);
                     }
                     return true;
@@ -6457,30 +6499,20 @@ public final class MainActivity extends Activity {
         chapterEditor.setPadding(dp(22), dp(26), dp(22), dp(40));
         chapterEditor.setBackgroundColor(Color.TRANSPARENT);
         chapterEditor.setCursorVisible(false);
-        selectedSpecialRuleLines.clear();
-        chapterEditor.setText(chapterText); applyRuleSpans(chapterEditor.getText());
+        chapterEditor.setText(chapterText);
         chapterEditor.setSelection(chapterEditor.length());
         readerEditing = chapterText.trim().isEmpty();
-        hasPendingMarkdownScrollFraction = false;
+        hasPendingReaderScrollFraction = false;
         chapterEditor.setVisibility(readerEditing ? View.VISIBLE : View.GONE);
-        markdownPreview.setVisibility(readerEditing ? View.GONE : View.VISIBLE);
-        readerContentContainer.addView(markdownPreview,
+        readerPreview.setVisibility(readerEditing ? View.GONE : View.VISIBLE);
+        readerContentContainer.addView(readerPreview,
                 new FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT));
         readerContentContainer.addView(chapterEditor,
                 new FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT));
         readerScroll.addView(readerContentContainer, new ScrollView.LayoutParams(-1, -2));
-        restoreMarkdownAfterRender = !readerEditing;
-        if (!readerEditing) renderMarkdownPreview();
+        restoreReaderAfterRender = !readerEditing;
+        if (!readerEditing) renderReaderPreview();
         readerFrame.addView(readerScroll, new FrameLayout.LayoutParams(-1, -1));
-        tokenSuggestions = new LinearLayout(this);
-        tokenSuggestions.setGravity(Gravity.CENTER);
-        tokenSuggestions.setPadding(dp(4), dp(4), dp(4), dp(4));
-        tokenSuggestions.setOrientation(LinearLayout.HORIZONTAL);
-        tokenSuggestions.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        tokenSuggestions.setBackground(roundDrawable(SURFACE, 0xFF554667, 12));
-        tokenSuggestions.setElevation(dp(8));
-        tokenSuggestions.setVisibility(View.GONE);
-        readerFrame.addView(tokenSuggestions, new FrameLayout.LayoutParams(dp(172), dp(46), Gravity.TOP | Gravity.LEFT));
         quickScrollIcon = new NativeIconView(this, "scrollbottom", PURPLE);
         quickScrollButton = new FrameLayout(this); styleIconButton(quickScrollButton, false);
         quickScrollButton.addView(quickScrollIcon, new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER));
@@ -6520,14 +6552,11 @@ public final class MainActivity extends Activity {
         bottom.addView(previousChapterButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         bottom.addView(weightedIconButton("undo", this::undoChapterEdit),
                 new LinearLayout.LayoutParams(0, dp(54), 1));
-        List<ExtensionManager.Action> extensionActions = enabledExtensionActions();
-        if (!extensionActions.isEmpty()) {
-            readerExtensionButton = createExtensionActionButton(extensionActions);
-            FrameLayout transformSlot = new FrameLayout(this);
-            transformSlot.addView(readerExtensionButton,
-                    new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
-            bottom.addView(transformSlot, new LinearLayout.LayoutParams(0, dp(54), 1));
-        }
+        FrameLayout optionsButton = createReaderOptionsButton();
+        FrameLayout optionsSlot = new FrameLayout(this);
+        optionsSlot.addView(optionsButton,
+                new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
+        bottom.addView(optionsSlot, new LinearLayout.LayoutParams(0, dp(54), 1));
         bottom.addView(weightedIconButton("redo", this::redoChapterEdit),
                 new LinearLayout.LayoutParams(0, dp(54), 1));
         FrameLayout nextChapterButton = weightedIconButton("next", () -> moveChapter(1));
@@ -6568,16 +6597,7 @@ public final class MainActivity extends Activity {
             @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {
                 rememberChapterUndo(text, start, count, after);
             }
-            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
-                if (pairingPercent || before != 0 || count != 1 || start >= text.length() || text.charAt(start) != '%') return;
-                int cursor = start + 1;
-                if (cursor < text.length() && text.charAt(cursor) == '%') return;
-                pairingPercent = true;
-                chapterEditor.getText().insert(cursor, "%");
-                chapterEditor.setSelection(cursor);
-                pairingPercent = false;
-                chapterEditor.post(MainActivity.this::updateTokenSuggestions);
-            }
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
             @Override public void afterTextChanged(Editable text) { }
         });
         lastFastFlickDirection = 0; fastFlickCount = 0; lastFastFlickAt = 0;
@@ -6591,15 +6611,12 @@ public final class MainActivity extends Activity {
         });
         chapterEditor.addTextChangedListener(watcher(() -> {
             chapterText = chapterEditor.getText().toString();
-            chapterHasEndMarker = containsVisibleEndMarker(chapterText);
             if (!applyingChapterColloquializer && chapterColloquialized) {
                 chapterColloquialized = false;
                 putJson(chapter, "colloquialized", false);
             }
-            chapterWordCount = ChapterTextFormatter.countWords(ChapterTextFormatter.visibleText(chapterText));
+            chapterWordCount = ChapterTextFormatter.countWords(chapterText);
             chapterDirty = true;
-            applyRuleSpans(chapterEditor.getText());
-            updateTokenSuggestions();
             putJson(chapter, "hasText", !chapterText.trim().isEmpty());
             scheduleSave();
             updateProgress();
@@ -6608,7 +6625,6 @@ public final class MainActivity extends Activity {
             if (restoringScroll) return;
             markReadingActivity();
             updateProgress();
-            positionTokenSuggestions();
             scheduleReadingPositionSave();
             scheduleProgressSave();
         });
@@ -6616,7 +6632,6 @@ public final class MainActivity extends Activity {
             if (restoringScroll) return;
             if (bottomEdge - top != oldBottom - oldTop) {
                 updateProgress();
-                updateTokenSuggestions();
             }
         });
         chapterEditor.setOnFocusChangeListener((v, focused) -> {
@@ -6632,57 +6647,15 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void renderMarkdownPreview() {
-        final TextView target = markdownPreview;
-        if (target == null || markdownRenderer == null) return;
-        final int generation = ++markdownRenderGeneration;
-        final String source = ChapterTextFormatter.markdownSource(chapterText);
-        markdownExecutor.execute(() -> {
-            CharSequence rendered;
-            try {
-                rendered = markdownRenderer.toMarkdown(source);
-            } catch (Exception error) {
-                rendered = ChapterTextFormatter.visibleText(chapterText);
-            }
-            final CharSequence result = rendered;
-            runOnUiThread(() -> {
-                if (!"reader".equals(page) || markdownPreview != target
-                        || generation != markdownRenderGeneration) return;
-                android.text.SpannableStringBuilder styled = new android.text.SpannableStringBuilder(result);
-                applyMarkdownPreviewMarkers(styled);
-                target.setText(styled);
-                target.setTypeface(vazir);
-                if (restoreMarkdownAfterRender) {
-                    restoreMarkdownAfterRender = false;
-                    restoreReaderPositionAfterMarkdown();
-                } else updateProgress();
-            });
-        });
-    }
-
-    private void applyMarkdownPreviewMarkers(android.text.SpannableStringBuilder text) {
-        for (ReaderRuleSpan span : text.getSpans(0, text.length(), ReaderRuleSpan.class)) text.removeSpan(span);
-        String source = text.toString();
-        int start = 0;
-        while (start <= source.length()) {
-            int newline = source.indexOf('\n', start);
-            int end = newline < 0 ? source.length() : newline;
-            int paragraphEnd = newline < 0 ? end : newline + 1;
-            String line = source.substring(start, end);
-            int color = 0;
-            String label = null;
-            if (line.contains(ChapterTextFormatter.MARKDOWN_END_TOKEN)) { color = PURPLE; label = "END"; }
-            else if (line.contains(ChapterTextFormatter.MARKDOWN_CONTINUE_TOKEN)) color = RED;
-            else if (line.contains(ChapterTextFormatter.MARKDOWN_RULE_TOKEN)) color = 0xFF77717D;
-            if (color != 0 && end > start) {
-                text.setSpan(new ReaderRuleSpan(color, label, markdownPreview), start, paragraphEnd,
-                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                text.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), start, end,
-                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            }
-            if (newline < 0) break;
-            start = newline + 1;
-        }
+    private void renderReaderPreview() {
+        final TextView target = readerPreview;
+        if (target == null) return;
+        target.setText(chapterText);
+        target.setTypeface(vazir);
+        if (restoreReaderAfterRender) {
+            restoreReaderAfterRender = false;
+            restoreReaderPositionAfterRender();
+        } else updateProgress();
     }
 
     private void enterReaderEditMode(boolean showKeyboard) {
@@ -6691,15 +6664,14 @@ public final class MainActivity extends Activity {
     }
 
     private void enterReaderEditMode(boolean showKeyboard, int cursorOffset) {
-        if (readerEditing || chapterEditor == null || markdownPreview == null) return;
-        pendingMarkdownScrollFraction = readerScrollFraction();
-        hasPendingMarkdownScrollFraction = true;
+        if (readerEditing || chapterEditor == null || readerPreview == null) return;
+        pendingReaderScrollFraction = readerScrollFraction();
+        hasPendingReaderScrollFraction = true;
         readerEditing = true;
-        markdownPreview.setVisibility(View.GONE);
+        readerPreview.setVisibility(View.GONE);
         chapterEditor.setVisibility(View.VISIBLE);
         if (!chapterEditor.getText().toString().equals(chapterText)) {
             chapterEditor.setText(chapterText);
-            applyRuleSpans(chapterEditor.getText());
         }
         int requestedCursor = Math.max(0, Math.min(cursorOffset, chapterEditor.length()));
         chapterEditor.setSelection(requestedCursor);
@@ -6717,44 +6689,23 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private int markdownPreviewCursorOffset(float touchX, float touchY) {
-        if (markdownPreview == null || chapterText == null) return 0;
-        android.text.Layout layout = markdownPreview.getLayout();
-        CharSequence displayed = markdownPreview.getText();
+    private int readerPreviewCursorOffset(float touchX, float touchY) {
+        if (readerPreview == null || chapterText == null) return 0;
+        android.text.Layout layout = readerPreview.getLayout();
+        CharSequence displayed = readerPreview.getText();
         if (displayed == null || displayed.length() == 0) return 0;
         if (layout == null) {
-            int contentHeight = Math.max(markdownPreview.getHeight(), readerContentHeight());
+            int contentHeight = Math.max(readerPreview.getHeight(), readerContentHeight());
             if (contentHeight <= 0) return 0;
             float position = Math.max(0f, Math.min(1f,
                     (readerScroll.getScrollY() + touchY) / (float) contentHeight));
             return Math.max(0, Math.min(chapterText.length(), Math.round(chapterText.length() * position)));
         }
-        int vertical = Math.max(0, (int) touchY - markdownPreview.getTotalPaddingTop());
+        int vertical = Math.max(0, (int) touchY - readerPreview.getTotalPaddingTop());
         int line = Math.max(0, Math.min(layout.getLineCount() - 1, layout.getLineForVertical(vertical)));
         int visibleOffset = Math.max(0, Math.min(displayed.length(),
-                layout.getOffsetForHorizontal(line, touchX - markdownPreview.getTotalPaddingLeft())));
-        int renderedLineStart = visibleOffset;
-        while (renderedLineStart > 0 && displayed.charAt(renderedLineStart - 1) != '\n') renderedLineStart--;
-        int renderedLineEnd = visibleOffset;
-        while (renderedLineEnd < displayed.length() && displayed.charAt(renderedLineEnd) != '\n') renderedLineEnd++;
-        int sourceLineStart = 0;
-        for (int i = 0; i < renderedLineStart; i++) {
-            if (displayed.charAt(i) == '\n') sourceLineStart++;
-        }
-
-        String visibleSource = ChapterTextFormatter.visibleText(chapterText);
-        int sourceStart = 0;
-        for (int i = 0; i < sourceLineStart && sourceStart < visibleSource.length(); i++) {
-            int newline = visibleSource.indexOf('\n', sourceStart);
-            sourceStart = newline < 0 ? visibleSource.length() : newline + 1;
-        }
-        int sourceEnd = visibleSource.indexOf('\n', sourceStart);
-        if (sourceEnd < 0) sourceEnd = visibleSource.length();
-        int renderedLength = Math.max(1, renderedLineEnd - renderedLineStart);
-        float fraction = Math.max(0f, Math.min(1f,
-                (visibleOffset - renderedLineStart) / (float) renderedLength));
-        int targetVisibleOffset = sourceStart + Math.round((sourceEnd - sourceStart) * fraction);
-        return ChapterTextFormatter.sourceOffsetForVisibleOffset(chapterText, targetVisibleOffset);
+                layout.getOffsetForHorizontal(line, touchX - readerPreview.getTotalPaddingLeft())));
+        return Math.max(0, Math.min(visibleOffset, chapterText.length()));
     }
 
     private void afterReaderLayout(Runnable action) {
@@ -6781,15 +6732,15 @@ public final class MainActivity extends Activity {
     }
 
     private void leaveReaderEditMode() {
-        if (!readerEditing || chapterEditor == null || markdownPreview == null
+        if (!readerEditing || chapterEditor == null || readerPreview == null
                 || chapterText.trim().isEmpty()) return;
-        pendingMarkdownScrollFraction = readerScrollFraction();
-        hasPendingMarkdownScrollFraction = true;
+        pendingReaderScrollFraction = readerScrollFraction();
+        hasPendingReaderScrollFraction = true;
         readerEditing = false;
         chapterEditor.setVisibility(View.GONE);
-        markdownPreview.setVisibility(View.VISIBLE);
-        restoreMarkdownAfterRender = true;
-        renderMarkdownPreview();
+        readerPreview.setVisibility(View.VISIBLE);
+        restoreReaderAfterRender = true;
+        renderReaderPreview();
     }
 
     private int readerContentHeight() {
@@ -6804,15 +6755,15 @@ public final class MainActivity extends Activity {
     }
 
     private void restoreReaderScrollFraction() {
-        if (!hasPendingMarkdownScrollFraction || readerScroll == null) return;
+        if (!hasPendingReaderScrollFraction || readerScroll == null) return;
         int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
-        readerScroll.scrollTo(0, Math.round(range * pendingMarkdownScrollFraction));
-        hasPendingMarkdownScrollFraction = false;
+        readerScroll.scrollTo(0, Math.round(range * pendingReaderScrollFraction));
+        hasPendingReaderScrollFraction = false;
     }
 
-    private void restoreReaderPositionAfterMarkdown() {
+    private void restoreReaderPositionAfterRender() {
         if (readerScroll == null) return;
-        if (hasPendingMarkdownScrollFraction) {
+        if (hasPendingReaderScrollFraction) {
             afterReaderLayout(() -> {
                 restoreReaderScrollFraction();
                 restoringScroll = false;
@@ -6881,8 +6832,6 @@ public final class MainActivity extends Activity {
         chapterEditor.setSelection(Math.max(0, Math.min(selection, updated.length())));
         chapterText = updated;
         chapterDirty = true;
-        applyRuleSpans(chapterEditor.getText());
-        updateTokenSuggestions();
         scheduleSave();
         updateProgress();
     }
@@ -6906,7 +6855,7 @@ public final class MainActivity extends Activity {
     }
 
     private void rememberChapterUndo(CharSequence text, int start, int count, int after) {
-        if (restoringChapterUndo || pairingPercent) return;
+            if (restoringChapterUndo) return;
         chapterRedoStack.clear();
         long now = android.os.SystemClock.uptimeMillis();
         boolean typing = count == 0 && after == 1;
@@ -6935,8 +6884,6 @@ public final class MainActivity extends Activity {
         lastUndoWasTyping = false;
         chapterText = previous;
         chapterDirty = true;
-        applyRuleSpans(chapterEditor.getText());
-        updateTokenSuggestions();
         scheduleSave();
         updateProgress();
     }
@@ -6956,8 +6903,6 @@ public final class MainActivity extends Activity {
         lastUndoWasTyping = false;
         chapterText = next;
         chapterDirty = true;
-        applyRuleSpans(chapterEditor.getText());
-        updateTokenSuggestions();
         scheduleSave();
         updateProgress();
     }
@@ -7002,17 +6947,29 @@ public final class MainActivity extends Activity {
         if (book == null || chapters == null || index < 0 || index >= chapters.length()) return;
         String bookId = book.optString("id");
         JSONObject chapterForFile = chapters.optJSONObject(index);
-        String fileName = chapterStorageFileName(bookId, chapterForFile, index);
+        String fileName = chapterTextFileName(chapterForFile);
         int generation = ++chapterLoadGeneration;
         showChapterLoadingOverlay();
         chapterIoExecutor.execute(() -> {
             String content = null;
+            boolean migratedEnd = false;
             String failure = null;
-            try { content = storage.read(fileName); }
+            try {
+                content = storage.readChapterFile(bookId, fileName);
+                if (content == null) {
+                    ChapterFileMigration.LegacyChapter legacy = ChapterFileMigration.migrateMissingChapter(
+                            storage, bookId, chapterForFile, index);
+                    if (legacy != null) {
+                        content = legacy.text;
+                        migratedEnd = legacy.end;
+                    }
+                }
+            }
             catch (Exception error) {
                 failure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
             }
             final String loaded = content;
+            final boolean legacyEnd = migratedEnd;
             final String loadFailure = failure;
             runOnUiThread(() -> {
                 if (generation != chapterLoadGeneration || isFinishing()) return;
@@ -7022,43 +6979,49 @@ public final class MainActivity extends Activity {
                     toast("خواندن Chapter ناموفق بود: " + loadFailure);
                     return;
                 }
-                finishOpenReader(bookId, index, loaded);
+                finishOpenReader(bookId, index, loaded, legacyEnd);
             });
         });
     }
 
-    private void finishOpenReader(String bookId, int index, String loadedText) {
+    private void finishOpenReader(String bookId, int index, String loadedText, boolean legacyEnd) {
         JSONObject book = findBookById(bookId);
         JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
         if (book == null || chapters == null || index < 0 || index >= chapters.length()) return;
+        JSONObject requestedChapter = chapters.optJSONObject(index);
+        if (loadedText == null && requestedChapter != null && requestedChapter.optBoolean("hasText", false)) {
+            toast("فایل متن این Chapter پیدا نشد؛ اطلاعات کتابخانه حفظ شد.");
+            showChapters();
+            return;
+        }
         activeChapter = index;
         rememberRecentReading();
         putJson(book, "lastReadAt", System.currentTimeMillis());
-        saveLibrary();
         chapterUndoStack.clear();
         chapterRedoStack.clear();
         lastUndoWasTyping = false;
         lastUndoEnd = -1;
         chapterText = loadedText == null ? "" : loadedText;
-        chapterHasEndMarker = containsVisibleEndMarker(chapterText);
+        chapterEnd = activeChapterObject() != null
+                && (activeChapterObject().optBoolean("end", false) || legacyEnd);
         chapterColloquialized = activeChapterObject() != null
                 && activeChapterObject().optBoolean("colloquialized", false);
-        chapterWordCount = ChapterTextFormatter.countWords(ChapterTextFormatter.visibleText(chapterText));
+        chapterWordCount = ChapterTextFormatter.countWords(chapterText);
         chapterDirty = false;
         JSONObject chapter = activeChapterObject();
         if (chapter != null) {
-            if (!chapterText.trim().isEmpty()) putJson(chapter, "hasText", true);
-            boolean hasEndMarker = chapterHasEndMarker;
-            putJson(chapter, "hasEndMarker", hasEndMarker);
-            if (hasEndMarker && !chapter.has("wordsRead")) {
-                long total = ChapterTextFormatter.countWords(ChapterTextFormatter.visibleText(chapterText));
+            putJson(chapter, "hasText", !chapterText.trim().isEmpty());
+            putJson(chapter, "end", chapterEnd);
+            chapter.remove("hasEndMarker");
+            if (chapterEnd && !chapter.has("wordsRead")) {
+                long total = ChapterTextFormatter.countWords(chapterText);
                 int savedPercent = chapter.optBoolean("done") ? 100
                         : Math.max(0, Math.min(100, chapter.optInt("percent", 0)));
                 putJson(chapter, "totalWords", total);
                 putJson(chapter, "wordsRead", Math.round(total * savedPercent / 100.0));
-                saveLibrary();
             }
         }
+        saveLibrary();
         showReader();
     }
 
@@ -7111,18 +7074,18 @@ public final class MainActivity extends Activity {
             readingPositionSaveRunnable = null;
         }
         chapterText = chapterEditor.getText().toString();
-        chapterHasEndMarker = containsVisibleEndMarker(chapterText);
         updateProgress();
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return false;
-        putJson(chapter, "hasEndMarker", chapterHasEndMarker);
+        putJson(chapter, "end", chapterEnd);
+        chapter.remove("hasEndMarker");
         putJson(chapter, "colloquialized", chapterColloquialized);
         rememberRecentReading();
         putJson(chapter, "hasText", !chapterText.trim().isEmpty());
         persistCurrentReadingPosition(true);
-        String file = chapterStorageFileName(activeBookId, chapter, activeChapter);
+        String file = chapterTextFileName(chapter);
         if (chapterDirty) {
-            if (!storage.write(file, chapterText)) {
+            if (!storage.writeChapterFile(activeBookId, file, chapterText)) {
                 toast("ذخیرهٔ Chapter ناموفق بود: " + storage.lastError());
                 return false;
             }
@@ -7132,16 +7095,20 @@ public final class MainActivity extends Activity {
         return saved;
     }
 
-    private String chapterStorageFileName(String bookId, JSONObject chapter, int position) {
-        String key = (bookId == null ? "" : bookId) + ":" + chapterStorageIndex(chapter, position);
-        return "chapter-" + key.replaceAll("[^A-Za-z0-9._-]", "-") + ".md";
+    private String chapterTextFileName(JSONObject chapter) {
+        if (chapter == null) return "missing.txt";
+        String code = chapter.optString("id", "");
+        if (code.isEmpty()) {
+            code = UUID.randomUUID().toString();
+            putJson(chapter, "id", code);
+        }
+        return code + ".txt";
     }
 
     private String chapterOriginalFileName() {
         JSONObject chapter = activeChapterObject();
         if (chapter == null) return null;
-        return chapterStorageFileName(activeBookId, chapter, activeChapter)
-                .replace(".md", "-original.md");
+        return "chapter-" + chapter.optString("id") + "-original.txt";
     }
 
     private void rememberRecentReading() {
@@ -7201,26 +7168,25 @@ public final class MainActivity extends Activity {
     private void updateProgress() {
         if (chapterEditor == null || readerScroll == null || readerProgress == null) return;
         JSONObject chapter = activeChapterObject(); if (chapter == null) return;
-        boolean hasEndMarker = chapterHasEndMarker;
-        if (chapter.optBoolean("hasEndMarker", false) != hasEndMarker) {
-            putJson(chapter, "hasEndMarker", hasEndMarker);
-        }
-        if (!hasEndMarker && "reader".equals(page)) stopReadingTimer();
+        boolean finishedWriting = chapterEnd;
+        if (chapter.optBoolean("end", false) != finishedWriting) putJson(chapter, "end", finishedWriting);
+        chapter.remove("hasEndMarker");
+        if (!finishedWriting && "reader".equals(page)) stopReadingTimer();
         int contentHeight = readerContentHeight();
         int range = Math.max(0, contentHeight - readerScroll.getHeight());
         boolean hasText = !chapterText.trim().isEmpty();
         float rawPercent = range == 0 ? 100f : readerScroll.getScrollY() * 100f / range;
-        int percent = !hasEndMarker || !hasText ? 0
+        int percent = !finishedWriting || !hasText ? 0
                 : Math.max(0, Math.min(100, Math.round(rawPercent)));
-        if (hasEndMarker && hasText && rawPercent > 97f) percent = 100;
+        if (finishedWriting && hasText && rawPercent > 97f) percent = 100;
         putJson(chapter, "percent", percent);
-        putJson(chapter, "done", hasEndMarker && hasText && percent >= 100);
+        putJson(chapter, "done", finishedWriting && hasText && percent >= 100);
         putJson(chapter, "manualDone", false);
         putJson(chapter, "scroll", readerScroll.getScrollY());
         putJson(chapter, "scrollRange", range);
         putJson(chapter, "scrollViewportHeight", readerScroll.getHeight());
         putJson(chapter, "scrollFraction", range == 0 ? 0f : readerScroll.getScrollY() / (float) range);
-        if (hasEndMarker) {
+        if (finishedWriting) {
             long totalWords = chapterWordCount;
             long readWords = wordsReadAtViewport(totalWords);
             long previousReadWords = Math.max(0, chapter.optLong("wordsRead", 0));
@@ -7253,7 +7219,7 @@ public final class MainActivity extends Activity {
         long total = 0;
         for (int i = 0; i < chapters.length(); i++) {
             JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter == null || !chapter.optBoolean("hasEndMarker", false)) continue;
+            if (chapter == null || !chapter.optBoolean("end", false)) continue;
             long read = Math.max(0, chapter.optLong("wordsRead", 0));
             long chapterWords = Math.max(0, chapter.optLong("totalWords", read));
             total += Math.min(read, chapterWords);
@@ -7264,7 +7230,7 @@ public final class MainActivity extends Activity {
     private long wordsReadAtViewport(long totalWords) {
         if (totalWords <= 0 || readerScroll == null || chapterEditor == null) return 0;
         int visibleBottom = readerScroll.getScrollY() + readerScroll.getHeight();
-        TextView displayedText = readerEditing ? chapterEditor : markdownPreview;
+        TextView displayedText = readerEditing ? chapterEditor : readerPreview;
         if (displayedText == null) return 0;
         if (visibleBottom >= displayedText.getHeight() - displayedText.getPaddingBottom()) return totalWords;
         int contentHeight = Math.max(1, readerContentHeight());
@@ -7273,7 +7239,7 @@ public final class MainActivity extends Activity {
     }
 
     private void startReadingTimer() {
-        if (!"reader".equals(page) || !chapterHasEndMarker) {
+        if (!"reader".equals(page) || !chapterEnd) {
             stopReadingTimer();
             return;
         }
@@ -7316,13 +7282,9 @@ public final class MainActivity extends Activity {
     }
 
     private void markReadingActivity() {
-        if ("reader".equals(page) && chapterHasEndMarker) {
+        if ("reader".equals(page) && chapterEnd) {
             startReadingTimer();
         }
-    }
-
-    private boolean containsVisibleEndMarker(String text) {
-        return text != null && ChapterTextFormatter.visibleText(text).contains("%end%");
     }
 
     private void showQuickScroll(boolean toTop) {
@@ -8465,119 +8427,18 @@ public final class MainActivity extends Activity {
         return result.toString();
     }
 
-    private void showSpecialTokenHelp() {
+    private void showReaderHelp() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(4), dp(4), dp(4), dp(4));
-        content.addView(tokenHelpRow("پایان Chapter  ·  %end%", "یک خط بنفش با برچسب END می‌سازد.", "%end%"), fieldParams());
-        content.addView(tokenHelpRow("ادامه  ·  %continue%", "یک نشانگر خط قرمز در متن می‌سازد.", "%continue%"), fieldParams());
-        content.addView(tokenHelpRow("خط جداکننده  ·  ---", "یک خط افقی ساده می‌سازد.", "---"), fieldParams());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("عبارت‌های ویژه")
+        TextView detail = text("از گزینه‌های پایین صفحه برای محاوره‌ای‌سازی، ثبت پایان نوشتن یا وارد کردن متن از فایل استفاده کن.", 14, TEXT);
+        detail.setGravity(Gravity.CENTER);
+        detail.setPadding(dp(12), dp(12), dp(12), dp(12));
+        content.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("راهنمای مطالعه")
                 .setView(dialogPadding(content)).setPositiveButton("بستن", null).create();
         dialog.show();
         styleDialogWindow(dialog);
-    }
-
-    private View tokenHelpRow(String label, String description, String token) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        TextView button = text(label, 14, TEXT);
-        button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(10), dp(9), dp(10), dp(9));
-        button.setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
-        button.setClickable(true);
-        button.setOnClickListener(v -> {
-            copyToClipboard("novel-token", token);
-            button.setTextColor(Color.WHITE);
-            button.setBackground(roundDrawable(GREEN, GREEN, 12));
-        });
-        row.addView(button, new LinearLayout.LayoutParams(-1, dp(44)));
-        TextView detail = text(description, 12, MUTED);
-        detail.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        detail.setPadding(dp(4), dp(4), dp(4), dp(2));
-        row.addView(detail);
-        return row;
-    }
-
-    private void updateTokenSuggestions() {
-        if (tokenSuggestions == null || chapterEditor == null || readerFrame == null || !"reader".equals(page)) return;
-        Editable editable = chapterEditor.getText();
-        int selection = chapterEditor.getSelectionStart();
-        if (selection < 0 || selection != chapterEditor.getSelectionEnd() || selection > editable.length()) {
-            tokenSuggestions.setVisibility(View.GONE);
-            return;
-        }
-        String text = editable.toString();
-        int lineStart = text.lastIndexOf('\n', Math.max(0, selection - 1)) + 1;
-        int open = text.lastIndexOf('%', Math.max(0, selection - 1));
-        int close = text.indexOf('%', selection);
-        if (open < lineStart || close < selection || text.indexOf('%', open + 1) >= 0 && text.indexOf('%', open + 1) < selection) {
-            tokenSuggestions.setVisibility(View.GONE);
-            return;
-        }
-        String prefix = text.substring(open + 1, selection).toLowerCase(Locale.ROOT);
-        List<String> matches = new ArrayList<>();
-        for (String option : new String[]{"end", "continue"}) if (option.startsWith(prefix)) matches.add(option);
-        if (matches.isEmpty()) {
-            tokenSuggestions.setVisibility(View.GONE);
-            return;
-        }
-        tokenSuggestions.removeAllViews();
-        for (String option : matches) {
-            TextView choice = text(option, 14, TEXT);
-            choice.setGravity(Gravity.CENTER);
-            choice.setBackground(roundDrawable(SURFACE_ALT, 0xFF4A4055, 9));
-            choice.setFocusable(false);
-            LinearLayout.LayoutParams choiceParams = new LinearLayout.LayoutParams(0, -1, 1);
-            choiceParams.leftMargin = dp(3);
-            choiceParams.rightMargin = dp(3);
-            tokenSuggestions.addView(choice, choiceParams);
-            choice.setOnClickListener(v -> {
-                if (chapterEditor == null) return;
-                Editable current = chapterEditor.getText();
-                int currentCaret = chapterEditor.getSelectionStart();
-                int opening = currentCaret <= 0 ? -1 : current.toString().lastIndexOf('%', currentCaret - 1);
-                int closing = opening < 0 ? -1 : current.toString().indexOf('%', currentCaret);
-                if (opening < 0 || closing < currentCaret) return;
-                completingSpecialToken = true;
-                try {
-                    current.replace(opening + 1, closing, option);
-                    int tokenEnd = opening + option.length() + 2;
-                    if (tokenEnd >= current.length() || current.charAt(tokenEnd) != '\n') current.insert(tokenEnd, "\n");
-                    chapterEditor.setSelection(Math.min(current.length(), tokenEnd + 1));
-                } finally {
-                    completingSpecialToken = false;
-                }
-                chapterEditor.requestFocus();
-                tokenSuggestions.setVisibility(View.GONE);
-                tokenSuggestions.removeAllViews();
-                chapterEditor.post(MainActivity.this::updateTokenSuggestions);
-            });
-        }
-        tokenSuggestions.setVisibility(View.VISIBLE);
-        tokenSuggestions.post(this::positionTokenSuggestions);
-    }
-
-    private void positionTokenSuggestions() {
-        if (chapterEditor == null || readerScroll == null || readerFrame == null
-                || tokenSuggestions == null || tokenSuggestions.getVisibility() != View.VISIBLE
-                || chapterEditor.getLayout() == null) return;
-        android.text.Layout layout = chapterEditor.getLayout();
-        int safeCaret = Math.max(0, Math.min(chapterEditor.getSelectionStart(), chapterEditor.length()));
-        int line = layout.getLineForOffset(safeCaret);
-        float caretX = chapterEditor.getLeft() + chapterEditor.getCompoundPaddingLeft()
-                + layout.getPrimaryHorizontal(safeCaret);
-        int x = Math.max(dp(8), Math.min(Math.round(caretX), readerFrame.getWidth() - dp(180)));
-        int caretY = readerScroll.getTop() + chapterEditor.getTop() + chapterEditor.getTotalPaddingTop()
-                + layout.getLineBottom(line) - readerScroll.getScrollY() + dp(8);
-        int y = caretY + dp(46) > readerFrame.getHeight() ? caretY - dp(54) : caretY;
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) tokenSuggestions.getLayoutParams();
-        int top = Math.max(dp(4), Math.min(y, readerFrame.getHeight() - dp(50)));
-        if (params.leftMargin != x || params.topMargin != top) {
-            params.leftMargin = x;
-            params.topMargin = top;
-            tokenSuggestions.setLayoutParams(params);
-        }
     }
 
     private void chooseBookCover() {
@@ -8820,6 +8681,8 @@ public final class MainActivity extends Activity {
     private JSONObject newChapter() {
         JSONObject chapter = new JSONObject();
         try {
+            chapter.put("id", UUID.randomUUID().toString());
+            chapter.put("end", false);
             chapter.put("hasText", false); chapter.put("percent", 0); chapter.put("done", false);
             chapter.put("scroll", 0); chapter.put("manualDone", false);
             chapter.put("wordsRead", 0); chapter.put("totalWords", 0);
@@ -8988,7 +8851,7 @@ public final class MainActivity extends Activity {
         }
         LinearLayout.LayoutParams helpParams = new LinearLayout.LayoutParams(dp(42), dp(40));
         helpParams.topMargin = dp(2);
-        leftSide.addView(plainIconButton("help", PURPLE, this::showSpecialTokenHelp), helpParams);
+        leftSide.addView(plainIconButton("help", PURPLE, this::showReaderHelp), helpParams);
         header.addView(leftSide, new FrameLayout.LayoutParams(dp(78), -1, Gravity.LEFT | Gravity.CENTER_VERTICAL));
 
         LinearLayout rightSide = new LinearLayout(this);
@@ -9513,58 +9376,6 @@ public final class MainActivity extends Activity {
 
         ReaderEditText(Context context) { super(context); }
 
-        private boolean selectingTagLine;
-
-        @Override protected void onSelectionChanged(int selectionStart, int selectionEnd) {
-            super.onSelectionChanged(selectionStart, selectionEnd);
-            if (chapterEditor == this && !completingSpecialToken) {
-                if (selectionStart == selectionEnd && !selectingTagLine) {
-                    String source = getText().toString();
-                    int lineStart = lineStartAt(source, selectionStart);
-                    int lineEnd = source.indexOf('\n', Math.max(0, selectionStart));
-                    if (lineEnd < 0) lineEnd = source.length();
-                    if (lineEnd > lineStart && hasSpecialTag(source.substring(lineStart, lineEnd))) {
-                        selectingTagLine = true;
-                        setSelection(lineStart, lineEnd);
-                        selectingTagLine = false;
-                        return;
-                    }
-                }
-                Set<Integer> selectedLines = selectedSpecialLines(selectionStart, selectionEnd);
-                if (!selectedLines.equals(selectedSpecialRuleLines)) {
-                    selectedSpecialRuleLines.clear();
-                    selectedSpecialRuleLines.addAll(selectedLines);
-                    applyRuleSpans(getText());
-                }
-            }
-            post(MainActivity.this::updateTokenSuggestions);
-        }
-
-        private Set<Integer> selectedSpecialLines(int selectionStart, int selectionEnd) {
-            Set<Integer> result = new HashSet<>();
-            if (selectionEnd <= selectionStart) return result;
-            String source = getText().toString();
-            int lineStart = lineStartAt(source, selectionStart);
-            while (lineStart < selectionEnd && lineStart < source.length()) {
-                int lineEnd = source.indexOf('\n', lineStart);
-                if (lineEnd < 0) lineEnd = source.length();
-                if (selectionStart < lineEnd && selectionEnd > lineStart
-                        && hasSpecialTag(source.substring(lineStart, lineEnd))) result.add(lineStart);
-                if (lineEnd >= source.length()) break;
-                lineStart = lineEnd + 1;
-            }
-            return result;
-        }
-
-        private int lineStartAt(String source, int offset) {
-            int safe = Math.max(0, Math.min(offset, source.length()));
-            return safe == 0 ? 0 : source.lastIndexOf('\n', safe - 1) + 1;
-        }
-
-        private boolean hasSpecialTag(String line) {
-            return line.contains("%end%") || line.contains("%continue%");
-        }
-
         @Override public boolean onTouchEvent(MotionEvent event) {
             boolean handled = super.onTouchEvent(event);
             int action = event.getActionMasked();
@@ -9952,8 +9763,8 @@ public final class MainActivity extends Activity {
             boolean selecting = !selectedChapterKeys.isEmpty();
             boolean selected = selectedChapterKeys.contains(key);
             boolean hasText = chapterItem.optBoolean("hasText");
-            boolean hasEndMarker = hasText && chapterItem.optBoolean("hasEndMarker");
-            boolean done = hasEndMarker && chapterItem.optBoolean("done");
+            boolean finishedWriting = hasText && chapterItem.optBoolean("end");
+            boolean done = finishedWriting && chapterItem.optBoolean("done");
             int color = done ? GREEN : hasText ? BLUE : PURPLE;
             LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
             row.setTag(key);
@@ -9963,7 +9774,7 @@ public final class MainActivity extends Activity {
             TextView name = text(chapterLabel(chapterItem, position), 15, TEXT);
             FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 5));
             View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 5));
-            final int fillPercent = !hasEndMarker ? 0 : done ? 100 : chapterItem.optInt("percent");
+            final int fillPercent = !finishedWriting ? 0 : done ? 100 : chapterItem.optInt("percent");
             FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(4), Gravity.LEFT);
             meter.addView(fill, fillParams);
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
@@ -9974,7 +9785,7 @@ public final class MainActivity extends Activity {
             int statusColor = selecting ? (selected ? PURPLE : MUTED) : done ? GREEN : hasText ? BLUE : PURPLE;
             FrameLayout status = selecting
                     ? plainIconButton(statusIcon, statusColor, () -> toggleChapterSelection(chapterItem, position))
-                    : hasEndMarker && !done ? pairedEditCheckedButton(PURPLE, null)
+                    : finishedWriting && !done ? pairedEditCheckedButton(PURPLE, null)
                     : plainIconButton(statusIcon, statusColor, null);
             if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
@@ -10017,95 +9828,6 @@ public final class MainActivity extends Activity {
         @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
             int x = 0, y = 0, rowHeight = 0, width = r - l;
             for (int i = 0; i < getChildCount(); i++) { View child = getChildAt(i); MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams(); int cw = child.getMeasuredWidth(), ch = child.getMeasuredHeight(); int total = cw + lp.leftMargin + lp.rightMargin; if (x + total > width && x > 0) { x = 0; y += rowHeight + dp(6); rowHeight = 0; } child.layout(x + lp.leftMargin, y + lp.topMargin, x + lp.leftMargin + cw, y + lp.topMargin + ch); x += total + dp(6); rowHeight = Math.max(rowHeight, ch + lp.topMargin + lp.bottomMargin); }
-        }
-    }
-
-    private final class ReaderRuleSpan implements LineBackgroundSpan {
-        private final int color;
-        private final String label;
-        private final TextView host;
-        ReaderRuleSpan(int color, String label, TextView host) {
-            this.color = color;
-            this.label = label;
-            this.host = host;
-        }
-        @Override public void drawBackground(Canvas canvas, Paint paint, int left, int right, int top, int baseline,
-                                             int bottom, CharSequence text, int start, int end, int lineNum) {
-            android.text.Layout layout = host == null ? null : host.getLayout();
-            if (layout != null && lineNum != layout.getLineForOffset(start)) return;
-            int previousColor = paint.getColor();
-            Paint.Style previousStyle = paint.getStyle();
-            Paint.Align previousAlign = paint.getTextAlign();
-            Paint.Cap previousCap = paint.getStrokeCap();
-            float previousWidth = paint.getStrokeWidth();
-            float previousSize = paint.getTextSize();
-            float ruleLeft = 0;
-            float ruleRight = layout == null ? right - left : layout.getWidth();
-            float mid = (top + bottom) / 2f;
-            float inset = dp(10);
-            paint.setColor(color); paint.setStyle(Paint.Style.STROKE); paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeWidth(dp(1.5f));
-            if (label == null) {
-                canvas.drawLine(ruleLeft + inset, mid, ruleRight - inset, mid, paint);
-            } else {
-                paint.setStyle(Paint.Style.FILL); paint.setTextAlign(Paint.Align.CENTER);
-                paint.setTextSize(Math.max(dp(12), previousSize * 0.72f));
-                Paint.FontMetrics metrics = paint.getFontMetrics();
-                float labelBaseline = (top + bottom - metrics.ascent - metrics.descent) / 2f;
-                float labelHalfWidth = paint.measureText(label) / 2f + dp(9);
-                float center = (ruleLeft + ruleRight) / 2f;
-                paint.setStyle(Paint.Style.STROKE);
-                canvas.drawLine(ruleLeft + inset, mid, center - labelHalfWidth, mid, paint);
-                canvas.drawLine(center + labelHalfWidth, mid, ruleRight - inset, mid, paint);
-                paint.setStyle(Paint.Style.FILL);
-                canvas.drawText(label, center, labelBaseline, paint);
-            }
-            paint.setColor(previousColor); paint.setStyle(previousStyle); paint.setTextAlign(previousAlign);
-            paint.setStrokeCap(previousCap); paint.setStrokeWidth(previousWidth); paint.setTextSize(previousSize);
-        }
-    }
-
-    private void applyRuleSpans(Editable editable) {
-        if (editable == null) return;
-        for (ReaderRuleSpan span : editable.getSpans(0, editable.length(), ReaderRuleSpan.class)) editable.removeSpan(span);
-        for (ForegroundColorSpan span : editable.getSpans(0, editable.length(), ForegroundColorSpan.class)) {
-            if (span.getForegroundColor() == Color.TRANSPARENT) editable.removeSpan(span);
-        }
-        String source = editable.toString();
-        int start = 0;
-        while (start <= source.length()) {
-            int newline = source.indexOf('\n', start);
-            int end = newline < 0 ? source.length() : newline;
-            int paragraphEnd = newline < 0 ? end : newline + 1;
-            String line = source.substring(start, end);
-            String trimmed = line.trim();
-            int ruleColor = 0;
-            String ruleLabel = null;
-            if (line.contains("%end%")) {
-                ruleColor = PURPLE;
-                ruleLabel = "END";
-            } else if (line.contains("%continue%")) {
-                ruleColor = RED;
-            } else if (trimmed.equals("---")) {
-                ruleColor = 0xFF77717D;
-            }
-            if (ruleColor != 0 && end > start && !selectedSpecialRuleLines.contains(start)) {
-                editable.setSpan(new ReaderRuleSpan(ruleColor, ruleLabel, chapterEditor), start, paragraphEnd,
-                        Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                editable.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), start, end, Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
-            }
-            if (newline < 0) break;
-            start = newline + 1;
-        }
-        for (int index = 0; index < source.length();) {
-            int annotationEnd = ChapterTextFormatter.annotationEnd(source, index);
-            if (annotationEnd > index) {
-                editable.setSpan(new ForegroundColorSpan(Color.TRANSPARENT), index, annotationEnd,
-                        Editable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                index = annotationEnd;
-            } else {
-                index++;
-            }
         }
     }
 
