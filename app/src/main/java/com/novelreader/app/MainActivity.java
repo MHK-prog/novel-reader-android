@@ -4254,7 +4254,6 @@ public final class MainActivity extends Activity {
                 String savedDescription = description[0].trim();
                 if (saved != null) {
                     putJson(saved, "description", savedDescription);
-                    cacheGenreDescription(saved, savedDescription);
                 }
                 if (saveLibrary()) {
                     dialog.dismiss();

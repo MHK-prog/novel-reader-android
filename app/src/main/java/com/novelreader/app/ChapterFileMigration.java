@@ -31,7 +31,7 @@ final class ChapterFileMigration {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(DONE, false);
     }
 
-    /** Remove this migration code after the 1.5.5 rollout has been completed. */
+    /** Remove this migration code after the 1.5.6 rollout has been completed. */
     static boolean migrateOnce(Context context, NovelStorage storage, JSONObject library) {
         SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         if (preferences.getBoolean(DONE, false)) return true;
