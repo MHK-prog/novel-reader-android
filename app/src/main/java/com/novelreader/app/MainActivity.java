@@ -222,7 +222,6 @@ public final class MainActivity extends Activity {
     private int activeChapter;
     private String chapterText = "";
     private JSONObject readerRestoreState;
-    private long chapterWordCount;
     private boolean chapterEnd;
     private boolean chapterDirty;
     private boolean chapterColloquialized;
@@ -319,9 +318,9 @@ public final class MainActivity extends Activity {
     private boolean lastUndoWasTyping;
     private long lastUndoAt;
     private int lastUndoEnd = -1;
+    private int pendingReaderCursorOffset = -1;
     private SharedPreferences recommendationState;
     private ReadingStatsStore readingStats;
-    private boolean statsWordsMode;
     private int statsRange = ReadingStatsStore.WEEK;
     private int statsPeriodOffset;
     private boolean statsDetailsVisible;
@@ -1919,10 +1918,11 @@ public final class MainActivity extends Activity {
         if (chapter == null || chapterEditor == null) return;
         chapterEnd = finished;
         putJson(chapter, "end", finished);
+        chapterText = chapterEditor.getText().toString();
+        if (finished) calculateAndStoreChapterEstimate(chapter, chapterText);
         if (!finished) {
             putJson(chapter, "done", false);
             putJson(chapter, "percent", 0);
-            putJson(chapter, "wordsRead", 0);
         }
         updateProgress();
         boolean saved = saveCurrentChapter();
@@ -1977,6 +1977,7 @@ public final class MainActivity extends Activity {
                 applyChapterText(text, text.length());
                 chapterEnd = true;
                 putJson(chapter, "end", true);
+                calculateAndStoreChapterEstimate(chapter, text);
                 updateProgress();
                 if (saveCurrentChapter()) toast("متن Chapter وارد و پایان نوشتن فعال شد.");
             });
@@ -2082,7 +2083,6 @@ public final class MainActivity extends Activity {
         chapterEditor.setSelection(Math.min(selection, value.length()));
         applyingChapterColloquializer = false;
         chapterText = value;
-        chapterWordCount = ChapterTextFormatter.countWords(value);
         chapterDirty = true;
         JSONObject chapter = activeChapterObject();
         if (chapter != null) putJson(chapter, "colloquialized", colloquialized);
@@ -2180,6 +2180,7 @@ public final class MainActivity extends Activity {
         body.addView(bookSortTitle);
         body.addView(textButton("مرتب‌سازی بر اساس: " + bookSortLabel(), "filter", PURPLE,
                 this::showBookSortDialog), fieldParams());
+        addReadingSpeedSetting(body);
         TextView bookEntryTitle = text("افزودن کتاب", 15, MUTED);
         bookEntryTitle.setPadding(0, dp(10), 0, dp(7));
         body.addView(bookEntryTitle);
@@ -2189,6 +2190,57 @@ public final class MainActivity extends Activity {
                 this::showBookJsonPromptSettings), fieldParams());
         scroll.addView(body);
         appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+    }
+
+    private void addReadingSpeedSetting(LinearLayout body) {
+        TextView label = text("سرعت مطالعه (کلمه در دقیقه)", 14, MUTED);
+        label.setPadding(0, dp(14), 0, dp(6));
+        body.addView(label);
+        SharedPreferences preferences = getSharedPreferences("general", MODE_PRIVATE);
+        EditText speed = edit("200", false);
+        speed.setInputType(InputType.TYPE_CLASS_NUMBER);
+        speed.setSingleLine(true);
+        speed.setText(Integer.toString(preferences.getInt("reading_speed_wpm", 200)));
+        speed.setSelection(speed.length());
+        speed.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable value) {
+                try {
+                    int wordsPerMinute = Integer.parseInt(value.toString().trim());
+                    if (wordsPerMinute > 0) preferences.edit()
+                            .putInt("reading_speed_wpm", wordsPerMinute).apply();
+                } catch (NumberFormatException ignored) { }
+            }
+        });
+        body.addView(clearableInput(speed), fieldParams());
+    }
+
+    private int readingSpeedWordsPerMinute() {
+        return Math.max(1, getSharedPreferences("general", MODE_PRIVATE)
+                .getInt("reading_speed_wpm", 200));
+    }
+
+    private void calculateAndStoreChapterEstimate(JSONObject chapter, String text) {
+        if (chapter == null) return;
+        long words = ChapterTextFormatter.countWords(text);
+        int minutes = words <= 0 ? 0 : (int) Math.ceil(words / (double) readingSpeedWordsPerMinute());
+        putJson(chapter, "estimatedMinutes", minutes);
+    }
+
+    private String remainingChapterTimeLabel(JSONObject chapter) {
+        if (chapter == null || !chapter.optBoolean("hasText") || !chapter.optBoolean("end")) {
+            return "0 min";
+        }
+        int totalMinutes = Math.max(0, chapter.optInt("estimatedMinutes", 0));
+        int percent = chapter.optBoolean("done") ? 100
+                : Math.max(0, Math.min(100, chapter.optInt("percent", 0)));
+        long remaining = (long) Math.ceil(totalMinutes * (100 - percent) / 100.0);
+        if (remaining <= 0) return "0 min";
+        long hours = remaining / 60;
+        long minutes = remaining % 60;
+        if (hours == 0) return remaining + " min";
+        return minutes == 0 ? hours + " h" : hours + " h " + minutes + " min";
     }
 
     private String bookSortLabel() {
@@ -2281,6 +2333,7 @@ public final class MainActivity extends Activity {
         favorite.setContentDescription("پسندیدن تم");
         favorite.setClickable(true);
         favorite.setFocusable(true);
+        applyPressScale(favorite, .98f);
         favorite.setOnClickListener(v -> {
             setThemeFavorite(index, !isThemeFavorite(index));
             rerenderCurrentPage();
@@ -2380,7 +2433,9 @@ public final class MainActivity extends Activity {
         }
         toggle.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean(key, checked).apply());
         row.addView(toggle, new LinearLayout.LayoutParams(-2, -2));
+        applyPressScale(toggle, .98f);
         row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked()));
+        applyPressScale(row, .98f);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
         params.bottomMargin = dp(8);
         body.addView(row, params);
@@ -2409,7 +2464,9 @@ public final class MainActivity extends Activity {
             if ("enabled.colloquializer".equals(key) && "reader".equals(page)) showReader();
         });
         row.addView(toggle, new LinearLayout.LayoutParams(-2, -2));
+        applyPressScale(toggle, .98f);
         row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked()));
+        applyPressScale(row, .98f);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
         params.bottomMargin = dp(8);
         body.addView(row, params);
@@ -2425,6 +2482,7 @@ public final class MainActivity extends Activity {
             applyThemeColors();
             rerenderCurrentPage();
         });
+        applyPressScale(choice, .98f);
         return choice;
     }
 
@@ -2845,16 +2903,13 @@ public final class MainActivity extends Activity {
         description.setPadding(0, dp(6), 0, dp(18));
         body.addView(description);
         addBookInfoLine(body, "تعداد کتاب", Integer.toString(authorBookCount(activeAuthor)));
-        long wordsRead = 0;
         long readingMillis = 0;
         JSONArray books = library.optJSONArray("books");
         if (books != null) for (int i = 0; i < books.length(); i++) {
             JSONObject book = books.optJSONObject(i);
             if (book == null || !activeAuthor.equalsIgnoreCase(book.optString("author", "").trim())) continue;
-            wordsRead += wordsReadFromBook(book);
-            if (readingStats != null) readingMillis += readingStats.totalForBook(book.optString("id"), false);
+            if (readingStats != null) readingMillis += readingStats.totalForBook(book.optString("id"));
         }
-        addBookInfoLine(body, "کلمات خوانده‌شده", formatCount(wordsRead));
         addBookInfoLine(body, "زمان مطالعه", formatReadingTime(readingMillis));
         body.addView(textButton("کتاب‌های این نویسنده", "book", PURPLE, () -> {
             showAllBooksForAuthor(activeAuthor);
@@ -2905,23 +2960,46 @@ public final class MainActivity extends Activity {
                             selected ? PURPLE : 0xFF40384A, 12));
                 }
             });
+            applyPressScale(choice, .98f);
         }
         genderSection.addView(options, new LinearLayout.LayoutParams(-1, dp(46)));
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(18), dp(10), dp(18), dp(8));
         form.addView(clearableInput(name), fieldParams());
+        LinearLayout.LayoutParams descriptionParams = fieldParams();
+        descriptionParams.topMargin = dp(8);
+        form.addView(clearableInput(description), descriptionParams);
         LinearLayout.LayoutParams genderParams = fieldParams();
-        genderParams.topMargin = dp(2);
+        genderParams.topMargin = dp(8);
         form.addView(genderSection, genderParams);
-        form.addView(clearableInput(description), fieldParams());
         ScrollView formScroll = new ScrollView(this);
         formScroll.setFillViewport(true);
         formScroll.setVerticalScrollBarEnabled(false);
         formScroll.addView(form);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setMinimumHeight(dp(410));
+        content.addView(formScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout footer = new LinearLayout(this);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        footer.setPadding(dp(18), dp(6), dp(18), dp(12));
+        TextView cancel = text("لغو", 15, MUTED);
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setBackground(roundDrawable(SURFACE, themedStrokeColor(0xFF40384A), 12));
+        footer.addView(cancel, new LinearLayout.LayoutParams(0, dp(46), 1));
+        View footerGap = new View(this);
+        footer.addView(footerGap, new LinearLayout.LayoutParams(dp(12), 1));
+        TextView save = text("ذخیره", 15, contrastOnAccent());
+        save.setGravity(Gravity.CENTER);
+        save.setBackground(roundDrawable(PURPLE, PURPLE, 12));
+        footer.addView(save, new LinearLayout.LayoutParams(0, dp(46), 1));
+        content.addView(footer, new LinearLayout.LayoutParams(-1, -2));
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("اطلاعات نویسنده")
-                .setView(dialogPadding(formScroll)).setNegativeButton("لغو", null)
-                .setPositiveButton("ذخیره", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                .setView(content).create();
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        save.setOnClickListener(v -> {
             String newName = titleCaseWords(name.getText().toString());
             if (newName.isEmpty()) { name.setError("نام نویسنده را وارد کن"); return; }
             if (!renameAuthor(originalName, newName, genders[selectedGender[0]])) return;
@@ -2930,14 +3008,16 @@ public final class MainActivity extends Activity {
             if (!saveLibrary()) return;
             dialog.dismiss();
             if ("authorInfo".equals(page)) showAuthorInfoPage(newName);
-        }));
+        });
+        applyPressScale(cancel, .97f);
+        applyPressScale(save, .97f);
         dialog.show();
         styleDialogWindow(dialog);
         if (dialog.getWindow() != null) {
             dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
             int availableHeight = Math.max(dp(360), getResources().getDisplayMetrics().heightPixels - dp(180));
             dialog.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(32), dp(480)),
-                    Math.min(dp(580), availableHeight));
+                    Math.min(dp(590), availableHeight));
         }
     }
 
@@ -3110,6 +3190,7 @@ public final class MainActivity extends Activity {
             bookInfoReturnPage = "recommendations";
             showBookInfo(recommendedRecord);
         });
+        applyPressScale(coverFrame, .97f);
         body.addView(coverFrame, new LinearLayout.LayoutParams(dp(184), dp(238)));
         TextView title = text(recommendedRecord == null ? book.title : displayBookTitle(recommendedRecord), 22, TEXT);
         title.setGravity(Gravity.CENTER);
@@ -3134,6 +3215,7 @@ public final class MainActivity extends Activity {
             description.setOnClickListener(v -> showRecommendationDescription(descriptionText));
             description.setClickable(true);
             description.setFocusable(true);
+            applyPressScale(description, .98f);
         }
         description.setGravity(Gravity.CENTER);
         description.setMaxLines(4);
@@ -3347,6 +3429,7 @@ public final class MainActivity extends Activity {
                 recommendationState.edit().putInt("metric_color_" + key, next).apply();
                 showRecommendationSettings();
             });
+            applyPressScale(chip, .98f);
         }
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(38));
         params.bottomMargin = dp(5);
@@ -3457,18 +3540,6 @@ public final class MainActivity extends Activity {
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(16), dp(12), dp(16), dp(18));
 
-        LinearLayout metricTabs = new LinearLayout(this);
-        metricTabs.setOrientation(LinearLayout.HORIZONTAL);
-        metricTabs.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        metricTabs.addView(statisticsChoice("زمان مطالعه", !statsWordsMode,
-                () -> { statsWordsMode = false; showStatistics(); }),
-                new LinearLayout.LayoutParams(0, dp(46), 1));
-        LinearLayout.LayoutParams wordsTabParams = new LinearLayout.LayoutParams(0, dp(46), 1);
-        wordsTabParams.leftMargin = dp(8);
-        metricTabs.addView(statisticsChoice("کلمات خوانده‌شده", statsWordsMode,
-                () -> { statsWordsMode = true; showStatistics(); }), wordsTabParams);
-        body.addView(metricTabs);
-
         LinearLayout ranges = new LinearLayout(this);
         ranges.setOrientation(LinearLayout.HORIZONTAL);
         ranges.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
@@ -3486,14 +3557,13 @@ public final class MainActivity extends Activity {
 
         long now = System.currentTimeMillis();
         List<ReadingStatsStore.Point> points = readingStats == null
-                ? new ArrayList<>() : readingStats.points(statsRange, statsWordsMode, now, statsPeriodOffset);
+                ? new ArrayList<>() : readingStats.points(statsRange, now, statsPeriodOffset);
         long total = 0;
         for (ReadingStatsStore.Point point : points) total += point.value;
-        String summaryValue = statsWordsMode ? formatCount(total) : formatReadingTime(total);
+        String summaryValue = formatReadingTime(total);
         TextView summary = text(summaryValue, 24, PURPLE);
         summary.setGravity(Gravity.CENTER);
-        TextView summaryLabel = text(statsWordsMode ? "کلمه خوانده‌شده در این بازه" : "زمان مطالعه در این بازه",
-                13, MUTED);
+        TextView summaryLabel = text("زمان مطالعه در این بازه", 13, MUTED);
         summaryLabel.setGravity(Gravity.CENTER);
         LinearLayout summaryCard = new LinearLayout(this);
         summaryCard.setOrientation(LinearLayout.VERTICAL);
@@ -3543,7 +3613,7 @@ public final class MainActivity extends Activity {
             JSONObject book = books.optJSONObject(i);
             if (book != null) bookLabels.put(book.optString("id"), displayBookTitle(book));
         }
-        chart.setData(points, statsWordsMode, PURPLE, MUTED, vazir, statsDetailsVisible,
+        chart.setData(points, PURPLE, MUTED, vazir, statsDetailsVisible,
                 statsRange == ReadingStatsStore.DAY || statsRange == ReadingStatsStore.WEEK);
         LinearLayout chartSection = new LinearLayout(this);
         chartSection.setOrientation(LinearLayout.VERTICAL);
@@ -5326,17 +5396,14 @@ public final class MainActivity extends Activity {
         body.addView(iconBox, iconParams);
         int books = collectionBookCount(activeCollectionId);
         addBookInfoLine(body, "تعداد کتاب", Integer.toString(books));
-        long words = 0;
         long millis = 0;
         JSONArray allBooks = library.optJSONArray("books");
         if (allBooks != null) for (int i = 0; i < allBooks.length(); i++) {
             JSONObject book = allBooks.optJSONObject(i);
             if (book == null || !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
-            words += wordsReadFromBook(book);
-            if (readingStats != null) millis += readingStats.totalForBook(book.optString("id"), false);
+            if (readingStats != null) millis += readingStats.totalForBook(book.optString("id"));
         }
         addBookInfoLine(body, "میزان مطالعه", books == 0 ? "0" : collectionReadPercent(collection) + "٪");
-        addBookInfoLine(body, "کلمات خوانده‌شده", formatCount(words));
         addBookInfoLine(body, "زمان مطالعه", formatReadingTime(millis));
         TextView label = text("توضیحات کوتاه", 14, MUTED);
         label.setGravity(Gravity.RIGHT);
@@ -5496,15 +5563,15 @@ public final class MainActivity extends Activity {
         genresLabel.setSingleLine(true);
         genresLabel.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         genresCard.addView(genresLabel, new LinearLayout.LayoutParams(-1, dp(22)));
-        TextView genresValue = text(genreSummary(book.optJSONArray("genres")), 14, TEXT);
-        genresValue.setGravity(Gravity.RIGHT | Gravity.TOP);
-        genresValue.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_LTR);
-        genresValue.setSingleLine(false);
-        LinearLayout.LayoutParams genresValueParams = new LinearLayout.LayoutParams(-1, -2);
-        genresValueParams.topMargin = dp(4);
-        genresCard.addView(genresValue, genresValueParams);
+        GenreCloud genreChips = new GenreCloud(this);
+        genreChips.setReadOnly(true);
+        genreChips.showGenres(book.optJSONArray("genres"), Collections.emptySet(), "");
+        LinearLayout.LayoutParams genreChipsParams = new LinearLayout.LayoutParams(-1, -2);
+        genreChipsParams.topMargin = dp(4);
+        genresCard.addView(genreChips, genreChipsParams);
         genresCard.setContentDescription("کپی همهٔ ژانرها");
         genresCard.setOnClickListener(v -> copyBookGenres(book));
+        applyPressScale(genresCard, .98f);
         LinearLayout.LayoutParams genresCardParams = fieldParams();
         body.addView(genresCard, genresCardParams);
         addBookSeriesNumberLine(body, book);
@@ -6268,6 +6335,7 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams quickParams = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.RIGHT | Gravity.BOTTOM);
         quickParams.rightMargin = dp(15); quickParams.bottomMargin = dp(12);
         readerFrame.addView(quickScrollButton, quickParams);
+        applyPressScale(quickScrollButton, .97f);
         quickScrollButton.setVisibility(View.GONE);
         quickScrollButton.setOnClickListener(v -> {
             boolean toTop = "top".equals(v.getTag());
@@ -6364,7 +6432,6 @@ public final class MainActivity extends Activity {
                 chapterColloquialized = false;
                 putJson(chapter, "colloquialized", false);
             }
-            chapterWordCount = ChapterTextFormatter.countWords(chapterText);
             chapterDirty = true;
             putJson(chapter, "hasText", !chapterText.trim().isEmpty());
             scheduleSave();
@@ -6389,9 +6456,7 @@ public final class MainActivity extends Activity {
                 if (chapterEditor == null || readerScroll == null) return;
                 android.text.Layout layout = chapterEditor.getLayout();
                 int selection = Math.max(0, Math.min(chapterEditor.getSelectionStart(), chapterEditor.length()));
-                int caretY = layout == null ? readerScroll.getScrollY() : layout.getLineTop(layout.getLineForOffset(selection));
-                chapterEditor.requestRectangleOnScreen(new android.graphics.Rect(0, caretY,
-                        chapterEditor.getWidth(), caretY + dp(60)), true);
+                if (layout != null) positionReaderCursorInUpperHalf(selection);
             }, 170);
         });
     }
@@ -6414,8 +6479,7 @@ public final class MainActivity extends Activity {
 
     private void enterReaderEditMode(boolean showKeyboard, int cursorOffset) {
         if (readerEditing || chapterEditor == null || readerPreview == null) return;
-        pendingReaderScrollFraction = readerScrollFraction();
-        hasPendingReaderScrollFraction = true;
+        hasPendingReaderScrollFraction = false;
         readerEditing = true;
         readerPreview.setVisibility(View.GONE);
         chapterEditor.setVisibility(View.VISIBLE);
@@ -6423,19 +6487,34 @@ public final class MainActivity extends Activity {
             chapterEditor.setText(chapterText);
         }
         int requestedCursor = Math.max(0, Math.min(cursorOffset, chapterEditor.length()));
+        pendingReaderCursorOffset = requestedCursor;
         chapterEditor.setSelection(requestedCursor);
         afterReaderLayout(() -> {
-            restoreReaderScrollFraction();
             chapterEditor.setSelection(requestedCursor);
+            positionReaderCursorInUpperHalf(requestedCursor);
             if (showKeyboard && chapterEditor != null) {
                 chapterEditor.requestFocus();
                 chapterEditor.post(() -> {
                     InputMethodManager input = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
                     if (input != null) input.showSoftInput(chapterEditor, InputMethodManager.SHOW_IMPLICIT);
+                    chapterEditor.postDelayed(() -> positionReaderCursorInUpperHalf(requestedCursor), 180);
                 });
             }
             updateProgress();
         });
+    }
+
+    private void positionReaderCursorInUpperHalf(int cursorOffset) {
+        if (readerScroll == null || chapterEditor == null || !readerEditing) return;
+        android.text.Layout layout = chapterEditor.getLayout();
+        if (layout == null || layout.getLineCount() == 0 || readerScroll.getHeight() <= 0) return;
+        int safeOffset = Math.max(0, Math.min(cursorOffset, chapterEditor.length()));
+        int line = Math.max(0, Math.min(layout.getLineCount() - 1, layout.getLineForOffset(safeOffset)));
+        float lineCenter = chapterEditor.getTop() + chapterEditor.getTotalPaddingTop()
+                + (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f;
+        int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
+        int target = Math.round(lineCenter - readerScroll.getHeight() * .34f);
+        readerScroll.scrollTo(0, Math.max(0, Math.min(range, target)));
     }
 
     private int readerPreviewCursorOffset(float touchX, float touchY) {
@@ -6573,6 +6652,11 @@ public final class MainActivity extends Activity {
 
     private void applyChapterText(String updated, int selection) {
         if (chapterEditor == null) return;
+        boolean refreshPreview = !readerEditing && readerPreview != null;
+        if (refreshPreview) {
+            pendingReaderScrollFraction = readerScrollFraction();
+            hasPendingReaderScrollFraction = true;
+        }
         chapterUndoStack.addLast(chapterEditor.getText().toString());
         while (chapterUndoStack.size() > 80) chapterUndoStack.removeFirst();
         chapterRedoStack.clear();
@@ -6582,6 +6666,10 @@ public final class MainActivity extends Activity {
         chapterDirty = true;
         scheduleSave();
         updateProgress();
+        if (refreshPreview) {
+            restoreReaderAfterRender = true;
+            renderReaderPreview();
+        }
     }
 
     private void updateBatteryIndicator(Intent battery) {
@@ -6667,7 +6755,14 @@ public final class MainActivity extends Activity {
         FrameLayout frame = readerFrame;
         if (editor == null || frame == null || !"reader".equals(page)) return;
         if (visible) {
-            if (editor.hasFocus()) editor.setCursorVisible(true);
+            if (editor.hasFocus()) {
+                editor.setCursorVisible(true);
+                if (pendingReaderCursorOffset >= 0) {
+                    int cursorOffset = pendingReaderCursorOffset;
+                    editor.post(() -> positionReaderCursorInUpperHalf(cursorOffset));
+                    pendingReaderCursorOffset = -1;
+                }
+            }
             return;
         }
         editor.setCursorVisible(false);
@@ -6744,19 +6839,11 @@ public final class MainActivity extends Activity {
                 && activeChapterObject().optBoolean("end", false);
         chapterColloquialized = activeChapterObject() != null
                 && activeChapterObject().optBoolean("colloquialized", false);
-        chapterWordCount = ChapterTextFormatter.countWords(chapterText);
         chapterDirty = false;
         JSONObject chapter = activeChapterObject();
         if (chapter != null) {
             putJson(chapter, "hasText", !chapterText.trim().isEmpty());
             putJson(chapter, "end", chapterEnd);
-            if (chapterEnd && !chapter.has("wordsRead")) {
-                long total = ChapterTextFormatter.countWords(chapterText);
-                int savedPercent = chapter.optBoolean("done") ? 100
-                        : Math.max(0, Math.min(100, chapter.optInt("percent", 0)));
-                putJson(chapter, "totalWords", total);
-                putJson(chapter, "wordsRead", Math.round(total * savedPercent / 100.0));
-            }
         }
         saveLibrary();
         showReader();
@@ -6926,22 +7013,6 @@ public final class MainActivity extends Activity {
         putJson(chapter, "scrollRange", range);
         putJson(chapter, "scrollViewportHeight", readerScroll.getHeight());
         putJson(chapter, "scrollFraction", range == 0 ? 0f : readerScroll.getScrollY() / (float) range);
-        if (finishedWriting) {
-            long totalWords = chapterWordCount;
-            long readWords = wordsReadAtViewport(totalWords);
-            long previousReadWords = Math.max(0, chapter.optLong("wordsRead", 0));
-            if (previousReadWords > totalWords) previousReadWords = totalWords;
-            putJson(chapter, "totalWords", totalWords);
-            if (readWords > previousReadWords) {
-                putJson(chapter, "wordsRead", readWords);
-                if (readingStats != null) readingStats.addWords(activeBookId,
-                        readWords - previousReadWords, System.currentTimeMillis());
-            } else {
-                putJson(chapter, "wordsRead", previousReadWords);
-            }
-        } else {
-            putJson(chapter, "wordsRead", 0);
-        }
         int width = readerProgress.getParent() instanceof View ? ((View) readerProgress.getParent()).getWidth() : 0;
         int progressWidth = Math.round(width * percent / 100f);
         if (progressWidth != lastReaderProgressWidth) {
@@ -6951,31 +7022,6 @@ public final class MainActivity extends Activity {
             lastReaderProgressWidth = progressWidth;
         }
         if (chapterAdapter != null && "chapters".equals(page)) chapterAdapter.notifyDataSetChanged();
-    }
-
-    private long wordsReadFromBook(JSONObject book) {
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null) return 0;
-        long total = 0;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter == null || !chapter.optBoolean("end", false)) continue;
-            long read = Math.max(0, chapter.optLong("wordsRead", 0));
-            long chapterWords = Math.max(0, chapter.optLong("totalWords", read));
-            total += Math.min(read, chapterWords);
-        }
-        return total;
-    }
-
-    private long wordsReadAtViewport(long totalWords) {
-        if (totalWords <= 0 || readerScroll == null || chapterEditor == null) return 0;
-        int visibleBottom = readerScroll.getScrollY() + readerScroll.getHeight();
-        TextView displayedText = readerEditing ? chapterEditor : readerPreview;
-        if (displayedText == null) return 0;
-        if (visibleBottom >= displayedText.getHeight() - displayedText.getPaddingBottom()) return totalWords;
-        int contentHeight = Math.max(1, readerContentHeight());
-        double reached = Math.max(0, Math.min(1, visibleBottom / (double) contentHeight));
-        return Math.min(totalWords, Math.round(totalWords * reached));
     }
 
     private void startReadingTimer() {
@@ -7800,6 +7846,7 @@ public final class MainActivity extends Activity {
         previewFrame.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         previewFrame.setTag(placeholder);
         previewFrame.setOnClickListener(v -> chooseBookCover());
+        applyPressScale(previewFrame, .97f);
         previewFrame.setContentDescription("انتخاب جلد کتاب");
         coverRow.addView(previewFrame, new FrameLayout.LayoutParams(dp(128), dp(182), Gravity.CENTER));
         coverRemoveButton = iconButton("close", TEXT, true, () -> {
@@ -8425,7 +8472,7 @@ public final class MainActivity extends Activity {
             chapter.put("end", false);
             chapter.put("hasText", false); chapter.put("percent", 0); chapter.put("done", false);
             chapter.put("scroll", 0); chapter.put("manualDone", false);
-            chapter.put("wordsRead", 0); chapter.put("totalWords", 0);
+            chapter.put("estimatedMinutes", 0);
         } catch (JSONException ignored) { }
         return chapter;
     }
@@ -8766,22 +8813,11 @@ public final class MainActivity extends Activity {
     }
 
     private void applyPressScale(View view) {
-        applyPressScale(view, .92f);
+        applyPressScale(view, .96f);
     }
 
     private void applyPressScale(View view, float pressedScale) {
-        view.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                v.animate().cancel();
-                v.animate().scaleX(pressedScale).scaleY(pressedScale)
-                        .setDuration(80).setInterpolator(new DecelerateInterpolator()).start();
-            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                v.animate().cancel();
-                v.animate().scaleX(1f).scaleY(1f).setDuration(150)
-                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.15f)).start();
-            }
-            return false;
-        });
+        TouchFeedback.applyPressScale(view, pressedScale);
     }
 
     private String iconDescription(String icon) {
@@ -8909,6 +8945,7 @@ public final class MainActivity extends Activity {
             if (button != null) {
                 button.setTextColor(PURPLE);
                 button.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
+                applyPressScale(button, .98f);
             }
         }
         int buttonPanelId = dialog.getContext().getResources().getIdentifier("buttonPanel", "id", "android");
@@ -9511,14 +9548,23 @@ public final class MainActivity extends Activity {
             row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
                     selected ? PURPLE : 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
             LinearLayout detail = new LinearLayout(MainActivity.this); detail.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout heading = new LinearLayout(MainActivity.this);
+            heading.setGravity(Gravity.CENTER_VERTICAL);
+            heading.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
             TextView name = text(chapterLabel(chapterItem, position), 15, TEXT);
+            name.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+            heading.addView(name, new LinearLayout.LayoutParams(0, -1, 1));
+            TextView estimate = text(remainingChapterTimeLabel(chapterItem), 11, MUTED);
+            estimate.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            heading.addView(estimate, new LinearLayout.LayoutParams(-2, -1));
+            detail.addView(heading, new LinearLayout.LayoutParams(-1, dp(24)));
             FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 5));
             View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 5));
             final int fillPercent = !finishedWriting ? 0 : done ? 100 : chapterItem.optInt("percent");
             FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(4), Gravity.LEFT);
             meter.addView(fill, fillParams);
             meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
-            detail.addView(name); LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
+            LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
             row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
             String statusIcon = selecting ? (selected ? "reorder" : "select")
                     : done ? "check" : hasText ? "edit" : "book";
@@ -9540,19 +9586,35 @@ public final class MainActivity extends Activity {
                 return true;
             });
             setReorderDropTarget(row, "chapter", key);
+            applyPressScale(row, .96f);
             return row;
         }
     }
 
     private final class GenreCloud extends ViewGroup {
+        private boolean readOnly;
+
         GenreCloud(Context context) { super(context); setLayoutDirection(View.LAYOUT_DIRECTION_RTL); }
+        void setReadOnly(boolean value) { readOnly = value; }
         void showGenres(JSONArray genres, Set<String> selected, String query) {
-            removeAllViews(); String q = query.trim().toLowerCase(Locale.ROOT);
+            removeAllViews();
+            if (genres == null) { requestLayout(); return; }
+            String q = query.trim().toLowerCase(Locale.ROOT);
             for (int i = 0; i < genres.length(); i++) {
                 String genre = genres.optString(i); if (!genre.toLowerCase(Locale.ROOT).contains(q)) continue;
                 TextView chip = text(genre, 13, selected.contains(genre) ? contrastOnAccent() : TEXT); chip.setGravity(Gravity.CENTER); chip.setPadding(dp(14), 0, dp(14), 0);
-                chip.setBackground(roundDrawable(selected.contains(genre) ? PURPLE : SURFACE_ALT, selected.contains(genre) ? PURPLE : 0xFF40384A, 18));
-                chip.setOnClickListener(v -> { if (!selected.add(genre)) selected.remove(genre); showGenres(genres, selected, query); });
+                chip.setBackground(roundDrawable(selected.contains(genre) ? PURPLE : SURFACE_ALT,
+                        selected.contains(genre) ? PURPLE : themedStrokeColor(0xFF40384A), 18));
+                if (readOnly) {
+                    chip.setClickable(false);
+                    chip.setFocusable(false);
+                } else {
+                    chip.setOnClickListener(v -> {
+                        if (!selected.add(genre)) selected.remove(genre);
+                        showGenres(genres, selected, query);
+                    });
+                    applyPressScale(chip, .98f);
+                }
                 addView(chip, new MarginLayoutParams(-2, dp(38)));
             }
             requestLayout();
@@ -9561,13 +9623,40 @@ public final class MainActivity extends Activity {
         @Override protected ViewGroup.LayoutParams generateLayoutParams(ViewGroup.LayoutParams p) { return new MarginLayoutParams(p); }
         @Override protected boolean checkLayoutParams(ViewGroup.LayoutParams p) { return p instanceof MarginLayoutParams; }
         @Override protected void onMeasure(int widthSpec, int heightSpec) {
-            int maxWidth = MeasureSpec.getSize(widthSpec), x = 0, y = 0, rowHeight = 0;
-            for (int i = 0; i < getChildCount(); i++) { View child = getChildAt(i); measureChild(child, widthSpec, heightSpec); MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams(); int w = child.getMeasuredWidth() + lp.leftMargin + lp.rightMargin; int h = child.getMeasuredHeight() + lp.topMargin + lp.bottomMargin; if (x + w > maxWidth && x > 0) { x = 0; y += rowHeight + dp(6); rowHeight = 0; } x += w + dp(6); rowHeight = Math.max(rowHeight, h); }
-            setMeasuredDimension(resolveSize(maxWidth, widthSpec), resolveSize(y + rowHeight + dp(2), heightSpec));
+            int maxWidth = Math.max(0, MeasureSpec.getSize(widthSpec) - getPaddingLeft() - getPaddingRight());
+            int x = 0, y = getPaddingTop(), rowHeight = 0;
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                measureChild(child, widthSpec, heightSpec);
+                MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
+                int w = child.getMeasuredWidth() + lp.leftMargin + lp.rightMargin;
+                int h = child.getMeasuredHeight() + lp.topMargin + lp.bottomMargin;
+                if (x + w > maxWidth && x > 0) { x = 0; y += rowHeight + dp(6); rowHeight = 0; }
+                x += w + dp(6);
+                rowHeight = Math.max(rowHeight, h);
+            }
+            setMeasuredDimension(resolveSize(MeasureSpec.getSize(widthSpec), widthSpec),
+                    resolveSize(y + rowHeight + getPaddingBottom() + dp(2), heightSpec));
         }
         @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
-            int x = 0, y = 0, rowHeight = 0, width = r - l;
-            for (int i = 0; i < getChildCount(); i++) { View child = getChildAt(i); MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams(); int cw = child.getMeasuredWidth(), ch = child.getMeasuredHeight(); int total = cw + lp.leftMargin + lp.rightMargin; if (x + total > width && x > 0) { x = 0; y += rowHeight + dp(6); rowHeight = 0; } child.layout(x + lp.leftMargin, y + lp.topMargin, x + lp.leftMargin + cw, y + lp.topMargin + ch); x += total + dp(6); rowHeight = Math.max(rowHeight, ch + lp.topMargin + lp.bottomMargin); }
+            int width = r - l;
+            int x = width - getPaddingRight(), y = getPaddingTop(), rowHeight = 0;
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
+                int cw = child.getMeasuredWidth(), ch = child.getMeasuredHeight();
+                int total = cw + lp.leftMargin + lp.rightMargin;
+                if (x - total < getPaddingLeft() && x < width - getPaddingRight()) {
+                    x = width - getPaddingRight();
+                    y += rowHeight + dp(6);
+                    rowHeight = 0;
+                }
+                int childRight = x - lp.rightMargin;
+                int childLeft = childRight - cw;
+                child.layout(childLeft, y + lp.topMargin, childRight, y + lp.topMargin + ch);
+                x -= total + dp(6);
+                rowHeight = Math.max(rowHeight, ch + lp.topMargin + lp.bottomMargin);
+            }
         }
     }
 

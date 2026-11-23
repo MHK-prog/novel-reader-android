@@ -22,7 +22,6 @@ final class ReadingStatsChartView extends View {
     };
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private List<ReadingStatsStore.Point> points = new ArrayList<>();
-    private boolean words;
     private boolean detailsVisible;
     private boolean showPercentages;
     private int accentColor;
@@ -37,15 +36,9 @@ final class ReadingStatsChartView extends View {
         this.typeface = typeface;
     }
 
-    void setData(List<ReadingStatsStore.Point> points, boolean words, int accentColor,
-                 int mutedColor, Typeface typeface) {
-        setData(points, words, accentColor, mutedColor, typeface, false, false);
-    }
-
-    void setData(List<ReadingStatsStore.Point> points, boolean words, int accentColor,
+    void setData(List<ReadingStatsStore.Point> points, int accentColor,
                  int mutedColor, Typeface typeface, boolean detailsVisible, boolean showPercentages) {
         this.points = points == null ? new ArrayList<>() : new ArrayList<>(points);
-        this.words = words;
         this.accentColor = accentColor;
         this.mutedColor = mutedColor;
         this.typeface = typeface;
@@ -71,7 +64,7 @@ final class ReadingStatsChartView extends View {
 
         long maximum = 0;
         for (ReadingStatsStore.Point point : points) maximum = Math.max(maximum, point.value);
-        if (maximum == 0) maximum = words ? 1 : 60_000;
+        if (maximum == 0) maximum = 60_000;
 
         paint.setTypeface(typeface == null ? Typeface.DEFAULT : typeface);
         paint.setTextSize(10 * density);
@@ -85,7 +78,7 @@ final class ReadingStatsChartView extends View {
             paint.setStrokeWidth(density);
             canvas.drawLine(left, y, right, y, paint);
             paint.setColor(mutedColor);
-            canvas.drawText(formatValue(maximum * line / 4.0, words), left - 6 * density,
+            canvas.drawText(formatValue(maximum * line / 4.0), left - 6 * density,
                     y + 3 * density, paint);
         }
 
@@ -150,7 +143,7 @@ final class ReadingStatsChartView extends View {
                     left + slotWidth * (i + .5f), getHeight() - 10 * density, paint);
         }
 
-        if (maximum == (words ? 1 : 60_000)) {
+        if (maximum == 60_000) {
             paint.setTextSize(13 * density);
             paint.setColor(mutedColor);
             canvas.drawText("هنوز آماری ثبت نشده", (left + right) / 2,
@@ -163,14 +156,9 @@ final class ReadingStatsChartView extends View {
         return color == null ? BOOK_COLORS[(id.hashCode() & 0x7FFFFFFF) % BOOK_COLORS.length] : color;
     }
 
-    private String formatValue(double raw, boolean words) {
-        if (!words) {
-            double hours = raw / 3_600_000.0;
-            return hours >= 1 ? String.format(java.util.Locale.ROOT, "%.0f", hours)
-                    : String.format(java.util.Locale.ROOT, "%.0f", raw / 60_000.0);
-        }
-        if (raw >= 1_000_000) return String.format(java.util.Locale.ROOT, "%.1fM", raw / 1_000_000.0);
-        if (raw >= 1_000) return String.format(java.util.Locale.ROOT, "%.0fK", raw / 1_000.0);
-        return String.format(java.util.Locale.ROOT, "%.0f", raw);
+    private String formatValue(double raw) {
+        double hours = raw / 3_600_000.0;
+        return hours >= 1 ? String.format(java.util.Locale.ROOT, "%.0f", hours)
+                : String.format(java.util.Locale.ROOT, "%.0f", raw / 60_000.0);
     }
 }

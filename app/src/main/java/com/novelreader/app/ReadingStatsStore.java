@@ -47,7 +47,6 @@ final class ReadingStatsStore {
     }
 
     private static final String KEY = "hourly_totals";
-    private static final String WORDS = "words";
     private static final String TIME = "millis";
     private static final String BOOKS = "byBook";
     private static final long PERSIST_INTERVAL_MS = 5_000L;
@@ -62,7 +61,6 @@ final class ReadingStatsStore {
 
     private final SharedPreferences preferences;
     private JSONObject buckets;
-    private long cachedWords;
     private long cachedMillis;
     private long lastPersistAt;
     private boolean dirty;
@@ -77,10 +75,6 @@ final class ReadingStatsStore {
         refreshTotals();
     }
 
-    synchronized void addWords(String bookId, long count, long timeMillis) {
-        add(WORDS, bookId, count, timeMillis);
-    }
-
     synchronized void addReadingMillis(String bookId, long durationMillis, long timeMillis) {
         long remaining = durationMillis;
         long cursor = timeMillis;
@@ -92,25 +86,25 @@ final class ReadingStatsStore {
             nextHour.set(Calendar.MILLISECOND, 0);
             nextHour.add(Calendar.HOUR_OF_DAY, 1);
             long chunk = Math.min(remaining, Math.max(1, nextHour.getTimeInMillis() - cursor));
-            add(TIME, bookId, chunk, cursor);
+            add(bookId, chunk, cursor);
             cursor += chunk;
             remaining -= chunk;
         }
     }
 
-    private void add(String metric, String bookId, long amount, long timeMillis) {
+    private void add(String bookId, long amount, long timeMillis) {
         if (amount <= 0) return;
         String key = hourKey(timeMillis);
         JSONObject hour = buckets.optJSONObject(key);
         if (hour == null) hour = new JSONObject();
         try {
-            hour.put(metric, hour.optLong(metric, 0) + amount);
+            hour.put(TIME, hour.optLong(TIME, 0) + amount);
             if (bookId != null && !bookId.isEmpty()) {
                 JSONObject byBook = hour.optJSONObject(BOOKS);
                 if (byBook == null) byBook = new JSONObject();
                 JSONObject book = byBook.optJSONObject(bookId);
                 if (book == null) book = new JSONObject();
-                book.put(metric, book.optLong(metric, 0) + amount);
+                book.put(TIME, book.optLong(TIME, 0) + amount);
                 byBook.put(bookId, book);
                 hour.put(BOOKS, byBook);
             }
@@ -118,38 +112,14 @@ final class ReadingStatsStore {
         } catch (JSONException ignored) {
             return;
         }
-        if (WORDS.equals(metric)) cachedWords += amount;
-        else cachedMillis += amount;
+        cachedMillis += amount;
         dirty = true;
         prune(timeMillis);
         long now = System.currentTimeMillis();
         if (lastPersistAt == 0 || now - lastPersistAt >= PERSIST_INTERVAL_MS) persist();
     }
 
-    synchronized long totalWords() { return cachedWords; }
-
     synchronized long totalReadingMillis() { return cachedMillis; }
-
-    synchronized long totalForCurrentYear(boolean words, long nowMillis) {
-        Calendar today = Calendar.getInstance();
-        today.setTimeInMillis(nowMillis);
-        JalaliDate jalali = fromGregorian(today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1,
-                today.get(Calendar.DAY_OF_MONTH));
-        int[] startDate = toGregorian(jalali.year, 1, 1);
-        int[] endDate = toGregorian(jalali.year + 1, 1, 1);
-        String startKey = hourKey(calendar(startDate[0], startDate[1], startDate[2]).getTimeInMillis());
-        String endKey = hourKey(calendar(endDate[0], endDate[1], endDate[2]).getTimeInMillis());
-        String metric = words ? WORDS : TIME;
-        long total = 0;
-        java.util.Iterator<String> keys = buckets.keys();
-        while (keys.hasNext()) {
-            String key = keys.next();
-            if (key.compareTo(startKey) < 0 || key.compareTo(endKey) >= 0) continue;
-            JSONObject hour = buckets.optJSONObject(key);
-            if (hour != null) total += hour.optLong(metric, 0);
-        }
-        return total;
-    }
 
     /** Persist accumulated scroll and timer updates without serializing the full history on every event. */
     synchronized void persist() {
@@ -160,38 +130,30 @@ final class ReadingStatsStore {
     }
 
     private void refreshTotals() {
-        cachedWords = 0;
         cachedMillis = 0;
         java.util.Iterator<String> keys = buckets.keys();
         while (keys.hasNext()) {
             JSONObject hour = buckets.optJSONObject(keys.next());
             if (hour == null) continue;
-            cachedWords += hour.optLong(WORDS, 0);
             cachedMillis += hour.optLong(TIME, 0);
         }
     }
 
-    synchronized long totalForBook(String bookId, boolean words) {
+    synchronized long totalForBook(String bookId) {
         if (bookId == null || bookId.isEmpty()) return 0;
-        String metric = words ? WORDS : TIME;
         long total = 0;
         java.util.Iterator<String> keys = buckets.keys();
         while (keys.hasNext()) {
             JSONObject hour = buckets.optJSONObject(keys.next());
             JSONObject book = hour == null ? null : hour.optJSONObject(BOOKS);
             JSONObject values = book == null ? null : book.optJSONObject(bookId);
-            if (values != null) total += values.optLong(metric, 0);
+            if (values != null) total += values.optLong(TIME, 0);
         }
         return total;
     }
 
-    synchronized List<Point> points(int range, boolean words, long nowMillis) {
-        return points(range, words, nowMillis, 0);
-    }
-
-    synchronized List<Point> points(int range, boolean words, long nowMillis, int periodOffset) {
+    synchronized List<Point> points(int range, long nowMillis, int periodOffset) {
         List<Point> result = new ArrayList<>();
-        String metric = words ? WORDS : TIME;
         Calendar today = Calendar.getInstance();
         today.setTimeInMillis(nowMillis);
         zeroTime(today);
@@ -200,8 +162,8 @@ final class ReadingStatsStore {
             for (int hour = 0; hour < 24; hour++) {
                 Calendar current = (Calendar) today.clone();
                 current.add(Calendar.HOUR_OF_DAY, hour);
-                Map<String, Long> byBook = hourValues(current.getTimeInMillis(), metric);
-                long total = total(current.getTimeInMillis(), metric);
+                Map<String, Long> byBook = hourValues(current.getTimeInMillis());
+                long total = total(current.getTimeInMillis());
                 String label = hour % 6 == 0 ? String.format(Locale.ROOT, "%02d", hour) : "";
                 result.add(new Point(label, total, byBook));
             }
@@ -216,8 +178,8 @@ final class ReadingStatsStore {
                 current.add(Calendar.DAY_OF_YEAR, day);
                 JalaliDate jalali = fromGregorian(current.get(Calendar.YEAR), current.get(Calendar.MONTH) + 1,
                         current.get(Calendar.DAY_OF_MONTH));
-                Map<String, Long> byBook = dayValues(current, metric);
-                long total = sumDay(current, metric);
+                Map<String, Long> byBook = dayValues(current);
+                long total = sumDay(current);
                 result.add(new Point(Integer.toString(jalali.day), total, byBook));
             }
             return result;
@@ -232,8 +194,8 @@ final class ReadingStatsStore {
             for (int day = 0; day < count; day++) {
                 Calendar current = (Calendar) start.clone();
                 current.add(Calendar.DAY_OF_YEAR, day);
-                Map<String, Long> byBook = dayValues(current, metric);
-                long total = sumDay(current, metric);
+                Map<String, Long> byBook = dayValues(current);
+                long total = sumDay(current);
                 String label = day % 5 == 0 || day == count - 1
                         ? Integer.toString(day + 1) : "";
                 result.add(new Point(label, total, byBook));
@@ -246,8 +208,8 @@ final class ReadingStatsStore {
             int[] next = month == 12 ? toGregorian(year + 1, 1, 1) : toGregorian(year, month + 1, 1);
             Calendar start = calendar(first[0], first[1], first[2]);
             Calendar end = calendar(next[0], next[1], next[2]);
-            Map<String, Long> byBook = rangeValues(start, end, metric);
-            long total = sumRange(start, end, metric);
+            Map<String, Long> byBook = rangeValues(start, end);
+            long total = sumRange(start, end);
             result.add(new Point(JALALI_MONTHS[month - 1], total, byBook));
         }
         return result;
@@ -286,12 +248,12 @@ final class ReadingStatsStore {
 
     private String twoDigits(int value) { return value < 10 ? "0" + value : Integer.toString(value); }
 
-    private long total(long timeMillis, String metric) {
+    private long total(long timeMillis) {
         JSONObject hour = buckets.optJSONObject(hourKey(timeMillis));
-        return hour == null ? 0 : hour.optLong(metric, 0);
+        return hour == null ? 0 : hour.optLong(TIME, 0);
     }
 
-    private Map<String, Long> hourValues(long timeMillis, String metric) {
+    private Map<String, Long> hourValues(long timeMillis) {
         JSONObject hour = buckets.optJSONObject(hourKey(timeMillis));
         JSONObject books = hour == null ? null : hour.optJSONObject(BOOKS);
         Map<String, Long> result = new HashMap<>();
@@ -300,27 +262,27 @@ final class ReadingStatsStore {
         while (ids.hasNext()) {
             String id = ids.next();
             JSONObject values = books.optJSONObject(id);
-            long value = values == null ? 0 : values.optLong(metric, 0);
+            long value = values == null ? 0 : values.optLong(TIME, 0);
             if (value > 0) result.put(id, value);
         }
         return result;
     }
 
-    private Map<String, Long> dayValues(Calendar day, String metric) {
+    private Map<String, Long> dayValues(Calendar day) {
         Map<String, Long> result = new HashMap<>();
         for (int hour = 0; hour < 24; hour++) {
             Calendar current = (Calendar) day.clone();
             current.add(Calendar.HOUR_OF_DAY, hour);
-            merge(result, hourValues(current.getTimeInMillis(), metric));
+            merge(result, hourValues(current.getTimeInMillis()));
         }
         return result;
     }
 
-    private Map<String, Long> rangeValues(Calendar start, Calendar end, String metric) {
+    private Map<String, Long> rangeValues(Calendar start, Calendar end) {
         Map<String, Long> result = new HashMap<>();
         Calendar current = (Calendar) start.clone();
         while (current.before(end)) {
-            merge(result, dayValues(current, metric));
+            merge(result, dayValues(current));
             current.add(Calendar.DAY_OF_YEAR, 1);
         }
         return result;
@@ -333,21 +295,21 @@ final class ReadingStatsStore {
         }
     }
 
-    private long sumDay(Calendar day, String metric) {
+    private long sumDay(Calendar day) {
         long total = 0;
         for (int hour = 0; hour < 24; hour++) {
             Calendar current = (Calendar) day.clone();
             current.add(Calendar.HOUR_OF_DAY, hour);
-            total += total(current.getTimeInMillis(), metric);
+            total += total(current.getTimeInMillis());
         }
         return total;
     }
 
-    private long sumRange(Calendar start, Calendar end, String metric) {
+    private long sumRange(Calendar start, Calendar end) {
         long total = 0;
         Calendar current = (Calendar) start.clone();
         while (current.before(end)) {
-            total += sumDay(current, metric);
+            total += sumDay(current);
             current.add(Calendar.DAY_OF_YEAR, 1);
         }
         return total;
@@ -367,7 +329,6 @@ final class ReadingStatsStore {
         for (String key : remove) {
             JSONObject hour = buckets.optJSONObject(key);
             if (hour != null) {
-                cachedWords -= hour.optLong(WORDS, 0);
                 cachedMillis -= hour.optLong(TIME, 0);
             }
             buckets.remove(key);
