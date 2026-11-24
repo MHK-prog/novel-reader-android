@@ -161,7 +161,7 @@ public final class MainActivity extends Activity {
     private String pendingChapterTextChapterId;
     private String bookShelfSearchQuery = "";
     private String bookShelfReturnPage = "collections";
-    private String collectionBooksReturnPage = "collections";
+    String collectionBooksReturnPage = "collections";
     private String genreBooksReturnPage = "genreInfo";
     private String activeGenre = "";
     private int activeChapter;
@@ -222,11 +222,11 @@ public final class MainActivity extends Activity {
     EditText searchField;
     private FrameLayout genreFilterButton;
     private GridView booksGrid;
-    private GridView collectionsGrid;
+    GridView collectionsGrid;
     GridView genresGrid;
     private ListView chaptersList;
     private BookCardAdapter bookAdapter;
-    private CollectionCardAdapter collectionAdapter;
+    CollectionCardAdapter collectionAdapter;
     AuthorCardAdapter authorAdapter;
     GenreCardAdapter genreAdapter;
     GridView authorsGrid;
@@ -248,6 +248,7 @@ public final class MainActivity extends Activity {
     private GenreInfoScreen genreInfoScreen;
     private GenreLibraryScreen genreLibraryScreen;
     private TagSettingsScreen tagSettingsScreen;
+    private CollectionScreens collectionScreens;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -726,7 +727,7 @@ public final class MainActivity extends Activity {
         return true;
     }
 
-    private void restoreLibrary(String snapshot) {
+    void restoreLibrary(String snapshot) {
         try { library = new JSONObject(snapshot); }
         catch (JSONException ignored) { }
     }
@@ -2071,7 +2072,7 @@ public final class MainActivity extends Activity {
         showBookShelfContent(true, null);
     }
 
-    private void showAllBooksForCollection(String collectionId) {
+    void showAllBooksForCollection(String collectionId) {
         JSONObject collection = findCollectionById(collectionId);
         if (collection == null) return;
         setPage("allBooks");
@@ -3159,7 +3160,7 @@ public final class MainActivity extends Activity {
         return true;
     }
 
-    private JSONObject findCollectionById(String id) {
+    JSONObject findCollectionById(String id) {
         JSONArray collections = library.optJSONArray("collections");
         if (collections == null) return null;
         for (int i = 0; i < collections.length(); i++) {
@@ -3169,300 +3170,18 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private void showCreateCollectionDialog() {
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        EditText name = edit("نام مجموعه", false);
-        content.addView(clearableInput(name), fieldParams());
-        TextView chooseLabel = text("کتاب‌های این مجموعه را انتخاب کن", 13, MUTED);
-        chooseLabel.setGravity(Gravity.CENTER);
-        chooseLabel.setPadding(0, dp(10), 0, dp(6));
-        content.addView(chooseLabel);
-        ScrollView bookScroll = new ScrollView(this);
-        bookScroll.setVerticalScrollBarEnabled(false); bookScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout choices = new LinearLayout(this);
-        choices.setOrientation(LinearLayout.VERTICAL);
-        choices.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        bookScroll.addView(choices);
-        Set<String> selected = new HashSet<>();
-        JSONArray books = library.optJSONArray("books");
-        List<JSONObject> available = new ArrayList<>();
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null) {
-                String collectionId = book.optString("collectionId", "other");
-                if (collectionId.isEmpty() || "other".equals(collectionId)
-                        || findCollectionById(collectionId) == null) available.add(book);
-            }
-        }
-        Runnable[] renderChoices = new Runnable[1];
-        renderChoices[0] = () -> {
-            choices.removeAllViews();
-            if (available.isEmpty()) {
-                TextView empty = emptyLabel("کتابی در مجموعهٔ سایر نیست");
-                choices.addView(empty, new LinearLayout.LayoutParams(-1, dp(72)));
-                return;
-            }
-            for (JSONObject book : available) {
-                String id = book.optString("id");
-                boolean isSelected = selected.contains(id);
-                FrameLayout row = selectionBookRow(book.optString("title"), isSelected, "add", 24);
-                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(48));
-                rowParams.bottomMargin = dp(6);
-                choices.addView(row, rowParams);
-                row.setOnClickListener(v -> {
-                    if (!selected.add(id)) selected.remove(id);
-                    renderChoices[0].run();
-                });
-            }
-        };
-        renderChoices[0].run();
-        content.addView(bookScroll, new LinearLayout.LayoutParams(-1, dp(230)));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("مجموعهٔ جدید")
-                .setView(dialogPadding(content)).setNegativeButton("لغو", null)
-                .setPositiveButton("ساخت", null).create();
-        String before = library.toString();
-        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
-            String title = TextNormalization.titleCaseWords(name.getText().toString());
-            if (title.isEmpty()) { name.setError("نام مجموعه را وارد کن"); return; }
-            JSONObject collection = new JSONObject();
-            String id = UUID.randomUUID().toString();
-            try {
-                collection.put("id", id).put("title", title);
-                collection.put("orderIndex", LibraryOrdering.nextOrderIndex(collectionArray()));
-                collectionArray().put(collection);
-                for (String bookId : selected) {
-                    JSONObject book = findBookById(bookId);
-                    if (book != null) book.put("collectionId", id);
-                }
-            } catch (JSONException ignored) { }
-            if (!saveLibrary()) {
-                restoreLibrary(before);
-                dialog.dismiss();
-                showDashboard();
-                return;
-            }
-            activeCollectionId = id;
-            selectedCollectionIds.clear();
-            dialog.dismiss();
-            showBookShelf();
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+    private CollectionScreens collectionScreensUi() {
+        if (collectionScreens == null) collectionScreens = new CollectionScreens(this);
+        return collectionScreens;
     }
 
-    private void showEditCollectionDialog(JSONObject collection) {
-        if (collection == null) return;
-        String collectionId = collection.optString("id");
-        EditText name = edit("نام سری", false);
-        name.setText(collection.optString("title", ""));
-        name.setSelection(name.length());
-        if ("other".equals(collectionId)) name.setEnabled(false);
-        EditText description = edit("توضیحات کوتاه", true);
-        description.setText(collection.optString("description", ""));
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.addView(clearableInput(name), fieldParams());
-        form.addView(clearableInput(description), fieldParams());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ویرایش سری")
-                .setView(dialogPadding(form)).setNegativeButton("لغو", null)
-                .setPositiveButton("ذخیره", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String title = "other".equals(collectionId) ? collection.optString("title")
-                    : TextNormalization.titleCaseWords(name.getText().toString());
-            if (title.isEmpty()) { name.setError("نام سری را وارد کن"); return; }
-            JSONObject current = findCollectionById(collectionId);
-            if (current == null) { dialog.dismiss(); return; }
-            String before = library.toString();
-            putJson(current, "title", title);
-            putJson(current, "description", description.getText().toString().trim());
-            if (!saveLibrary()) {
-                restoreLibrary(before);
-                dialog.dismiss();
-                refreshCollectionUi();
-                return;
-            }
-            dialog.dismiss();
-            refreshCollectionUi();
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    }
-
-    private void refreshCollectionUi() {
-        if ("collections".equals(page)) {
-            refreshCollectionSelection();
-        } else if ("collectionInfo".equals(page)) {
-            showCollectionInfo(findCollectionById(activeCollectionId));
-        } else if ("collectionBooks".equals(page) && appColumn != null) {
-            if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
-            addDashboardHeader();
-        }
-    }
-
-    private FrameLayout selectionBookRow(String title, boolean selected, String unselectedIcon, int iconSize) {
-        FrameLayout row = new FrameLayout(this);
-        row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                selected ? PURPLE : 0xFF29242F, 10));
-        TextView label = text(title, 14, TEXT);
-        label.setGravity(Gravity.CENTER);
-        label.setMaxLines(1);
-        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        row.addView(label, new FrameLayout.LayoutParams(-1, -1));
-        NativeIconView mark = new NativeIconView(this, selected ? "check" : unselectedIcon,
-                selected ? PURPLE : MUTED);
-        row.addView(mark, new FrameLayout.LayoutParams(dp(iconSize), dp(iconSize),
-                Gravity.LEFT | Gravity.CENTER_VERTICAL));
-        return row;
-    }
-
-    private void showCollections() {
-        setPage("collections");
-        selectedCollectionIds.clear();
-        appColumn.removeAllViews();
-        animatePageTransition();
-        addCollectionsHeader();
-        collectionsGrid = new GridView(this);
-        collectionsGrid.setNumColumns(1);
-        collectionsGrid.setVerticalScrollBarEnabled(false); collectionsGrid.setHorizontalScrollBarEnabled(false);
-        collectionsGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        collectionsGrid.setHorizontalSpacing(dp(10));
-        collectionsGrid.setVerticalSpacing(dp(10));
-        collectionsGrid.setSelector(android.R.color.transparent);
-        collectionsGrid.setCacheColorHint(Color.TRANSPARENT);
-        collectionsGrid.setBackgroundColor(BG);
-        collectionsGrid.setPadding(dp(12), dp(8), dp(12), dp(8));
-        collectionsGrid.setClipToPadding(false);
-        collectionAdapter = new CollectionCardAdapter(this);
-        collectionsGrid.setAdapter(collectionAdapter);
-        collectionsGrid.setOnItemClickListener((parent, view, position, id) -> {
-            JSONObject collection = collectionAdapter.getCollection(position);
-            if (collection != null) {
-                if (!selectedCollectionIds.isEmpty()) {
-                    toggleCollectionSelection(collection);
-                    return;
-                }
-                showAllBooksForCollection(collection.optString("id"));
-            }
-        });
-        collectionsGrid.setOnItemLongClickListener((parent, view, position, id) -> {
-            JSONObject collection = collectionAdapter.getCollection(position);
-            if (collection == null) return false;
-            String collectionId = collection.optString("id");
-            if (selectedCollectionIds.contains(collectionId)) {
-                return startReorderDrag(view, "collection", collectionId);
-            }
-            toggleCollectionSelection(collection);
-            return true;
-        });
-        FrameLayout frame = new FrameLayout(this);
-        frame.addView(collectionsGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel("هنوز مجموعه‌ای ساخته نشده");
-        frame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
-        collectionsGrid.setEmptyView(empty);
-        appColumn.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
-    }
-
-    private void addCollectionsHeader() {
-        View header;
-        if (selectedCollectionIds.isEmpty()) {
-            header = makeHeader("کتابخانه مجموعه‌ها", "", "menu", "add",
-                    this::openDrawer, this::showCreateCollectionDialog);
-        } else {
-            boolean singleSelection = selectedCollectionIds.size() == 1;
-            String selectedId = singleSelection ? selectedCollectionIds.iterator().next() : null;
-            header = makeHeader(selectedCollectionIds.size() + " انتخاب‌شده", "",
-                    "close", singleSelection ? "exclamation" : null,
-                    this::clearCollectionSelection,
-                    singleSelection ? () -> showCollectionInfo(findCollectionById(selectedId)) : null);
-        }
-        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
-    }
-
-    private void toggleCollectionSelection(JSONObject collection) {
-        if (collection == null) return;
-        String id = collection.optString("id");
-        if (!selectedCollectionIds.add(id)) selectedCollectionIds.remove(id);
-        refreshCollectionSelection();
-    }
-
-    private void clearCollectionSelection() {
-        selectedCollectionIds.clear();
-        refreshCollectionSelection();
-    }
-
-    private void showCollectionInfo(JSONObject collection) {
-        if (collection == null) return;
-        activeCollectionId = collection.optString("id", "other");
-        setPage("collectionInfo");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader(collection.optString("title"), "", "menu", "edit", this::openDrawer,
-                () -> showEditCollectionDialog(findCollectionById(activeCollectionId)), 10),
-                new LinearLayout.LayoutParams(-1, dp(62)));
-        if (titleView != null) {
-            String collectionTitle = collection.optString("title", "");
-            titleView.setContentDescription("کپی نام مجموعه");
-            titleView.setOnClickListener(v -> copyToClipboard("collection", collectionTitle));
-        }
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(18), dp(18), dp(18), dp(24));
-        FrameLayout iconBox = new FrameLayout(this);
-        iconBox.setBackground(roundDrawable(SURFACE, 0xFF40384A, 22));
-        iconBox.addView(new NativeIconView(this, "folder", PURPLE),
-                new FrameLayout.LayoutParams(dp(58), dp(58), Gravity.CENTER));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(92), dp(92));
-        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
-        iconParams.bottomMargin = dp(16);
-        body.addView(iconBox, iconParams);
-        int books = collectionBookCount(activeCollectionId);
-        addBookInfoLine(body, "تعداد کتاب", Integer.toString(books));
-        long millis = 0;
-        JSONArray allBooks = library.optJSONArray("books");
-        if (allBooks != null) for (int i = 0; i < allBooks.length(); i++) {
-            JSONObject book = allBooks.optJSONObject(i);
-            if (book == null || !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
-            if (readingStats != null) millis += readingStats.totalForBook(book.optString("id"));
-        }
-        addBookInfoLine(body, "میزان مطالعه", books == 0 ? "0" : collectionReadPercent(collection) + "٪");
-        addBookInfoLine(body, "زمان مطالعه", formatReadingTime(millis));
-        TextView label = text("توضیحات کوتاه", 14, MUTED);
-        label.setGravity(Gravity.RIGHT);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-1, -2);
-        labelParams.topMargin = dp(12);
-        body.addView(label, labelParams);
-        TextView description = text(collection.optString("description", "").trim().isEmpty()
-                ? "توضیحی ثبت نشده" : collection.optString("description"), 15,
-                collection.optString("description", "").trim().isEmpty() ? MUTED : TEXT);
-        description.setGravity(Gravity.RIGHT);
-        description.setPadding(0, dp(6), 0, dp(14));
-        body.addView(description);
-        body.addView(textButton("کتاب‌های این مجموعه", "book", PURPLE, () -> {
-            collectionBooksReturnPage = "collections";
-            showAllBooksForCollection(activeCollectionId);
-        }), new LinearLayout.LayoutParams(-1, dp(50)));
-        scroll.addView(body);
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-    }
-
-    private int collectionReadPercent(JSONObject collection) {
-        return LibraryMetrics.collectionReadPercent(collection, library.optJSONArray("books"));
-    }
-
-    private void refreshCollectionSelection() {
-        if (!"collections".equals(page) || appColumn == null) return;
-        if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
-        addCollectionsHeader();
-        if (collectionAdapter != null) collectionAdapter.notifyDataSetChanged();
-    }
-
-    private void showBookShelf() {
+    void showCreateCollectionDialog() { collectionScreensUi().showCreateCollectionDialog(); }
+    void showEditCollectionDialog(JSONObject collection) { collectionScreensUi().showEditCollectionDialog(collection); }
+    void refreshCollectionUi() { collectionScreensUi().refreshCollectionUi(); }
+    void showCollections() { collectionScreensUi().showCollections(); }
+    void showCollectionInfo(JSONObject collection) { collectionScreensUi().showCollectionInfo(collection); }
+    void refreshCollectionSelection() { collectionScreensUi().refreshCollectionSelection(); }
+    void showBookShelf() {
         showBookShelfPage(false);
     }
 
@@ -3547,7 +3266,7 @@ public final class MainActivity extends Activity {
         return row;
     }
 
-    private void addDashboardHeader() {
+    void addDashboardHeader() {
         View header;
         JSONObject collection = findCollectionById(activeCollectionId);
         String shelfTitle = collection == null ? "سایر" : collection.optString("title", "سایر");
@@ -3596,7 +3315,7 @@ public final class MainActivity extends Activity {
         if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
     }
 
-    private JSONObject findBookById(String id) {
+    JSONObject findBookById(String id) {
         JSONArray books = library.optJSONArray("books");
         if (books == null) return null;
         for (int i = 0; i < books.length(); i++) {
