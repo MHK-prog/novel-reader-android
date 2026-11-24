@@ -5559,18 +5559,33 @@ public final class MainActivity extends Activity {
         genresCard.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         genresCard.setPadding(dp(14), dp(10), dp(14), dp(10));
         genresCard.setBackground(roundDrawable(SURFACE, 0xFF29242F, 12));
+        LinearLayout genresHeading = new LinearLayout(this);
+        genresHeading.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        genresHeading.setGravity(Gravity.CENTER_VERTICAL);
         TextView genresLabel = text("ژانرها", 13, MUTED);
         genresLabel.setSingleLine(true);
         genresLabel.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        genresCard.addView(genresLabel, new LinearLayout.LayoutParams(-1, dp(22)));
+        genresHeading.addView(genresLabel, new LinearLayout.LayoutParams(0, dp(22), 1));
+        TextView allGenresHint = text("مشاهده همه", 11, PURPLE);
+        allGenresHint.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        genresHeading.addView(allGenresHint, new LinearLayout.LayoutParams(-2, dp(22)));
+        genresCard.addView(genresHeading);
+        JSONArray genrePreview = new JSONArray();
+        JSONArray bookGenres = book.optJSONArray("genres");
+        if (bookGenres != null) {
+            for (int i = 0, added = 0; i < bookGenres.length() && added < 2; i++) {
+                String genre = bookGenres.optString(i).trim();
+                if (!genre.isEmpty()) { genrePreview.put(genre); added++; }
+            }
+        }
         GenreCloud genreChips = new GenreCloud(this);
         genreChips.setReadOnly(true);
-        genreChips.showGenres(book.optJSONArray("genres"), Collections.emptySet(), "");
+        genreChips.showGenres(genrePreview, Collections.emptySet(), "");
         LinearLayout.LayoutParams genreChipsParams = new LinearLayout.LayoutParams(-1, -2);
         genreChipsParams.topMargin = dp(4);
         genresCard.addView(genreChips, genreChipsParams);
-        genresCard.setContentDescription("کپی همهٔ ژانرها");
-        genresCard.setOnClickListener(v -> copyBookGenres(book));
+        genresCard.setContentDescription("نمایش همهٔ ژانرهای کتاب");
+        genresCard.setOnClickListener(v -> showBookGenresDialog(book));
         applyPressScale(genresCard, .98f);
         LinearLayout.LayoutParams genresCardParams = fieldParams();
         body.addView(genresCard, genresCardParams);
@@ -5931,15 +5946,57 @@ public final class MainActivity extends Activity {
         if (!credits.isEmpty()) copyToClipboard("book", credits);
     }
 
-    private void copyBookGenres(JSONObject book) {
+    private void showBookGenresDialog(JSONObject book) {
         JSONArray genres = book == null ? null : book.optJSONArray("genres");
-        if (genres == null || genres.length() == 0) return;
-        List<String> values = new ArrayList<>();
-        for (int i = 0; i < genres.length(); i++) {
+        LinearLayout items = new LinearLayout(this);
+        items.setOrientation(LinearLayout.VERTICAL);
+        items.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        if (genres != null) for (int i = 0; i < genres.length(); i++) {
             String genre = genres.optString(i).trim();
-            if (!genre.isEmpty()) values.add(genre);
+            if (genre.isEmpty()) continue;
+            JSONObject detail = findGenreDetail(genre);
+            String description = detail == null ? "" : detail.optString("description", "").trim();
+            LinearLayout item = new LinearLayout(this);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            item.setPadding(dp(12), dp(10), dp(12), dp(10));
+            item.setBackground(roundDrawable(SURFACE_ALT, themedStrokeColor(0xFF40384A), 12));
+            TextView name = text(genre, 15, PURPLE);
+            name.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+            item.addView(name, new LinearLayout.LayoutParams(-1, -2));
+            TextView note = text(description.isEmpty() ? "توضیحی برای این ژانر ثبت نشده" : description,
+                    13, description.isEmpty() ? MUTED : TEXT);
+            note.setGravity(Gravity.RIGHT);
+            note.setLineSpacing(dp(2), 1.25f);
+            LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(-1, -2);
+            noteParams.topMargin = dp(4);
+            item.addView(note, noteParams);
+            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(-1, -2);
+            itemParams.bottomMargin = dp(8);
+            items.addView(item, itemParams);
         }
-        if (!values.isEmpty()) copyToClipboard("genres", android.text.TextUtils.join(", ", values));
+        if (items.getChildCount() == 0) {
+            TextView empty = text("ژانری برای این کتاب ثبت نشده", 14, MUTED);
+            empty.setGravity(Gravity.CENTER);
+            items.addView(empty, new LinearLayout.LayoutParams(-1, dp(64)));
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(items, new ScrollView.LayoutParams(-1, -2));
+        LinearLayout padded = new LinearLayout(this);
+        padded.setGravity(Gravity.CENTER_HORIZONTAL);
+        padded.setPadding(dp(20), dp(8), dp(20), dp(8));
+        int maxHeight = Math.min(dp(460), (int) (getResources().getDisplayMetrics().heightPixels * .58f));
+        padded.addView(scroll, new LinearLayout.LayoutParams(-1, maxHeight));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("ژانرهای کتاب")
+                .setView(padded)
+                .setPositiveButton("بستن", null)
+                .create();
+        dialog.show();
+        styleDialogWindow(dialog);
     }
 
     private void copyToClipboard(String label, String value) {
@@ -9542,30 +9599,28 @@ public final class MainActivity extends Activity {
             boolean hasText = chapterItem.optBoolean("hasText");
             boolean finishedWriting = hasText && chapterItem.optBoolean("end");
             boolean done = finishedWriting && chapterItem.optBoolean("done");
-            int color = done ? GREEN : hasText ? BLUE : PURPLE;
-            LinearLayout row = new LinearLayout(MainActivity.this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(7), dp(14), dp(7));
+            LinearLayout row = new LinearLayout(MainActivity.this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+            row.setPadding(dp(20), dp(16), dp(20), dp(16));
             row.setTag(key);
             row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                    selected ? PURPLE : 0xFF29242F, 12)); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68)); rp.bottomMargin = dp(7); row.setLayoutParams(rp);
-            LinearLayout detail = new LinearLayout(MainActivity.this); detail.setOrientation(LinearLayout.VERTICAL);
+                    selected ? PURPLE : 0xFF29242F, 16));
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
+            rp.bottomMargin = dp(7);
+            row.setLayoutParams(rp);
             LinearLayout heading = new LinearLayout(MainActivity.this);
             heading.setGravity(Gravity.CENTER_VERTICAL);
             heading.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            TextView name = text(chapterLabel(chapterItem, position), 15, TEXT);
-            name.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-            heading.addView(name, new LinearLayout.LayoutParams(0, -1, 1));
-            TextView estimate = text(remainingChapterTimeLabel(chapterItem), 11, MUTED);
-            estimate.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-            heading.addView(estimate, new LinearLayout.LayoutParams(-2, -1));
-            detail.addView(heading, new LinearLayout.LayoutParams(-1, dp(24)));
-            FrameLayout meter = new FrameLayout(MainActivity.this); meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 5));
-            View fill = new View(MainActivity.this); fill.setBackground(roundDrawable(PURPLE, Color.TRANSPARENT, 5));
-            final int fillPercent = !finishedWriting ? 0 : done ? 100 : chapterItem.optInt("percent");
-            FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(4), Gravity.LEFT);
-            meter.addView(fill, fillParams);
-            meter.post(() -> { ViewGroup.LayoutParams params = fill.getLayoutParams(); params.width = Math.round(meter.getWidth() * fillPercent / 100f); fill.setLayoutParams(params); });
-            LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(4)); mp.topMargin = dp(8); detail.addView(meter, mp);
-            row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
+            LinearLayout leading = new LinearLayout(MainActivity.this);
+            leading.setGravity(Gravity.CENTER_VERTICAL);
+            leading.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+            TextView name = text(chapterLabel(chapterItem, position), 16, TEXT);
+            name.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            name.setSingleLine(true);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            TextView estimate = text(remainingChapterTimeLabel(chapterItem), 14, MUTED);
+            estimate.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
             String statusIcon = selecting ? (selected ? "reorder" : "select")
                     : done ? "check" : hasText ? "edit" : "book";
             int statusColor = selecting ? (selected ? PURPLE : MUTED) : done ? GREEN : hasText ? BLUE : PURPLE;
@@ -9574,7 +9629,34 @@ public final class MainActivity extends Activity {
                     : finishedWriting && !done ? pairedEditCheckedButton(PURPLE, null)
                     : plainIconButton(statusIcon, statusColor, null);
             if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
-            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(42), dp(42)); sp.leftMargin = dp(9); row.addView(status, sp);
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(30), dp(30));
+            sp.rightMargin = dp(12);
+            leading.addView(status, sp);
+            leading.addView(name, new LinearLayout.LayoutParams(0, dp(26), 1));
+            heading.addView(leading, new LinearLayout.LayoutParams(0, dp(26), 1));
+            LinearLayout.LayoutParams estimateParams = new LinearLayout.LayoutParams(-2, dp(26));
+            estimateParams.leftMargin = dp(10);
+            heading.addView(estimate, estimateParams);
+            row.addView(heading, new LinearLayout.LayoutParams(-1, dp(26)));
+            FrameLayout meter = new FrameLayout(MainActivity.this);
+            meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 3));
+            View fill = new View(MainActivity.this);
+            GradientDrawable progressGradient = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                    new int[]{0xFFF1C40F, 0xFFE74C3C});
+            progressGradient.setCornerRadius(dp(2));
+            fill.setBackground(progressGradient);
+            final int fillPercent = !finishedWriting ? 0 : done ? 100
+                    : Math.max(0, Math.min(100, chapterItem.optInt("percent")));
+            FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
+            meter.addView(fill, fillParams);
+            meter.post(() -> {
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) fill.getLayoutParams();
+                params.width = Math.round(meter.getWidth() * fillPercent / 100f);
+                fill.setLayoutParams(params);
+            });
+            LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(3));
+            mp.topMargin = dp(12);
+            row.addView(meter, mp);
             row.setClickable(true);
             row.setOnClickListener(v -> {
                 if (!selectedChapterKeys.isEmpty()) toggleChapterSelection(chapterItem, position);

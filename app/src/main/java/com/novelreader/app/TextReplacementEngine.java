@@ -166,11 +166,15 @@ final class TextReplacementEngine {
                 return end < 0 ? null : matchSegments(text, end, rule, segmentIndex + 1, captures);
             }
             case NEGATION: {
-                if (textIndex < text.length() && text.charAt(textIndex) == '\u0646') {
-                    Captures withNegation = captures.copy();
-                    withNegation.negation = "\u0646";
-                    Match match = matchSegments(text, textIndex + 1, rule, segmentIndex + 1, withNegation);
-                    if (match != null) return match;
+                if (textIndex < text.length()) {
+                    char optionalPrefix = text.charAt(textIndex);
+                    if (optionalPrefix == '\u0646' || optionalPrefix == '\u0628') {
+                        Captures withPrefix = captures.copy();
+                        withPrefix.negation = Character.toString(optionalPrefix);
+                        Match match = matchSegments(text, textIndex + 1, rule,
+                                segmentIndex + 1, withPrefix);
+                        if (match != null) return match;
+                    }
                 }
                 return matchSegments(text, textIndex, rule, segmentIndex + 1, captures);
             }
