@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.drawable.Drawable
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.CompoundButton
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -191,7 +192,7 @@ internal class BookInfoScreen(private val host: MainActivity) {
         scroll.isFillViewport = false
         scroll.isVerticalScrollBarEnabled = false
         scroll.isHorizontalScrollBarEnabled = false
-        scroll.addView(items, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(items, ViewGroup.LayoutParams(-1, -2))
         val padded = LinearLayout(host)
         padded.gravity = Gravity.CENTER_HORIZONTAL
         padded.setPadding(host.dp(20f), host.dp(8f), host.dp(20f), host.dp(8f))
@@ -238,7 +239,7 @@ internal class BookInfoScreen(private val host: MainActivity) {
         }
         val chips = GenreCloud(host, host.uiComponents, host.PURPLE, host.contrastOnAccent(), host.SURFACE_ALT, host.TEXT)
         chips.setReadOnly(true)
-        chips.showGenres(preview, emptySet(), "")
+        chips.showGenres(preview, emptySet<String>(), "")
         val chipsParams = LinearLayout.LayoutParams(-1, -2)
         chipsParams.topMargin = host.dp(4f)
         card.addView(chips, chipsParams)
