@@ -146,7 +146,7 @@ public final class MainActivity extends Activity {
     private ReadingPositionStore readingPositionStore;
     private ResumeReadingPrompt resumeReadingPrompt;
     private BookJsonPromptStore bookJsonPromptStore;
-    private Typeface vazir;
+    Typeface vazir;
     JSONObject library = new JSONObject();
     private String page = "dashboard";
     private final Deque<NavigationState> navigationHistory = new ArrayDeque<>();
@@ -257,10 +257,8 @@ public final class MainActivity extends Activity {
     private int pendingReaderCursorOffset = -1;
     private SharedPreferences recommendationState;
     private RecommendationStateStore recommendationStateStore;
-    private ReadingStatsStore readingStats;
-    private int statsRange = ReadingStatsStore.WEEK;
-    private int statsPeriodOffset;
-    private boolean statsDetailsVisible;
+    ReadingStatsStore readingStats;
+    private StatisticsScreen statisticsScreen;
     private ReadingSessionTimer readingSessionTimer;
     private boolean recommendationDetailsVisible;
     private final Set<Long> sessionRejectedRecommendationIds = new HashSet<>();
@@ -2999,141 +2997,15 @@ public final class MainActivity extends Activity {
     }
 
     private void showStatistics() {
-        setPage("statistics");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("آمار مطالعه", "", "menu", null, this::openDrawer, null));
-
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(16), dp(12), dp(16), dp(18));
-
-        LinearLayout ranges = new LinearLayout(this);
-        ranges.setOrientation(LinearLayout.HORIZONTAL);
-        ranges.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        String[] labels = {"روز", "هفته", "ماه", "سال"};
-        for (int i = 0; i < labels.length; i++) {
-            final int range = i;
-            LinearLayout.LayoutParams rangeParams = new LinearLayout.LayoutParams(0, dp(40), 1);
-            if (i > 0) rangeParams.leftMargin = dp(5);
-            ranges.addView(statisticsChoice(labels[i], statsRange == range,
-                    () -> { statsRange = range; statsPeriodOffset = 0; showStatistics(); }), rangeParams);
-        }
-        LinearLayout.LayoutParams rangesParams = new LinearLayout.LayoutParams(-1, -2);
-        rangesParams.topMargin = dp(14);
-        body.addView(ranges, rangesParams);
-
-        long now = System.currentTimeMillis();
-        List<ReadingStatsStore.Point> points = readingStats == null
-                ? new ArrayList<>() : readingStats.points(statsRange, now, statsPeriodOffset);
-        long total = 0;
-        for (ReadingStatsStore.Point point : points) total += point.value;
-        String summaryValue = formatReadingTime(total);
-        TextView summary = text(summaryValue, 24, PURPLE);
-        summary.setGravity(Gravity.CENTER);
-        TextView summaryLabel = text("زمان مطالعه در این بازه", 13, MUTED);
-        summaryLabel.setGravity(Gravity.CENTER);
-        LinearLayout summaryCard = new LinearLayout(this);
-        summaryCard.setOrientation(LinearLayout.VERTICAL);
-        summaryCard.setGravity(Gravity.CENTER);
-        summaryCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-        summaryCard.setBackground(roundDrawable(SURFACE, 0xFF302A38, 13));
-        summaryCard.addView(summary);
-        summaryCard.addView(summaryLabel);
-        LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(-1, dp(82));
-        summaryParams.topMargin = dp(14);
-        body.addView(summaryCard, summaryParams);
-
-        LinearLayout chartTools = new LinearLayout(this);
-        chartTools.setGravity(Gravity.CENTER_VERTICAL);
-        chartTools.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        FrameLayout previousPeriod = iconButton("back", PURPLE, false, () -> {
-            statsPeriodOffset++;
-            showStatistics();
-        });
-        LinearLayout.LayoutParams arrowParams = new LinearLayout.LayoutParams(dp(42), dp(42));
-        chartTools.addView(previousPeriod, arrowParams);
-        TextView periodLabel = text(readingStats == null ? "" : readingStats.periodLabel(
-                statsRange, now, statsPeriodOffset), 13, TEXT);
-        periodLabel.setGravity(Gravity.CENTER);
-        chartTools.addView(periodLabel, new LinearLayout.LayoutParams(0, dp(42), 1));
-        FrameLayout nextPeriod = iconButton("next", PURPLE, false, () -> {
-            if (statsPeriodOffset > 0) statsPeriodOffset--;
-            showStatistics();
-        });
-        chartTools.addView(nextPeriod, new LinearLayout.LayoutParams(dp(42), dp(42)));
-        LinearLayout.LayoutParams toolsParams = new LinearLayout.LayoutParams(-1, dp(44));
-        toolsParams.topMargin = dp(8);
-        body.addView(chartTools, toolsParams);
-        View detailToggle = textButton(statsDetailsVisible ? "پنهان کردن جزئیات" : "نمایش جزئیات",
-                "chart", PURPLE, () -> {
-                    statsDetailsVisible = !statsDetailsVisible;
-                    showStatistics();
-                });
-        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(-1, dp(42));
-        detailParams.topMargin = dp(4);
-        body.addView(detailToggle, detailParams);
-
-        ReadingStatsChartView chart = new ReadingStatsChartView(this, PURPLE, MUTED, vazir);
-        Map<String, String> bookLabels = new HashMap<>();
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null) bookLabels.put(book.optString("id"), displayBookTitle(book));
-        }
-        chart.setData(points, PURPLE, MUTED, vazir, statsDetailsVisible,
-                statsRange == ReadingStatsStore.DAY || statsRange == ReadingStatsStore.WEEK);
-        LinearLayout chartSection = new LinearLayout(this);
-        chartSection.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams chartParams = new LinearLayout.LayoutParams(-1, 0, 1);
-        chartParams.topMargin = dp(8);
-        chartSection.addView(chart, chartParams);
-        if (statsDetailsVisible) {
-            HorizontalScrollView legendScroll = new HorizontalScrollView(this);
-            legendScroll.setHorizontalScrollBarEnabled(false);
-            legendScroll.setVerticalScrollBarEnabled(false);
-            LinearLayout legend = new LinearLayout(this);
-            legend.setGravity(Gravity.CENTER_VERTICAL);
-            legend.setPadding(dp(4), dp(3), dp(4), dp(3));
-            Set<String> legendIds = new java.util.TreeSet<>();
-            for (ReadingStatsStore.Point point : points) legendIds.addAll(point.byBook.keySet());
-            for (String id : legendIds) {
-                LinearLayout item = new LinearLayout(this);
-                item.setGravity(Gravity.CENTER_VERTICAL);
-                item.setPadding(dp(7), 0, dp(7), 0);
-                View swatch = new View(this);
-                int swatchColor = chart.colorForBook(id);
-                swatch.setBackground(roundDrawable(swatchColor, Color.TRANSPARENT, 5));
-                item.addView(swatch, new LinearLayout.LayoutParams(dp(12), dp(12)));
-                String label = bookLabels.containsKey(id) ? bookLabels.get(id) : "کتاب حذف‌شده";
-                TextView name = text(label, 11, MUTED);
-                LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(-2, dp(24));
-                nameParams.leftMargin = dp(5);
-                item.addView(name, nameParams);
-                legend.addView(item, new LinearLayout.LayoutParams(-2, dp(30)));
-            }
-            legendScroll.addView(legend);
-            chartSection.addView(legendScroll, new LinearLayout.LayoutParams(-1, dp(36)));
-        }
-        body.addView(chartSection, new LinearLayout.LayoutParams(-1, 0, 1));
-        appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-    }
-
-    private TextView statisticsChoice(String label, boolean selected, Runnable action) {
-        TextView choice = text(label, 13, selected ? contrastOnAccent() : TEXT);
-        choice.setGravity(Gravity.CENTER);
-        choice.setBackground(roundDrawable(selected ? PURPLE : SURFACE,
-                selected ? PURPLE : 0xFF40384A, 12));
-        choice.setOnClickListener(v -> action.run());
-        applyPressScale(choice);
-        return choice;
+        if (statisticsScreen == null) statisticsScreen = new StatisticsScreen(this);
+        statisticsScreen.show();
     }
 
     private String formatCount(long value) {
         return java.text.NumberFormat.getIntegerInstance(new Locale("fa")).format(Math.max(0, value));
     }
 
-    private String formatReadingTime(long millis) {
+    String formatReadingTime(long millis) {
         long minutes = Math.max(0, millis / 60_000L);
         long hours = minutes / 60;
         long remainder = minutes % 60;
@@ -7246,7 +7118,7 @@ public final class MainActivity extends Activity {
         return header;
     }
 
-    private FrameLayout iconButton(String icon, int color, boolean selected, Runnable action) {
+    FrameLayout iconButton(String icon, int color, boolean selected, Runnable action) {
         return uiComponents.iconButton(icon, color, selected, action);
     }
 
@@ -7270,7 +7142,7 @@ public final class MainActivity extends Activity {
         return uiComponents.textButton(label, icon, color, action);
     }
 
-    private void applyPressScale(View view) {
+    void applyPressScale(View view) {
         uiComponents.applyPressScale(view);
     }
 
