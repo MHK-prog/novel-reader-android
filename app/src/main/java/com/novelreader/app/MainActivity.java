@@ -125,7 +125,7 @@ public final class MainActivity extends Activity {
     private final RecommendationUserState recommendationUserState = new RecommendationUserState();
     final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
     final Set<String> favoriteGenrePreferences = recommendationUserState.favoriteGenres;
-    private final Set<String> dislikedGenrePreferences = recommendationUserState.dislikedGenres;
+    final Set<String> dislikedGenrePreferences = recommendationUserState.dislikedGenres;
     final Set<String> favoriteAuthorPreferences = recommendationUserState.favoriteAuthors;
     final Set<String> dislikedAuthorPreferences = recommendationUserState.dislikedAuthors;
     final Set<String> selectedAuthorNames = new LinkedHashSet<>();
@@ -245,6 +245,7 @@ public final class MainActivity extends Activity {
     ScrollView settingsScroll;
     private SettingsScreen settingsScreen;
     private AuthorInfoScreen authorInfoScreen;
+    private GenreInfoScreen genreInfoScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -2080,7 +2081,7 @@ public final class MainActivity extends Activity {
         showBookShelfContent(true, null);
     }
 
-    private void showAllBooksForGenre(String genre) {
+    void showAllBooksForGenre(String genre) {
         setPage("allBooks");
         selectedBookIds.clear();
         activeCollectionId = "other";
@@ -2244,7 +2245,7 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private JSONObject ensureGenreDetail(String genre) {
+    JSONObject ensureGenreDetail(String genre) {
         if (genre == null || genre.trim().isEmpty()) return null;
         JSONObject item = findGenreDetail(genre.trim());
         if (item != null) return item;
@@ -2389,56 +2390,15 @@ public final class MainActivity extends Activity {
     private void showGenreInfo(String genre) {
         if (genre == null || genre.trim().isEmpty()) return;
         activeGenre = genre.trim();
-        JSONObject detail = ensureGenreDetail(activeGenre);
-        setPage("genreInfo");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader(activeGenre, "", "menu", "edit", this::openDrawer,
-                () -> showEditGenreInfoDialog(activeGenre), 10), new LinearLayout.LayoutParams(-1, dp(62)));
-        if (titleView != null) {
-            titleView.setContentDescription("کپی نام ژانر");
-            titleView.setOnClickListener(v -> copyToClipboard("genre", activeGenre));
-        }
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(18), dp(18), dp(18), dp(24));
-        addBookInfoLine(body, "تعداد کتاب", Integer.toString(genreBookCount(activeGenre)));
-        LinearLayout feedback = new LinearLayout(this);
-        feedback.setGravity(Gravity.CENTER);
-        feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        boolean liked = containsIgnoreCase(favoriteGenrePreferences, activeGenre);
-        boolean disliked = containsIgnoreCase(dislikedGenrePreferences, activeGenre);
-        feedback.addView(plainIconButton("thumb_up", liked ? GREEN : MUTED,
-                () -> { toggleGenrePreference(activeGenre, true); showGenreInfo(activeGenre); }),
-                new LinearLayout.LayoutParams(dp(48), dp(42)));
-        feedback.addView(plainIconButton("thumb_down", disliked ? RED : MUTED,
-                () -> { toggleGenrePreference(activeGenre, false); showGenreInfo(activeGenre); }),
-                new LinearLayout.LayoutParams(dp(48), dp(42)));
-        LinearLayout.LayoutParams feedbackParams = new LinearLayout.LayoutParams(-1, dp(46));
-        feedbackParams.bottomMargin = dp(12);
-        body.addView(feedback, feedbackParams);
-        TextView label = text("توضیحات کوتاه", 14, MUTED);
-        label.setGravity(Gravity.RIGHT);
-        body.addView(label);
-        TextView description = text(detail == null || detail.optString("description").trim().isEmpty()
-                ? "توضیحی ثبت نشده" : detail.optString("description"), 15,
-                detail == null || detail.optString("description").trim().isEmpty() ? MUTED : TEXT);
-        String descriptionSource = detail == null ? "" : detail.optString("description", "").trim();
-        if (!descriptionSource.isEmpty()) description.setText(descriptionSource);
-        description.setGravity(Gravity.RIGHT);
-        description.setPadding(0, dp(6), 0, dp(16));
-        description.setLineSpacing(dp(2), 1.35f);
-        description.setTypeface(vazir);
-        body.addView(description);
-        body.addView(textButton("کتاب‌های این ژانر", "book", PURPLE,
-                () -> showAllBooksForGenre(activeGenre)), new LinearLayout.LayoutParams(-1, dp(50)));
-        scroll.addView(body);
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        genreInfoUi().showPage(activeGenre);
     }
 
-    private int genreBookCount(String genre) {
+    private GenreInfoScreen genreInfoUi() {
+        if (genreInfoScreen == null) genreInfoScreen = new GenreInfoScreen(this);
+        return genreInfoScreen;
+    }
+
+    int genreBookCount(String genre) {
         int count = 0;
         JSONArray books = library.optJSONArray("books");
         if (books != null) for (int i = 0; i < books.length(); i++) {
@@ -2450,7 +2410,7 @@ public final class MainActivity extends Activity {
         return count;
     }
 
-    private void showEditGenreInfoDialog(String oldGenre) {
+    void showEditGenreInfoDialog(String oldGenre) {
         boolean fromGenreInfo = "genreInfo".equals(page);
         JSONObject detail = ensureGenreDetail(oldGenre);
         EditText name = edit("نام ژانر", false);
@@ -2573,7 +2533,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void toggleGenrePreference(String genre, boolean liked) {
+    void toggleGenrePreference(String genre, boolean liked) {
         Set<String> selected = liked ? favoriteGenrePreferences : dislikedGenrePreferences;
         Set<String> opposite = liked ? dislikedGenrePreferences : favoriteGenrePreferences;
         if (containsIgnoreCase(selected, genre)) removeIgnoreCase(selected, genre);
