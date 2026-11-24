@@ -61,7 +61,7 @@ internal class GenreInfoScreen(private val host: MainActivity) {
         ).apply {
             gravity = Gravity.RIGHT
             setPadding(0, host.dp(6f), 0, host.dp(16f))
-            setLineSpacing(host.dp(2f), 1.35f)
+            setLineSpacing(host.dp(2f).toFloat(), 1.35f)
             typeface = host.vazir
         })
         body.addView(host.textButton("کتاب‌های این ژانر", "book", host.PURPLE,
