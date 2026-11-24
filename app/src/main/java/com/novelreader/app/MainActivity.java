@@ -3808,7 +3808,10 @@ public final class MainActivity extends Activity {
     }
 
     private List<String> allGenreCandidates() {
-        return GenreCatalog.allCandidates(library, allGenres());
+        List<String> knownGenres = new ArrayList<>();
+        JSONArray genres = allGenres();
+        for (int i = 0; i < genres.length(); i++) knownGenres.add(genres.optString(i));
+        return GenreCatalog.allCandidates(library, knownGenres);
     }
 
     private void showGenreEquivalents() {
@@ -5863,6 +5866,75 @@ public final class MainActivity extends Activity {
         scheduleSave();
         updateProgress();
     }
+    private void setReaderImeVisible(boolean visible) {
+        if (readerImeVisible == visible) return;
+        readerImeVisible = visible;
+        EditText editor = chapterEditor;
+        FrameLayout frame = readerFrame;
+        if (editor == null || frame == null || !"reader".equals(page)) return;
+        if (visible) {
+            if (editor.hasFocus()) {
+                editor.setCursorVisible(true);
+                if (pendingReaderCursorOffset >= 0) {
+                    int cursorOffset = pendingReaderCursorOffset;
+                    editor.post(() -> positionReaderCursorInUpperHalf(cursorOffset));
+                    pendingReaderCursorOffset = -1;
+                }
+            }
+            return;
+        }
+        editor.setCursorVisible(false);
+        if (editor.hasFocus()) {
+            editor.clearFocus();
+            frame.requestFocus();
+        }
+        saveCurrentChapter();
+        leaveReaderEditMode();
+    }
+
+    private void openChapters(JSONObject book) {
+        selectedChapterKeys.clear();
+        activeBookId = book.optString("id");
+        activeCollectionId = book.optString("collectionId", "other");
+        chaptersReturnPage = bookInfoReturnPage;
+        showChapters();
+    }
+
+    private void openReader(int index) {
+        selectedChapterKeys.clear();
+        saveCurrentChapter();
+        JSONObject book = activeBook();
+        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
+        if (book == null || chapters == null || index < 0 || index >= chapters.length()) return;
+        String bookId = book.optString("id");
+        JSONObject chapterForFile = chapters.optJSONObject(index);
+        String fileName = chapterTextFileName(chapterForFile);
+        int generation = ++chapterLoadGeneration;
+        showChapterLoadingOverlay();
+        chapterIoExecutor.execute(() -> {
+            String content = null;
+            String failure = null;
+            try {
+                content = storage.readChapterFile(bookId, fileName);
+            }
+            catch (Exception error) {
+                failure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            }
+            final String loaded = content;
+            final String loadFailure = failure;
+            runOnUiThread(() -> {
+                if (generation != chapterLoadGeneration || isFinishing()) return;
+                hideChapterLoadingOverlay();
+                if (!bookId.equals(activeBookId)) return;
+                if (loadFailure != null) {
+                    toast("خواندن Chapter ناموفق بود: " + loadFailure);
+                    return;
+                }
+                finishOpenReader(bookId, index, loaded);
+            });
+        });
+    }
+
     private void finishOpenReader(String bookId, int index, String loadedText) {
         JSONObject book = findBookById(bookId);
         JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
