@@ -114,7 +114,7 @@ public final class MainActivity extends Activity {
     int TEXT = Color.rgb(241, 241, 241);
     int MUTED = Color.rgb(165, 165, 165);
     boolean lightTheme;
-    private int accentIndex;
+    int accentIndex;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     final Set<String> activeGenreFilter = new HashSet<>();
@@ -138,7 +138,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
     private BookCoverStore coverStore;
     private BookCoverDownloader coverDownloader;
-    private ThemeCatalog themeCatalog;
+    ThemeCatalog themeCatalog;
     NativeUiComponents uiComponents;
     private ChapterColloquializerProcessor chapterColloquializerProcessor;
     private NovelStorage storage;
@@ -148,7 +148,7 @@ public final class MainActivity extends Activity {
     private BookJsonPromptStore bookJsonPromptStore;
     Typeface vazir;
     JSONObject library = new JSONObject();
-    private String page = "dashboard";
+    String page = "dashboard";
     private final Deque<NavigationState> navigationHistory = new ArrayDeque<>();
     private boolean suppressNavigationHistory;
     private long lastRootBackPressedAt;
@@ -176,7 +176,7 @@ public final class MainActivity extends Activity {
     private Runnable progressRunnable;
     private Runnable quickHideRunnable;
     private boolean drawerOpen;
-    private boolean returnToSettingsAfterPicker;
+    boolean returnToSettingsAfterPicker;
     private boolean readerImeVisible;
     private float readerPreviewTouchX;
     private float readerPreviewTouchY;
@@ -242,7 +242,8 @@ public final class MainActivity extends Activity {
     private int chapterLoadGeneration;
     private View chapterLoadingOverlay;
     private ScrollView readerScroll;
-    private ScrollView settingsScroll;
+    ScrollView settingsScroll;
+    private SettingsScreen settingsScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -343,7 +344,7 @@ public final class MainActivity extends Activity {
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    private void applyThemeColors() {
+    void applyThemeColors() {
         PURPLE = themeCatalog.accentColor(accentIndex);
         SECONDARY_ACCENT = themeCatalog.secondaryColor(accentIndex);
         BG = lightTheme ? Color.rgb(246, 244, 249) : BG_DARK;
@@ -543,7 +544,7 @@ public final class MainActivity extends Activity {
         appColumn.addView(gate, new LinearLayout.LayoutParams(-1, -1));
     }
 
-    private void chooseFolder() {
+    void chooseFolder() {
         try { storage.openPicker(); }
         catch (Exception error) { toast("انتخاب‌گر پوشه در دسترس نیست."); }
     }
@@ -1671,69 +1672,13 @@ public final class MainActivity extends Activity {
     }
 
     private void showSettings() {
-        setPage("settings");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("تنظیمات", "", "menu", null, this::openDrawer, null));
-        ScrollView scroll = new ScrollView(this);
-        settingsScroll = scroll;
-        scroll.setVerticalScrollBarEnabled(false); scroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(18), dp(14), dp(18), dp(24));
-
-        body.addView(text("ذخیره‌سازی", 15, MUTED), fieldParams());
-        body.addView(textButton("انتخاب پوشهٔ ذخیره‌سازی", "folder", PURPLE, () -> {
-            returnToSettingsAfterPicker = true;
-            chooseFolder();
-        }), fieldParams());
-
-        TextView readerDisplayTitle = text("اطلاعات بالای صفحهٔ مطالعه", 15, MUTED);
-        readerDisplayTitle.setPadding(0, dp(15), 0, dp(7));
-        body.addView(readerDisplayTitle);
-        addReaderDisplaySwitch(body, "نمایش درصد باتری", "show_battery");
-        addReaderDisplaySwitch(body, "نمایش ساعت", "show_clock");
-        TextView bookSortTitle = text("مرتب‌سازی کتابخانه", 15, MUTED);
-        bookSortTitle.setPadding(0, dp(16), 0, dp(7));
-        body.addView(bookSortTitle);
-        body.addView(textButton("مرتب‌سازی بر اساس: " + bookSortLabel(), "filter", PURPLE,
-                this::showBookSortDialog), fieldParams());
-        addReadingSpeedSetting(body);
-        TextView bookEntryTitle = text("افزودن کتاب", 15, MUTED);
-        bookEntryTitle.setPadding(0, dp(10), 0, dp(7));
-        body.addView(bookEntryTitle);
-        addPreferenceSwitch(body, "به هوش مصنوعی دسترسی ندارم؛ نمایش کامل فرم", "general",
-                "no_ai_access", false);
-        body.addView(textButton("ویرایش متن پرایمت ورود JSON", "edit", PURPLE,
-                this::showBookJsonPromptSettings), fieldParams());
-        scroll.addView(body);
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        settingsUi().showSettings();
     }
 
-    private void addReadingSpeedSetting(LinearLayout body) {
-        TextView label = text("سرعت مطالعه (کلمه در دقیقه)", 14, MUTED);
-        label.setPadding(0, dp(14), 0, dp(6));
-        body.addView(label);
-        SharedPreferences preferences = getSharedPreferences("general", MODE_PRIVATE);
-        EditText speed = edit("200", false);
-        speed.setInputType(InputType.TYPE_CLASS_NUMBER);
-        speed.setSingleLine(true);
-        speed.setText(Integer.toString(preferences.getInt("reading_speed_wpm", 200)));
-        speed.setSelection(speed.length());
-        speed.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
-            @Override public void afterTextChanged(Editable value) {
-                try {
-                    int wordsPerMinute = Integer.parseInt(value.toString().trim());
-                    if (wordsPerMinute > 0) preferences.edit()
-                            .putInt("reading_speed_wpm", wordsPerMinute).apply();
-                } catch (NumberFormatException ignored) { }
-            }
-        });
-        body.addView(clearableInput(speed), fieldParams());
+    private SettingsScreen settingsUi() {
+        if (settingsScreen == null) settingsScreen = new SettingsScreen(this);
+        return settingsScreen;
     }
-
     private int readingSpeedWordsPerMinute() {
         return Math.max(1, getSharedPreferences("general", MODE_PRIVATE)
                 .getInt("reading_speed_wpm", 200));
@@ -1747,250 +1692,19 @@ public final class MainActivity extends Activity {
         return ChapterCatalog.remainingTimeLabel(chapter);
     }
 
-    private String bookSortLabel() {
-        String mode = getSharedPreferences("general", MODE_PRIVATE).getString("book_sort", "recent");
-        if ("title".equals(mode)) return "عنوان";
-        if ("manual".equals(mode)) return "ترتیب دستی";
-        return "آخرین مطالعه";
-    }
-
     private void showBookSortDialog() {
-        String[] labels = {"آخرین مطالعه", "عنوان", "ترتیب دستی"};
-        String[] values = {"recent", "title", "manual"};
-        String current = getSharedPreferences("general", MODE_PRIVATE).getString("book_sort", "recent");
-        int checked = "title".equals(current) ? 1 : "manual".equals(current) ? 2 : 0;
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("مرتب‌سازی بر اساس")
-                .setSingleChoiceItems(labels, checked, (shown, which) -> {
-                    getSharedPreferences("general", MODE_PRIVATE).edit()
-                            .putString("book_sort", values[which]).apply();
-                    shown.dismiss();
-                    showSettings();
-                }).setNegativeButton("لغو", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
+        settingsUi().showBookSortDialog();
     }
 
     private void showThemes() {
-        setPage("themes");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("تم‌ها", "", "menu", null, this::openDrawer, null));
-        ScrollView scroll = new ScrollView(this);
-        settingsScroll = scroll;
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(18), dp(14), dp(18), dp(24));
-
-        TextView modeTitle = text("حالت نمایش", 15, MUTED);
-        modeTitle.setPadding(0, 0, 0, dp(7));
-        body.addView(modeTitle);
-        LinearLayout modes = new LinearLayout(this);
-        modes.setOrientation(LinearLayout.HORIZONTAL);
-        modes.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        modes.addView(themeChoice("سیاه", !lightTheme, false), new LinearLayout.LayoutParams(0, dp(48), 1));
-        modes.addView(new View(this), new LinearLayout.LayoutParams(dp(10), 1));
-        modes.addView(themeChoice("روشن", lightTheme, true), new LinearLayout.LayoutParams(0, dp(48), 1));
-        body.addView(modes, fieldParams());
-        addPreferenceSwitch(body, "انتخاب تصادفی از تم‌های پسندیده هنگام ورود", "appearance",
-                "random_each_launch", false);
-
-        TextView themesTitle = text("همهٔ تم‌ها", 15, MUTED);
-        themesTitle.setPadding(0, dp(9), 0, dp(7));
-        body.addView(themesTitle);
-        GridLayout grid = new GridLayout(this);
-        grid.setColumnCount(2);
-        grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
-        grid.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        for (int i = 0; i < themeCatalog.themeCount(); i++) {
-            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
-            int screenWidthDp = (int) (getResources().getDisplayMetrics().widthPixels
-                    / getResources().getDisplayMetrics().density);
-            int widthDp = Math.max(132, (screenWidthDp - 48) / 2);
-            params.width = dp(widthDp);
-            params.height = dp(56);
-            params.setMargins(dp(3), dp(3), dp(3), dp(3));
-            grid.addView(themeCard(i), params);
-        }
-        body.addView(grid, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, dp(50));
-        addParams.topMargin = dp(11);
-        body.addView(textButton("افزودن تم جدید", "add", PURPLE, this::showAddThemeDialog), addParams);
-        scroll.addView(body);
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-    }
-
-    private View themeCard(int index) {
-        LinearLayout card = new LinearLayout(this);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        card.setPadding(dp(8), dp(5), dp(8), dp(5));
-        card.setBackground(roundDrawable(SURFACE, index == accentIndex ? PURPLE : 0xFF40384A, 12));
-        card.setClickable(true);
-        card.setFocusable(true);
-
-        FrameLayout favorite = new FrameLayout(this);
-        NativeIconView heart = new NativeIconView(this, themeCatalog.isFavorite(index) ? "heart_filled" : "heart_outline",
-                themeCatalog.isFavorite(index) ? RED : MUTED);
-        favorite.addView(heart, new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
-        favorite.setContentDescription("پسندیدن تم");
-        favorite.setClickable(true);
-        favorite.setFocusable(true);
-        applyPressScale(favorite, .98f);
-        favorite.setOnClickListener(v -> {
-            themeCatalog.setFavorite(index, !themeCatalog.isFavorite(index));
-            rerenderCurrentPage();
-        });
-        card.addView(favorite, new LinearLayout.LayoutParams(dp(30), dp(40)));
-
-        GradientDrawable preview = new GradientDrawable();
-        preview.setCornerRadius(dp(9));
-        themeCatalog.applyGradient(preview, index, PURPLE, dp(19));
-        FrameLayout swatch = new FrameLayout(this);
-        swatch.setBackground(preview);
-        card.addView(swatch, new LinearLayout.LayoutParams(dp(30), dp(30)));
-
-        TextView label = text(themeCatalog.themeName(index), 12, TEXT);
-        label.setMaxLines(2);
-        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        label.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, -1, 1);
-        labelParams.rightMargin = dp(4);
-        card.addView(label, labelParams);
-        card.setOnClickListener(v -> {
-            accentIndex = index;
-            getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
-            applyThemeColors();
-            rerenderCurrentPage();
-        });
-        applyPressScale(card, .97f);
-        return card;
-    }
-
-    private void showAddThemeDialog() {
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(4), dp(4), dp(4), dp(4));
-        EditText name = edit("نام تم", false);
-        EditText colors = edit("دو رنگ با ویرگول: #B69AFF, #7046C8", false);
-        colors.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
-        form.addView(name, fieldParams());
-        form.addView(colors, fieldParams());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تم جدید")
-                .setView(dialogPadding(form)).setPositiveButton("افزودن", null)
-                .setNegativeButton("لغو", null).create();
-        dialog.setOnShowListener(ignored -> {
-            styleDialogWindow(dialog);
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String themeName = name.getText().toString().trim();
-                String[] rawColors = colors.getText().toString().split(",");
-                if (themeName.isEmpty() || rawColors.length != 2) {
-                    toast("نام تم و دقیقاً دو رنگ وارد کن.");
-                    return;
-                }
-                JSONArray parsedColors = new JSONArray();
-                try {
-                    for (String raw : rawColors) {
-                        String value = raw.trim();
-                        if (!value.startsWith("#")) value = "#" + value;
-                        parsedColors.put(Color.parseColor(value));
-                    }
-                    JSONArray themes = themeCatalog.customThemes();
-                    JSONObject theme = new JSONObject();
-                    theme.put("name", themeName);
-                    theme.put("colors", parsedColors);
-                    theme.put("favorite", false);
-                    themes.put(theme);
-                    getSharedPreferences("appearance", MODE_PRIVATE).edit()
-                            .putString("custom_themes", themes.toString()).apply();
-                    accentIndex = ThemeCatalog.BUILTIN_THEME_COUNT + themes.length() - 1;
-                    getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
-                    dialog.dismiss();
-                    applyThemeColors();
-                    rerenderCurrentPage();
-                } catch (IllegalArgumentException | JSONException error) {
-                    toast("رنگ را با قالب #RRGGBB وارد کن.");
-                }
-            });
-        });
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
-    private void addReaderDisplaySwitch(LinearLayout body, String label, String key) {
-        SharedPreferences preferences = getSharedPreferences("reader_display", MODE_PRIVATE);
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        row.setPadding(dp(14), 0, dp(12), 0);
-        row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
-        TextView labelView = text(label, 14, TEXT);
-        row.addView(labelView, new LinearLayout.LayoutParams(0, -1, 1));
-        Switch toggle = new Switch(this);
-        toggle.setChecked(preferences.getBoolean(key, true));
-        if (Build.VERSION.SDK_INT >= 21) {
-            int[][] states = new int[][]{{android.R.attr.state_checked}, new int[0]};
-            toggle.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{PURPLE, MUTED}));
-            toggle.setTrackTintList(new android.content.res.ColorStateList(states,
-                    new int[]{Color.argb(100, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)), 0xFF625D66}));
-        }
-        toggle.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean(key, checked).apply());
-        row.addView(toggle, new LinearLayout.LayoutParams(-2, -2));
-        applyPressScale(toggle, .98f);
-        row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked()));
-        applyPressScale(row, .98f);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
-        params.bottomMargin = dp(8);
-        body.addView(row, params);
+        settingsUi().showThemes();
     }
 
     private void addPreferenceSwitch(LinearLayout body, String label, String preferenceFile,
                                      String key, boolean defaultValue) {
-        SharedPreferences preferences = getSharedPreferences(preferenceFile, MODE_PRIVATE);
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        row.setPadding(dp(14), 0, dp(12), 0);
-        row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
-        TextView labelView = text(label, 14, TEXT);
-        row.addView(labelView, new LinearLayout.LayoutParams(0, -1, 1));
-        Switch toggle = new Switch(this);
-        toggle.setChecked(preferences.getBoolean(key, defaultValue));
-        if (Build.VERSION.SDK_INT >= 21) {
-            int[][] states = new int[][]{{android.R.attr.state_checked}, new int[0]};
-            toggle.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{PURPLE, MUTED}));
-            toggle.setTrackTintList(new android.content.res.ColorStateList(states,
-                    new int[]{Color.argb(100, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)), 0xFF625D66}));
-        }
-        toggle.setOnCheckedChangeListener((button, checked) -> {
-            preferences.edit().putBoolean(key, checked).apply();
-            if ("enabled.colloquializer".equals(key) && "reader".equals(page)) showReader();
-        });
-        row.addView(toggle, new LinearLayout.LayoutParams(-2, -2));
-        applyPressScale(toggle, .98f);
-        row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked()));
-        applyPressScale(row, .98f);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52));
-        params.bottomMargin = dp(8);
-        body.addView(row, params);
+        settingsUi().addPreferenceSwitch(body, label, preferenceFile, key, defaultValue);
     }
-
-    private TextView themeChoice(String label, boolean selected, boolean light) {
-        TextView choice = text(label, 15, selected ? contrastOnAccent() : TEXT);
-        choice.setGravity(Gravity.CENTER);
-        choice.setBackground(roundDrawable(selected ? PURPLE : SURFACE, selected ? PURPLE : 0xFF40384A, 12));
-        choice.setOnClickListener(v -> {
-            lightTheme = light;
-            getSharedPreferences("appearance", MODE_PRIVATE).edit().putBoolean("light", lightTheme).apply();
-            applyThemeColors();
-            rerenderCurrentPage();
-        });
-        applyPressScale(choice, .98f);
-        return choice;
-    }
-
-    private void rerenderCurrentPage() {
+    void rerenderCurrentPage() {
         boolean settingsPage = "settings".equals(page) || "themes".equals(page);
         int settingsScrollY = settingsPage && settingsScroll != null
                 ? settingsScroll.getScrollY() : 0;
@@ -4595,7 +4309,7 @@ public final class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    private void showReader() {
+    void showReader() {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
         try { readerRestoreState = new JSONObject(chapter.toString()); }
@@ -5681,7 +5395,7 @@ public final class MainActivity extends Activity {
         target.showDetails.run();
     }
 
-    private void showBookJsonPromptSettings() {
+    void showBookJsonPromptSettings() {
         EditText promptEditor = edit("متن پرایمت", true);
         promptEditor.setText(bookJsonPromptStore.load());
         promptEditor.setMinLines(12);
@@ -6832,7 +6546,7 @@ public final class MainActivity extends Activity {
         return uiComponents.text(value, sp, color);
     }
 
-    private EditText edit(String hint, boolean multiline) {
+    EditText edit(String hint, boolean multiline) {
         return uiComponents.edit(hint, multiline);
     }
 
@@ -6840,7 +6554,7 @@ public final class MainActivity extends Activity {
         return uiComponents.selectionHighlightColor();
     }
 
-    private View clearableInput(EditText input) {
+    View clearableInput(EditText input) {
         return uiComponents.clearableInput(input);
     }
 
