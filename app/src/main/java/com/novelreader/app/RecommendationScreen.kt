@@ -7,6 +7,7 @@ import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -376,7 +377,7 @@ internal class RecommendationScreen(private val host: MainActivity) {
         val scroll = ScrollView(host).apply {
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
-            addView(description, ScrollView.LayoutParams(-1, -2))
+            addView(description, ViewGroup.LayoutParams(-1, -2))
         }
         AlertDialog.Builder(host).setTitle("توضیحات کتاب")
             .setView(host.dialogPadding(scroll)).setPositiveButton("بستن", null).create()
