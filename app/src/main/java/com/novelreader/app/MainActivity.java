@@ -244,6 +244,7 @@ public final class MainActivity extends Activity {
     private ScrollView readerScroll;
     ScrollView settingsScroll;
     private SettingsScreen settingsScreen;
+    private AuthorInfoScreen authorInfoScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -1941,7 +1942,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private String authorGender(String author) {
+    String authorGender(String author) {
         if (recommendationState == null || author == null) return "unknown";
         return recommendationState.getString("author_gender:" + author.trim().toLowerCase(Locale.ROOT), "unknown");
     }
@@ -2001,7 +2002,7 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private JSONObject ensureAuthorDetail(String author) {
+    JSONObject ensureAuthorDetail(String author) {
         if (author == null || author.trim().isEmpty()) return null;
         JSONObject found = findAuthorDetail(author.trim());
         if (found != null) return found;
@@ -2033,176 +2034,19 @@ public final class MainActivity extends Activity {
     private void showAuthorInfoPage(String author) {
         if (author == null || author.trim().isEmpty()) return;
         activeAuthor = author.trim();
-        JSONObject detail = ensureAuthorDetail(activeAuthor);
-        setPage("authorInfo");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader(activeAuthor, "", "menu", "edit", this::openDrawer,
-                () -> showAuthorInfoDialog(activeAuthor), 10), new LinearLayout.LayoutParams(-1, dp(62)));
-        if (titleView != null) {
-            titleView.setContentDescription("کپی نام نویسنده");
-            titleView.setOnClickListener(v -> copyToClipboard("author", activeAuthor));
-        }
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(18), dp(18), dp(18), dp(24));
-        FrameLayout iconBox = new FrameLayout(this);
-        NativeIconView icon = new NativeIconView(this, authorIcon(activeAuthor), PURPLE);
-        iconBox.addView(icon, new FrameLayout.LayoutParams(dp(60), dp(60), Gravity.CENTER));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(88), dp(88));
-        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
-        iconParams.bottomMargin = dp(12);
-        iconBox.setBackground(roundDrawable(SURFACE, 0xFF40384A, 22));
-        body.addView(iconBox, iconParams);
-        TextView gender = text("جنسیت: " + ("female".equals(authorGender(activeAuthor)) ? "زن"
-                : "male".equals(authorGender(activeAuthor)) ? "مرد" : "نامشخص"), 14, MUTED);
-        gender.setGravity(Gravity.CENTER);
-        body.addView(gender, new LinearLayout.LayoutParams(-1, dp(34)));
-        LinearLayout feedback = new LinearLayout(this);
-        feedback.setGravity(Gravity.CENTER);
-        feedback.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        FrameLayout like = plainIconButton("thumb_up",
-                containsIgnoreCase(favoriteAuthorPreferences, activeAuthor) ? GREEN : MUTED,
-                () -> { toggleFavoriteAuthor(activeAuthor); showAuthorInfoPage(activeAuthor); });
-        FrameLayout dislike = plainIconButton("thumb_down",
-                containsIgnoreCase(dislikedAuthorPreferences, activeAuthor) ? RED : MUTED,
-                () -> { toggleDislikedAuthor(activeAuthor); showAuthorInfoPage(activeAuthor); });
-        feedback.addView(like, new LinearLayout.LayoutParams(dp(48), dp(42)));
-        feedback.addView(dislike, new LinearLayout.LayoutParams(dp(48), dp(42)));
-        LinearLayout.LayoutParams feedbackParams = new LinearLayout.LayoutParams(-1, dp(46));
-        feedbackParams.bottomMargin = dp(12);
-        body.addView(feedback, feedbackParams);
-        TextView descriptionLabel = text("توضیحات کوتاه", 14, MUTED);
-        descriptionLabel.setGravity(Gravity.RIGHT);
-        body.addView(descriptionLabel);
-        TextView description = text(detail == null || detail.optString("description").trim().isEmpty()
-                ? "توضیحی ثبت نشده" : detail.optString("description"), 15,
-                detail == null || detail.optString("description").trim().isEmpty() ? MUTED : TEXT);
-        description.setGravity(Gravity.RIGHT);
-        description.setPadding(0, dp(6), 0, dp(18));
-        body.addView(description);
-        addBookInfoLine(body, "تعداد کتاب", Integer.toString(authorBookCount(activeAuthor)));
-        long readingMillis = 0;
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book == null || !activeAuthor.equalsIgnoreCase(book.optString("author", "").trim())) continue;
-            if (readingStats != null) readingMillis += readingStats.totalForBook(book.optString("id"));
-        }
-        addBookInfoLine(body, "زمان مطالعه", formatReadingTime(readingMillis));
-        body.addView(textButton("کتاب‌های این نویسنده", "book", PURPLE, () -> {
-            showAllBooksForAuthor(activeAuthor);
-        }), new LinearLayout.LayoutParams(-1, dp(50)));
-        scroll.addView(body);
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        authorInfoUi().showPage(activeAuthor);
+    }
+
+    private AuthorInfoScreen authorInfoUi() {
+        if (authorInfoScreen == null) authorInfoScreen = new AuthorInfoScreen(this);
+        return authorInfoScreen;
     }
 
     private void showAuthorInfoDialog(String originalName) {
-        EditText name = edit("نام نویسنده", false);
-        name.setText(originalName);
-        name.setSelection(name.length());
-        EditText description = edit("توضیحات کوتاه", true);
-        JSONObject authorDetail = ensureAuthorDetail(originalName);
-        if (authorDetail != null) description.setText(authorDetail.optString("description", ""));
-        String[] genders = {"unknown", "female", "male"};
-        String currentGender = authorGender(originalName);
-        int[] selectedGender = {"female".equals(currentGender) ? 1 : "male".equals(currentGender) ? 2 : 0};
-        String[] labels = {"نامشخص", "زن", "مرد"};
-        LinearLayout genderSection = new LinearLayout(this);
-        genderSection.setOrientation(LinearLayout.VERTICAL);
-        genderSection.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        TextView genderTitle = text("جنسیت نویسنده", 14, MUTED);
-        genderTitle.setGravity(Gravity.CENTER);
-        genderTitle.setPadding(0, dp(12), 0, dp(7));
-        genderSection.addView(genderTitle, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout options = new LinearLayout(this);
-        options.setOrientation(LinearLayout.HORIZONTAL);
-        options.setGravity(Gravity.CENTER);
-        options.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        for (int i = 0; i < labels.length; i++) {
-            final int index = i;
-            TextView choice = text(labels[i], 14, selectedGender[0] == i ? contrastOnAccent() : TEXT);
-            choice.setGravity(Gravity.CENTER);
-            choice.setBackground(roundDrawable(selectedGender[0] == i ? PURPLE : SURFACE,
-                    selectedGender[0] == i ? PURPLE : 0xFF40384A, 12));
-            LinearLayout.LayoutParams choiceParams = new LinearLayout.LayoutParams(0, dp(46), 1);
-            if (i > 0) choiceParams.rightMargin = dp(7);
-            options.addView(choice, choiceParams);
-            choice.setOnClickListener(v -> {
-                selectedGender[0] = index;
-                for (int j = 0; j < options.getChildCount(); j++) {
-                    View item = options.getChildAt(j);
-                    if (!(item instanceof TextView)) continue;
-                    boolean selected = j == index;
-                    ((TextView) item).setTextColor(selected ? contrastOnAccent() : TEXT);
-                    item.setBackground(roundDrawable(selected ? PURPLE : SURFACE,
-                            selected ? PURPLE : 0xFF40384A, 12));
-                }
-            });
-            applyPressScale(choice, .98f);
-        }
-        genderSection.addView(options, new LinearLayout.LayoutParams(-1, dp(46)));
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(18), dp(10), dp(18), dp(8));
-        form.addView(clearableInput(name), fieldParams());
-        LinearLayout.LayoutParams descriptionParams = fieldParams();
-        descriptionParams.topMargin = dp(8);
-        form.addView(clearableInput(description), descriptionParams);
-        LinearLayout.LayoutParams genderParams = fieldParams();
-        genderParams.topMargin = dp(8);
-        form.addView(genderSection, genderParams);
-        ScrollView formScroll = new ScrollView(this);
-        formScroll.setFillViewport(true);
-        formScroll.setVerticalScrollBarEnabled(false);
-        formScroll.addView(form);
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setMinimumHeight(dp(410));
-        content.addView(formScroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout footer = new LinearLayout(this);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        footer.setPadding(dp(18), dp(6), dp(18), dp(12));
-        TextView cancel = text("لغو", 15, MUTED);
-        cancel.setGravity(Gravity.CENTER);
-        cancel.setBackground(roundDrawable(SURFACE, themedStrokeColor(0xFF40384A), 12));
-        footer.addView(cancel, new LinearLayout.LayoutParams(0, dp(46), 1));
-        View footerGap = new View(this);
-        footer.addView(footerGap, new LinearLayout.LayoutParams(dp(12), 1));
-        TextView save = text("ذخیره", 15, contrastOnAccent());
-        save.setGravity(Gravity.CENTER);
-        save.setBackground(roundDrawable(PURPLE, PURPLE, 12));
-        footer.addView(save, new LinearLayout.LayoutParams(0, dp(46), 1));
-        content.addView(footer, new LinearLayout.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("اطلاعات نویسنده")
-                .setView(content).create();
-        cancel.setOnClickListener(v -> dialog.dismiss());
-        save.setOnClickListener(v -> {
-            String newName = TextNormalization.titleCaseWords(name.getText().toString());
-            if (newName.isEmpty()) { name.setError("نام نویسنده را وارد کن"); return; }
-            if (!renameAuthor(originalName, newName, genders[selectedGender[0]])) return;
-            JSONObject savedAuthor = ensureAuthorDetail(newName);
-            if (savedAuthor != null) putJson(savedAuthor, "description", description.getText().toString().trim());
-            if (!saveLibrary()) return;
-            dialog.dismiss();
-            if ("authorInfo".equals(page)) showAuthorInfoPage(newName);
-        });
-        applyPressScale(cancel, .97f);
-        applyPressScale(save, .97f);
-        dialog.show();
-        styleDialogWindow(dialog);
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-            int availableHeight = Math.max(dp(360), getResources().getDisplayMetrics().heightPixels - dp(180));
-            dialog.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(32), dp(480)),
-                    Math.min(dp(590), availableHeight));
-        }
+        authorInfoUi().showEditDialog(originalName);
     }
 
-    private boolean renameAuthor(String oldName, String newName, String gender) {
+    boolean renameAuthor(String oldName, String newName, String gender) {
         String before = library.toString();
         JSONArray books = library.optJSONArray("books");
         if (books != null) for (int i = 0; i < books.length(); i++) {
@@ -2239,7 +2083,7 @@ public final class MainActivity extends Activity {
         return true;
     }
 
-    private void toggleFavoriteAuthor(String author) {
+    void toggleFavoriteAuthor(String author) {
         if (containsIgnoreCase(favoriteAuthorPreferences, author)) removeIgnoreCase(favoriteAuthorPreferences, author);
         else {
             removeIgnoreCase(dislikedAuthorPreferences, author);
@@ -2250,7 +2094,7 @@ public final class MainActivity extends Activity {
         if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
     }
 
-    private void toggleDislikedAuthor(String author) {
+    void toggleDislikedAuthor(String author) {
         if (containsIgnoreCase(dislikedAuthorPreferences, author)) removeIgnoreCase(dislikedAuthorPreferences, author);
         else {
             removeIgnoreCase(favoriteAuthorPreferences, author);
@@ -2284,7 +2128,7 @@ public final class MainActivity extends Activity {
         showBookShelfPage(true);
     }
 
-    private void showAllBooksForAuthor(String author) {
+    void showAllBooksForAuthor(String author) {
         setPage("allBooks");
         selectedAuthorNames.clear();
         selectedBookIds.clear();
@@ -4116,7 +3960,7 @@ public final class MainActivity extends Activity {
         if (!credits.isEmpty()) copyToClipboard("book", credits);
     }
 
-    private void copyToClipboard(String label, String value) {
+    void copyToClipboard(String label, String value) {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
     }
