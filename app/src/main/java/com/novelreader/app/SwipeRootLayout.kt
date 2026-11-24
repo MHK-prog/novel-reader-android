@@ -42,7 +42,7 @@ class SwipeRootLayout(
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
                 first: MotionEvent?,
-                last: MotionEvent?,
+                last: MotionEvent,
                 velocityX: Float,
                 velocityY: Float
             ): Boolean {

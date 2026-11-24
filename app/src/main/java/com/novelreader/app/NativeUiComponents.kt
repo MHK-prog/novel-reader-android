@@ -104,7 +104,7 @@ class NativeUiComponents(private val activity: Activity) {
         button.isClickable = true
         button.isFocusable = true
         applyPressScale(button)
-        action?.let { button.setOnClickListener { it.run() } }
+        action?.let { clickAction -> button.setOnClickListener { clickAction.run() } }
         return button
     }
 
@@ -125,7 +125,7 @@ class NativeUiComponents(private val activity: Activity) {
         button.isClickable = true
         button.isFocusable = true
         applyPressScale(button)
-        action?.let { button.setOnClickListener { it.run() } }
+        action?.let { clickAction -> button.setOnClickListener { clickAction.run() } }
         return button
     }
 
@@ -152,7 +152,7 @@ class NativeUiComponents(private val activity: Activity) {
         val labelView = text(label, 15, theme.text).apply {
             gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
         }
-        row.addView(labelView, LinearLayout.LayoutParams(0, -2, 1).apply { leftMargin = dp(12f) })
+        row.addView(labelView, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12f) })
         row.setPadding(dp(14f), 0, dp(14f), 0)
         row.background = roundDrawable(theme.surface, 0xFF302A38.toInt(), 14)
         row.setOnClickListener { action.run() }
