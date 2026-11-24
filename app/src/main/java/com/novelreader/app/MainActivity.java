@@ -141,7 +141,7 @@ public final class MainActivity extends Activity {
     ThemeCatalog themeCatalog;
     NativeUiComponents uiComponents;
     private ChapterColloquializerProcessor chapterColloquializerProcessor;
-    private NovelStorage storage;
+    NovelStorage storage;
     private RoomLibraryStore libraryStore;
     private ReadingPositionStore readingPositionStore;
     private ResumeReadingPrompt resumeReadingPrompt;
@@ -224,14 +224,14 @@ public final class MainActivity extends Activity {
     private GridView booksGrid;
     GridView collectionsGrid;
     GridView genresGrid;
-    private ListView chaptersList;
+    ListView chaptersList;
     private BookCardAdapter bookAdapter;
     CollectionCardAdapter collectionAdapter;
     AuthorCardAdapter authorAdapter;
     GenreCardAdapter genreAdapter;
     GridView authorsGrid;
     EditText authorSearchField;
-    private ChapterCardAdapter chapterAdapter;
+    ChapterCardAdapter chapterAdapter;
     private EditText chapterEditor;
     private TextView readerPreview;
     private FrameLayout readerContentContainer;
@@ -249,6 +249,7 @@ public final class MainActivity extends Activity {
     private GenreLibraryScreen genreLibraryScreen;
     private TagSettingsScreen tagSettingsScreen;
     private CollectionScreens collectionScreens;
+    private ChapterListScreen chapterListScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -3361,32 +3362,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private void showChapters() {
-        JSONObject book = activeBook();
-        if (book == null) { showDashboard(); return; }
-        setPage("chapters"); appColumn.removeAllViews();
-        animatePageTransition();
-        addChaptersHeader(book);
-        View header = appColumn.getChildAt(0);
-        if (selectedChapterKeys.isEmpty()) {
-            if (titleView != null) {
-                titleView.setContentDescription("کپی نام کتاب و نویسنده");
-                titleView.setOnClickListener(v -> copyBookCredits(book));
-            }
-            if (subtitleView != null) {
-                subtitleView.setContentDescription("کپی نام کتاب و نویسنده");
-                subtitleView.setOnClickListener(v -> copyBookCredits(book));
-            }
-        }
-        chaptersList = new ListView(this);
-        chaptersList.setDivider(null); chaptersList.setCacheColorHint(Color.TRANSPARENT); chaptersList.setBackgroundColor(BG);
-        chaptersList.setVerticalScrollBarEnabled(false); chaptersList.setHorizontalScrollBarEnabled(false);
-        chaptersList.setPadding(dp(12), dp(6), dp(12), dp(6)); chaptersList.setClipToPadding(false);
-        chapterAdapter = new ChapterCardAdapter(this); chaptersList.setAdapter(chapterAdapter);
-        appColumn.addView(chaptersList, new LinearLayout.LayoutParams(-1, 0, 1));
-        int next = ChapterCatalog.firstUnread(book);
-        chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
-    }
+    void showChapters() { chapterListUi().show(); }
 
     void copyBookCredits(JSONObject book) {
         String title = book.optString("title").trim();
@@ -3400,21 +3376,6 @@ public final class MainActivity extends Activity {
         if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
     }
 
-    private void addChaptersHeader(JSONObject book) {
-        View header;
-        if (selectedChapterKeys.isEmpty()) {
-            header = makeHeader(displayBookTitle(book), book.optString("author"), "add", null,
-                    this::addChapter, null);
-        } else if (selectedChapterKeys.size() == 1) {
-            header = makeHeader(selectedChapterKeys.size() + " Chapter selected", "", "edit", "delete",
-                    this::renameSelectedChapter, this::confirmDeleteSelectedChapters, 0, 118);
-        } else {
-            header = makeHeader(selectedChapterKeys.size() + " Chapters selected", "", "delete", null,
-                    this::confirmDeleteSelectedChapters, null);
-        }
-        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
-    }
-
     String chapterSelectionKey(JSONObject chapter, int position) {
         return Integer.toString(ChapterCatalog.storageIndex(chapter, position));
     }
@@ -3426,168 +3387,15 @@ public final class MainActivity extends Activity {
         refreshChapterSelection();
     }
 
-    private void confirmDeleteSelectedChapters() {
-        JSONObject book = activeBook();
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null || selectedChapterKeys.isEmpty()) return;
-
-        Set<String> selected = new HashSet<>(selectedChapterKeys);
-        int count = 0;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter != null && selected.contains(chapterSelectionKey(chapter, i))) count++;
-        }
-        if (count == 0) {
-            selectedChapterKeys.clear();
-            refreshChapterSelection();
-            return;
-        }
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setMessage(count == 1 ? "Delete the selected Chapter?"
-                        : "Delete " + count + " selected Chapters?")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String before = library.toString();
-            String bookFolder = book.optString("id", "");
-            List<String> chapterFiles = new ArrayList<>();
-            List<String> originalFiles = new ArrayList<>();
-            JSONArray kept = new JSONArray();
-
-            for (int i = 0; i < chapters.length(); i++) {
-                JSONObject chapter = chapters.optJSONObject(i);
-                if (chapter == null || !selected.contains(chapterSelectionKey(chapter, i))) {
-                    kept.put(chapter);
-                    continue;
-                }
-                String chapterId = chapter.optString("id", "");
-                if (!chapterId.isEmpty()) {
-                    chapterFiles.add(chapterId + ".txt");
-                    originalFiles.add(chapterOriginalFileName(chapter));
-                }
-            }
-
-            for (int i = 0; i < kept.length(); i++) putJson(kept.optJSONObject(i), "orderIndex", i);
-            putJson(book, "chapters", kept);
-            if (!saveLibrary()) {
-                restoreLibrary(before);
-                dialog.dismiss();
-                toast("Could not delete the selected Chapters.");
-                return;
-            }
-
-            selectedChapterKeys.clear();
-            dialog.dismiss();
-            boolean filesDeleted = true;
-            for (String file : chapterFiles) {
-                if (!storage.deleteChapterFile(bookFolder, file)) filesDeleted = false;
-            }
-            for (String file : originalFiles) {
-                if (!storage.deleteChapterOriginal(file)) filesDeleted = false;
-            }
-            refreshChapterSelection();
-            if (!filesDeleted) toast("Chapters removed; some unused files could not be deleted.");
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
+    private ChapterListScreen chapterListUi() {
+        if (chapterListScreen == null) chapterListScreen = new ChapterListScreen(this);
+        return chapterListScreen;
     }
 
-    private void refreshChapterSelection() {
-        if (!"chapters".equals(page) || appColumn == null) return;
-        JSONObject book = activeBook();
-        if (book == null) return;
-        if (appColumn.getChildCount() > 0) appColumn.removeViewAt(0);
-        addChaptersHeader(book);
-        if (chapterAdapter != null) chapterAdapter.notifyDataSetChanged();
-    }
-
-    private void renameSelectedChapter() {
-        if (selectedChapterKeys.size() != 1) return;
-        JSONObject book = activeBook();
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null) return;
-        String selectedKey = selectedChapterKeys.iterator().next();
-        JSONObject selected = null;
-        int selectedPosition = -1;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter != null && selectedKey.equals(chapterSelectionKey(chapter, i))) {
-                selected = chapter;
-                selectedPosition = i;
-                break;
-            }
-        }
-        if (selected == null) return;
-        String before = library.toString();
-        EditText title = edit("Chapter title", false);
-        title.setText(ChapterCatalog.label(selected, selectedPosition));
-        title.setSelection(title.length());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Edit Chapter")
-                .setView(dialogPadding(title)).setNegativeButton("Cancel", null)
-                .setPositiveButton("Save", null).create();
-        JSONObject chapterToEdit = selected;
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String newTitle = title.getText().toString().trim();
-            if (newTitle.isEmpty()) { title.setError("Enter a Chapter title"); return; }
-            putJson(chapterToEdit, "title", newTitle);
-            if (!saveLibrary()) {
-                restoreLibrary(before);
-            }
-            dialog.dismiss();
-            refreshChapterSelection();
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    }
-
-    private void addChapter() {
-        JSONObject book = activeBook();
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null) return;
-        if (chapters.length() >= 5000) { toast("حداکثر ۵۰۰۰ Chapter پشتیبانی می‌شود."); return; }
-        String bookId = book.optString("id");
-        int newIndex = chapters.length();
-        EditText chapterName = edit("Chapter name or number", false);
-        chapterName.setText("Chapter " + (newIndex + 1));
-        chapterName.setSelection(chapterName.length());
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Add Chapter")
-                .setView(dialogPadding(chapterName)).setNegativeButton("Cancel", null)
-                .setPositiveButton("Add", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String label = chapterName.getText().toString().trim();
-            if (label.isEmpty()) { chapterName.setError("Enter a Chapter name or number"); return; }
-            JSONObject currentBook = findBookById(bookId);
-            JSONArray currentChapters = currentBook == null ? null : currentBook.optJSONArray("chapters");
-            if (currentChapters == null || currentChapters.length() >= 5000) return;
-            String before = library.toString();
-            ChapterCatalog.ensureStorageIndexes(currentChapters);
-            JSONObject chapter = ChapterCatalog.newChapter();
-            putJson(chapter, "title", label);
-            int storageIndex = currentChapters.length() + 1;
-            putJson(chapter, "storageIndex", storageIndex);
-            int insertAt = ChapterCatalog.insertionIndex(currentChapters, label);
-            JSONArray ordered = new JSONArray();
-            for (int i = 0; i <= currentChapters.length(); i++) {
-                if (i == insertAt) ordered.put(chapter);
-                if (i < currentChapters.length()) ordered.put(currentChapters.optJSONObject(i));
-            }
-            for (int i = 0; i < ordered.length(); i++) putJson(ordered.optJSONObject(i), "orderIndex", i);
-            putJson(currentBook, "chapters", ordered);
-            if (!saveLibrary()) {
-                restoreLibrary(before);
-                return;
-            }
-            dialog.dismiss();
-            openReader(insertAt);
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    }
-
+    void confirmDeleteSelectedChapters() { chapterListUi().confirmDeleteSelectedChapters(); }
+    void refreshChapterSelection() { chapterListUi().refreshSelection(); }
+    void renameSelectedChapter() { chapterListUi().renameSelectedChapter(); }
+    void addChapter() { chapterListUi().addChapter(); }
     void showReader() {
         JSONObject book = activeBook(); JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null) { showChapters(); return; }
@@ -4272,7 +4080,7 @@ public final class MainActivity extends Activity {
         return chapterOriginalFileName(chapter);
     }
 
-    private String chapterOriginalFileName(JSONObject chapter) {
+    String chapterOriginalFileName(JSONObject chapter) {
         if (chapter == null) return null;
         String id = chapter.optString("id", "");
         return id.isEmpty() ? null : "chapter-" + id + "-original.txt";
