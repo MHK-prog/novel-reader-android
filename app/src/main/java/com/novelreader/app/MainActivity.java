@@ -16,12 +16,8 @@ import android.graphics.Canvas;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.ColorFilter;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PixelFormat;
-import android.graphics.RadialGradient;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.ClipDrawable;
@@ -40,12 +36,9 @@ import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
 import android.text.Layout;
 import android.view.Gravity;
-import android.view.GestureDetector;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -82,26 +75,18 @@ import java.util.Deque;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.math.BigDecimal;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import android.util.LruCache;
 
 /** Native Android reader. It intentionally uses platform Views only: no WebView or UI libraries. */
 public final class MainActivity extends Activity {
@@ -119,55 +104,14 @@ public final class MainActivity extends Activity {
     private static final int BLUE = Color.rgb(90, 169, 255);
     private static final int GREEN = Color.rgb(86, 201, 135);
     private static final int RED = Color.rgb(255, 76, 76);
-    private static final int[][] GRADIENT_COLORS = {
-            {0xFFFAD95C, 0xFFF9C251, 0xFFFFA270, 0xFFFD80A4, 0xFFFE66CD, 0xFFFE59D2},
-            {0xFF030712, 0xFF040917, 0xFF050D1D, 0xFF071225, 0xFF0A172D, 0xFF0D1D36, 0xFF10233F, 0xFF122946, 0xFF142F4E, 0xFF163556, 0xFF173C5E, 0xFF184366, 0xFF194B6D, 0xFF185274, 0xFF175A7A, 0xFF15617F, 0xFF146984, 0xFF147189, 0xFF167A8E, 0xFF1A8395, 0xFF1B8D9D, 0xFF1A98A6, 0xFF1CA4AF, 0xFF23B0B8, 0xFF32BBC1, 0xFF47C6CA, 0xFF62D1D3, 0xFF7FDCDD, 0xFF9BE7E8, 0xFFB5F1F1, 0xFFCAF9F9, 0xFFD9FFFF},
-            {0xFFA8CBFF, 0xFFB8CBFE, 0xFFD2CBFF, 0xFFF2C9F9, 0xFFFEC6F2, 0xFFFFC1EC, 0xFFFDBAEC},
-            {0xFF0FE6DC, 0xFF45DDE1, 0xFF53D1E2, 0xFF33C2E3, 0xFF05B2E6, 0xFF09A0EA, 0xFF008EEC, 0xFF007CEB, 0xFF3068F1, 0xFF4B58F2},
-            {0xFF02380C, 0xFF004D02, 0xFF007103, 0xFF00A236, 0xFF00D975},
-            {0xFF13BFDC, 0xFF12C0DB, 0xFF14C3D9, 0xFF18C5D6, 0xFF1FC8D3, 0xFF27CAD0, 0xFF2ECDCC, 0xFF35D0C9, 0xFF3AD2C7, 0xFF3DD5C4, 0xFF3FD8C2, 0xFF41DBC0, 0xFF43DEBE, 0xFF48E0BB, 0xFF4EE3B8, 0xFF57E5B4, 0xFF62E6AF, 0xFF70E7AA, 0xFF7DE8A5, 0xFF8BE8A0, 0xFF97E79C, 0xFFA3E798, 0xFFADE794, 0xFFB7E790, 0xFFC0E78B, 0xFFC9E785, 0xFFD3E77E, 0xFFDDE677, 0xFFE7E66F, 0xFFF0E568, 0xFFF7E463, 0xFFFDE35F},
-            {0xFFFEFFD2, 0xFFFFF7AA, 0xFFFEBF90, 0xFFFF8271, 0xFFF84354, 0xFFE10C3A, 0xFFCB0522, 0xFFB2010B},
-            {0xFF92D5B7, 0xFF8FD6BC, 0xFF8CD7C3, 0xFF8AD8CB, 0xFF89DAD3, 0xFF89DADC, 0xFF8ADBE5, 0xFF8EDBED, 0xFF92DBF4, 0xFF99DAFA, 0xFFA1D9FF, 0xFFAED7FF, 0xFFB8D6FF, 0xFFC1D5FF, 0xFFC9D4FF, 0xFFD0D3FF, 0xFFD7D3FF, 0xFFDDD2FF, 0xFFE3D1FF, 0xFFE9D0FF, 0xFFF0CFFF, 0xFFF7CDFF, 0xFFFDCDFC, 0xFFFFD0F5, 0xFFFFD3EE, 0xFFFFD7EA, 0xFFFFDBE6, 0xFFFFDEE4, 0xFFFFE1E4, 0xFFFFE4E3, 0xFFFFE7E4, 0xFFFFE8E4},
-            {0xFF030C44, 0xFF034C6B, 0xFF008695, 0xFF00B6C3, 0xFF05D8EC},
-            {0xFF3D6FF6, 0xFF7277FC, 0xFFAA63DA, 0xFFD73394, 0xFFF70026, 0xFFFD2100},
-            {0xFF2C0090, 0xFF4D0BAA, 0xFF7927EC, 0xFFAA46FF, 0xFFD55DF0, 0xFFF677B0, 0xFFFF8F92, 0xFFFDA6B5},
-            {0xFFFAD95C, 0xFFFAD65A, 0xFFF9D358, 0xFFF8D056, 0xFFF8CC53, 0xFFF8C751, 0xFFF8C351, 0xFFFABE52, 0xFFFBB956, 0xFFFCB45B, 0xFFFDAF61, 0xFFFEAA68, 0xFFFEA46E, 0xFFFF9F74, 0xFFFF9A7C, 0xFFFF9484, 0xFFFF8E8D, 0xFFFF8896, 0xFFFE839F, 0xFFFD7FA7, 0xFFFD7AAF, 0xFFFD76B6, 0xFFFE71BD, 0xFFFE6CC4, 0xFFFE68C9, 0xFFFE65CE, 0xFFFD62D1, 0xFFFD60D2, 0xFFFD5ED3, 0xFFFD5CD2, 0xFFFE5AD2, 0xFFFE59D2},
-            {0xFF02ADED, 0xFF03AFED, 0xFF08B2ED, 0xFF10B5ED, 0xFF16B8EE, 0xFF1BBCEE, 0xFF1DC1EE, 0xFF1EC5EE, 0xFF1BCAEE, 0xFF15CFED, 0xFF0ED5EC, 0xFF09DCEB, 0xFF0DE2E8, 0xFF16E8E5, 0xFF21EDE2, 0xFF2AF2DE, 0xFF30F5DA, 0xFF33F8D7, 0xFF35FAD3, 0xFF34FCCF, 0xFF33FECB, 0xFF34FFC7, 0xFF3FFFC3, 0xFF45FFBF, 0xFF47FFBA, 0xFF40FFB5, 0xFF33FFAE, 0xFF32FDA9, 0xFF30FCA4, 0xFF2EFBA0, 0xFF2DF99C, 0xFF2DF999},
-            {0xFF414FD7, 0xFF4349DC, 0xFF453FE1, 0xFF4931E7, 0xFF5122EC, 0xFF5C17EE, 0xFF690FED, 0xFF7711EB, 0xFF8619E6, 0xFF9725DF, 0xFFA834D6, 0xFFB945CD, 0xFFC955C2, 0xFFDA63B6, 0xFFEA72A7, 0xFFF78495, 0xFFFE9888, 0xFFFFAC82, 0xFFFFBA81, 0xFFFFC681, 0xFFFFCF7F, 0xFFFFD479, 0xFFFFD670, 0xFFFED267, 0xFFF7CB75, 0xFFEEC282, 0xFFE4B689, 0xFFDDA78A, 0xFFD4918D, 0xFFC27C99, 0xFFA66EA9, 0xFF8C68B1},
-            {0xFFFAD95C, 0xFFFAD65A, 0xFFF9D358, 0xFFF8D056, 0xFFF8CC53, 0xFFF8C751, 0xFFF8C351, 0xFFFABE52, 0xFFFBB956, 0xFFFCB45B, 0xFFFDAF61, 0xFFFEAA68, 0xFFFEA46E, 0xFFFF9F74, 0xFFFF9A7C, 0xFFFF9484, 0xFFFF8E8D, 0xFFFF8896, 0xFFFE839F, 0xFFFD7FA7, 0xFFFD7AAF, 0xFFFD76B6, 0xFFFE71BD, 0xFFFE6CC4, 0xFFFE68C9, 0xFFFE65CE, 0xFFFD62D1, 0xFFFD60D2, 0xFFFD5ED3, 0xFFFD5CD2, 0xFFFE5AD2, 0xFFFE59D2},
-            {0xFF51C5FD, 0xFF50BEFF, 0xFF54B5FF, 0xFF5BA9FF, 0xFF639CFF, 0xFF6D8FFF, 0xFF7883FF, 0xFF8278FE, 0xFF8E6DFC, 0xFF9963F9, 0xFFA459F5, 0xFFAF50EF, 0xFFBA47E8, 0xFFC43FDF, 0xFFD038D6, 0xFFDB33CD, 0xFFE52FC4, 0xFFEF2BBA, 0xFFF629B0, 0xFFFC27A5, 0xFFFE269B, 0xFFFF2791, 0xFFFF2988, 0xFFFE2C80, 0xFFFE3078, 0xFFFE356F, 0xFFFF3C66, 0xFFFF455D, 0xFFFF4F55, 0xFFFF574D, 0xFFFF5D47, 0xFFFF6142},
-            {0xFF0FE6DC, 0xFF20E4DD, 0xFF31E2DF, 0xFF40DEE0, 0xFF4BDBE1, 0xFF53D7E2, 0xFF55D4E2, 0xFF53D0E2, 0xFF4DCCE2, 0xFF43C8E2, 0xFF38C3E3, 0xFF2ABFE4, 0xFF1BBAE5, 0xFF0EB5E5, 0xFF04B0E7, 0xFF01ABE8, 0xFF03A6E9, 0xFF08A1EA, 0xFF0C9CEB, 0xFF0C97EB, 0xFF0492EC, 0xFF008CEB, 0xFF0087EA, 0xFF0082EA, 0xFF007DEB, 0xFF0177EF, 0xFF1872F0, 0xFF286CF1, 0xFF3566F2, 0xFF3F60F2, 0xFF465BF2, 0xFF4B58F2},
-            {0xFFEED01A, 0xFFF1CB16, 0xFFF5C517, 0xFFF8BD1D, 0xFFFBB425, 0xFFFDAC2D, 0xFFFEA331, 0xFFFF9B33, 0xFFFF9238, 0xFFFF883C, 0xFFFF7D40, 0xFFFF7344, 0xFFFF6848, 0xFFFF5D4B, 0xFFFE5450, 0xFFFD4A53, 0xFFFC4056, 0xFFFA3659, 0xFFF72C5D, 0xFFF32262, 0xFFEE1A66, 0xFFE81469, 0xFFE2106C, 0xFFDB0C6F, 0xFFD40972, 0xFFCC0576, 0xFFC3017A, 0xFFB9007E, 0xFFAF0082, 0xFFA50085, 0xFF9D0087, 0xFF970088},
-            {0xFF0042F8, 0xFF0043FC, 0xFF0147FF, 0xFF064DFF, 0xFF0D54FF, 0xFF155BFF, 0xFF1D61FF, 0xFF2668FE, 0xFF2E6EFE, 0xFF3774FE, 0xFF3F7AFE, 0xFF487FFE, 0xFF5285FE, 0xFF5B8AFE, 0xFF6590FE, 0xFF6F96FF, 0xFF799BFF, 0xFF82A1FF, 0xFF8AA6FE, 0xFF92ABFE, 0xFF99B0FE, 0xFF9FB5FE, 0xFFA5B9FE, 0xFFAABEFE, 0xFFAFC2FE, 0xFFB4C6FE, 0xFFB8CAFE, 0xFFBCCDFE, 0xFFC0D0FF, 0xFFC3D3FF, 0xFFC6D5FF, 0xFFC9D7FF},
-            {0xFF000A53, 0xFF000C56, 0xFF010E5A, 0xFF01105E, 0xFF011262, 0xFF011567, 0xFF01176C, 0xFF011A72, 0xFF021D78, 0xFF02207E, 0xFF022384, 0xFF03268A, 0xFF032991, 0xFF042C97, 0xFF042F9D, 0xFF0432A3, 0xFF0535A9, 0xFF0537AF, 0xFF053AB5, 0xFF063DBC, 0xFF0640C3, 0xFF0643CA, 0xFF0646D0, 0xFF0549D7, 0xFF054CDE, 0xFF054FE4, 0xFF0451EB, 0xFF0454F0, 0xFF0356F6, 0xFF0358FB, 0xFF025AFF, 0xFF085DFF}
-    };
-    private static final String[] GRADIENT_NAMES = {
-            "غروب", "شب و فیروزه", "یخی", "اقیانوس آبی", "جنگل", "بهار", "آتش", "نعنا", "دریای عمیق", "طلوع", "یاسی",
-            "غروب مورب", "آب و سبز", "نیلی", "کهربا و صورتی", "ساحل", "موج آبی", "کهربا", "آسمان", "آبی شب"
-    };
-    private static final GradientDrawable.Orientation[] GRADIENT_ORIENTATIONS = {
-            GradientDrawable.Orientation.BL_TR, GradientDrawable.Orientation.TOP_BOTTOM,
-            GradientDrawable.Orientation.TOP_BOTTOM, GradientDrawable.Orientation.BL_TR,
-            GradientDrawable.Orientation.TR_BL, GradientDrawable.Orientation.BL_TR,
-            GradientDrawable.Orientation.TL_BR, GradientDrawable.Orientation.TL_BR,
-            GradientDrawable.Orientation.TOP_BOTTOM, GradientDrawable.Orientation.TOP_BOTTOM,
-            GradientDrawable.Orientation.BOTTOM_TOP, GradientDrawable.Orientation.TL_BR,
-            GradientDrawable.Orientation.LEFT_RIGHT, GradientDrawable.Orientation.BL_TR,
-            GradientDrawable.Orientation.LEFT_RIGHT, GradientDrawable.Orientation.LEFT_RIGHT,
-            GradientDrawable.Orientation.BL_TR, GradientDrawable.Orientation.TOP_BOTTOM,
-            GradientDrawable.Orientation.TL_BR, GradientDrawable.Orientation.TL_BR
-    };
-    private static final int BUILTIN_THEME_COUNT = GRADIENT_COLORS.length;
     private static final int MAX_GENRE_WEIGHT = 50;
     private static final long READING_TICK_MS = 15_000L;
-    private static final Pattern CHAPTER_NUMBER_PATTERN = Pattern.compile(
-            "(?i)^(?:chapter|ch)?\\s*([0-9]+(?:\\.[0-9]+)?)(?:\\b.*)?$");
 
     private int BG = BG_DARK;
     private int SURFACE = SURFACE_DARK;
     private int SURFACE_ALT = SURFACE_ALT_DARK;
-    private int PURPLE = GRADIENT_COLORS[2][GRADIENT_COLORS[2].length / 2];
-    private int SECONDARY_ACCENT = GRADIENT_COLORS[2][GRADIENT_COLORS[2].length * 3 / 4];
+    private int PURPLE = 0xFFF2C9F9;
+    private int SECONDARY_ACCENT = 0xFFFFC1EC;
     private int TEXT = Color.rgb(241, 241, 241);
     private int MUTED = Color.rgb(165, 165, 165);
     private boolean lightTheme;
@@ -178,29 +122,31 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedBookIds = new LinkedHashSet<>();
     private final Set<String> selectedCollectionIds = new LinkedHashSet<>();
     private final Set<String> selectedChapterKeys = new LinkedHashSet<>();
-    private final Deque<String> chapterUndoStack = new ArrayDeque<>();
-    private final Deque<String> chapterRedoStack = new ArrayDeque<>();
-    private final Set<Long> seenRecommendationIds = new HashSet<>();
-    private final Set<String> favoriteGenrePreferences = new LinkedHashSet<>();
-    private final Set<String> dislikedGenrePreferences = new LinkedHashSet<>();
-    private final Set<String> favoriteAuthorPreferences = new LinkedHashSet<>();
-    private final Set<String> dislikedAuthorPreferences = new LinkedHashSet<>();
+    private final ChapterEditHistory chapterEditHistory = new ChapterEditHistory();
+    private final RecommendationUserState recommendationUserState = new RecommendationUserState();
+    private final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
+    private final Set<String> favoriteGenrePreferences = recommendationUserState.favoriteGenres;
+    private final Set<String> dislikedGenrePreferences = recommendationUserState.dislikedGenres;
+    private final Set<String> favoriteAuthorPreferences = recommendationUserState.favoriteAuthors;
+    private final Set<String> dislikedAuthorPreferences = recommendationUserState.dislikedAuthors;
     private final Set<String> selectedAuthorNames = new LinkedHashSet<>();
     private final Set<String> selectedGenreNames = new LinkedHashSet<>();
     private final BookRecommendationEngine.UserPreferences recommendationPreferences =
             new BookRecommendationEngine.UserPreferences();
     private final BookRecommendationEngine recommendationEngine =
             new BookRecommendationEngine(recommendationPreferences);
-    private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService pluginExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService colloquializerExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
-    private final LruCache<String, Bitmap> coverCache = new LruCache<String, Bitmap>(coverCacheBudgetKb()) {
-        @Override protected int sizeOf(String key, Bitmap value) { return Math.max(1, value.getByteCount() / 1024); }
-    };
+    private BookCoverStore coverStore;
+    private BookCoverDownloader coverDownloader;
+    private ThemeCatalog themeCatalog;
+    private NativeUiComponents uiComponents;
+    private ChapterColloquializerProcessor chapterColloquializerProcessor;
     private NovelStorage storage;
     private RoomLibraryStore libraryStore;
     private ReadingPositionStore readingPositionStore;
     private ResumeReadingPrompt resumeReadingPrompt;
+    private BookJsonPromptStore bookJsonPromptStore;
     private Typeface vazir;
     private JSONObject library = new JSONObject();
     private String page = "dashboard";
@@ -227,11 +173,6 @@ public final class MainActivity extends Activity {
     private boolean chapterColloquialized;
     private boolean applyingChapterColloquializer;
     private boolean restoringScroll;
-    private float scrollGestureStartY;
-    private long scrollGestureStartAt;
-    private long lastFastFlickAt;
-    private int lastFastFlickDirection;
-    private int fastFlickCount;
     private Runnable saveRunnable;
     private Runnable progressRunnable;
     private Runnable quickHideRunnable;
@@ -246,10 +187,10 @@ public final class MainActivity extends Activity {
     private TextView batteryPercentView;
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
-    private ExtensionManager extensionManager;
-    private FrameLayout readerExtensionButton;
-    private NativeIconView readerExtensionIcon;
-    private ProgressBar readerExtensionSpinner;
+    private ColloquializerStore colloquializerStore;
+    private FrameLayout readerActionButton;
+    private NativeIconView readerActionIcon;
+    private ProgressBar readerActionSpinner;
     private LinearLayout readerBottomBar;
     private String activeReorderType;
     private String activeReorderSourceId;
@@ -314,21 +255,14 @@ public final class MainActivity extends Activity {
     private ObjectAnimator splashArtAnimator;
     private ImageView bookCoverPreview;
     private String pendingCoverName;
-    private boolean restoringChapterUndo;
-    private boolean lastUndoWasTyping;
-    private long lastUndoAt;
-    private int lastUndoEnd = -1;
     private int pendingReaderCursorOffset = -1;
     private SharedPreferences recommendationState;
+    private RecommendationStateStore recommendationStateStore;
     private ReadingStatsStore readingStats;
     private int statsRange = ReadingStatsStore.WEEK;
     private int statsPeriodOffset;
     private boolean statsDetailsVisible;
-    private boolean readingTimerRunning;
-    private long lastReadingTickAt;
-    private long lastReadingWallAt;
-    private Runnable readingTickRunnable;
-    private Runnable readingIdleRunnable;
+    private ReadingSessionTimer readingSessionTimer;
     private boolean recommendationDetailsVisible;
     private final Set<Long> sessionRejectedRecommendationIds = new HashSet<>();
     private boolean recommendationCurrentReadingMode;
@@ -362,19 +296,32 @@ public final class MainActivity extends Activity {
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT, systemBackCallback);
         }
         vazir = Typeface.createFromAsset(getAssets(), "fonts/Vazirmatn-Regular.ttf");
+        themeCatalog = new ThemeCatalog(this);
+        uiComponents = new NativeUiComponents(this);
         storage = new NovelStorage(this);
+        coverStore = new BookCoverStore(storage);
+        coverDownloader = new BookCoverDownloader(coverStore);
         readingPositionStore = new ReadingPositionStore(this);
         resumeReadingPrompt = new ResumeReadingPrompt(this);
+        bookJsonPromptStore = new BookJsonPromptStore(this);
         libraryStore = new RoomLibraryStore(this);
-        extensionManager = new ExtensionManager(storage, getSharedPreferences("extensions", MODE_PRIVATE));
+        colloquializerStore = new ColloquializerStore(storage, getSharedPreferences("extensions", MODE_PRIVATE));
+        chapterColloquializerProcessor = new ChapterColloquializerProcessor(storage, colloquializerStore);
         recommendationState = getSharedPreferences("recommendations", MODE_PRIVATE);
+        recommendationStateStore = new RecommendationStateStore(
+                recommendationState, recommendationUserState, recommendationPreferences);
         readingStats = new ReadingStatsStore(getSharedPreferences("reading_stats", MODE_PRIVATE));
+        readingSessionTimer = new ReadingSessionTimer(handler, readingStats,
+                new ReadingSessionTimer.Host() {
+                    @Override public boolean isReaderPage() { return "reader".equals(page); }
+                    @Override public String activeBookId() { return activeBookId; }
+                }, READING_TICK_MS, READING_IDLE_TIMEOUT_MS);
         loadRecommendationState();
         android.content.SharedPreferences appearance = getSharedPreferences("appearance", MODE_PRIVATE);
         lightTheme = appearance.getBoolean("light", false);
-        accentIndex = Math.max(0, Math.min(themeCount() - 1, appearance.getInt("accent", 0)));
+        accentIndex = Math.max(0, Math.min(themeCatalog.themeCount() - 1, appearance.getInt("accent", 0)));
         if (appearance.getBoolean("random_each_launch", false)) {
-            List<Integer> favorites = favoriteThemeIndices();
+            List<Integer> favorites = themeCatalog.favoriteThemeIndices();
             if (!favorites.isEmpty()) {
                 int previousAccent = accentIndex;
                 if (favorites.size() > 1) favorites.remove(Integer.valueOf(previousAccent));
@@ -395,17 +342,19 @@ public final class MainActivity extends Activity {
                 finishStartupSplash();
             }
         }, 900);
-        getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void applyThemeColors() {
-        PURPLE = themeAccentColor(accentIndex);
-        SECONDARY_ACCENT = themeSecondaryColor(accentIndex);
+        PURPLE = themeCatalog.accentColor(accentIndex);
+        SECONDARY_ACCENT = themeCatalog.secondaryColor(accentIndex);
         BG = lightTheme ? Color.rgb(246, 244, 249) : BG_DARK;
         SURFACE = lightTheme ? Color.WHITE : SURFACE_DARK;
         SURFACE_ALT = lightTheme ? Color.rgb(239, 236, 244) : SURFACE_ALT_DARK;
         TEXT = lightTheme ? Color.rgb(28, 24, 33) : Color.rgb(241, 241, 241);
         MUTED = lightTheme ? Color.rgb(104, 97, 112) : Color.rgb(165, 165, 165);
+        uiComponents.updateTheme(new NativeUiComponents.Theme(SURFACE, SURFACE_ALT, PURPLE,
+                SECONDARY_ACCENT, TEXT, MUTED, lightTheme, accentIndex, vazir, themeCatalog));
         if (getWindow() != null) {
             getWindow().setStatusBarColor(BG);
             getWindow().setNavigationBarColor(BG);
@@ -423,140 +372,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private int themeAccentColor(int index) {
-        int[] colors = themeGradientColors(index);
-        return colors.length == 0 ? GRADIENT_COLORS[2][GRADIENT_COLORS[2].length / 2]
-                : colors.length == 2 ? colors[0] : colors[colors.length / 2];
-    }
-
-    private int themeSecondaryColor(int index) {
-        int[] colors = themeGradientColors(index);
-        if (colors.length == 0) return themeAccentColor(index);
-        return colors.length == 2 ? colors[1]
-                : colors[Math.min(colors.length - 1, Math.max(1, colors.length * 3 / 4))];
-    }
-
-    private int[] themeGradientColors(int index) {
-        if (index >= 0 && index < BUILTIN_THEME_COUNT) return GRADIENT_COLORS[index];
-        JSONArray storedColors = customTheme(index).optJSONArray("colors");
-        if (storedColors == null || storedColors.length() < 2) return new int[0];
-        int[] colors = new int[storedColors.length()];
-        for (int i = 0; i < storedColors.length(); i++) colors[i] = storedColors.optInt(i, PURPLE);
-        return colors;
-    }
-
-    private String themeName(int index) {
-        if (index < BUILTIN_THEME_COUNT) return GRADIENT_NAMES[index];
-        return customTheme(index).optString("name", "تم سفارشی");
-    }
-
-    private int themeCount() {
-        return BUILTIN_THEME_COUNT + customThemes().length();
-    }
-
-    private JSONArray customThemes() {
-        JSONArray stored = rawCustomThemes();
-        JSONArray gradients = new JSONArray();
-        for (int i = 0; i < stored.length(); i++) {
-            JSONObject theme = stored.optJSONObject(i);
-            JSONArray colors = theme == null ? null : theme.optJSONArray("colors");
-            if (colors != null && colors.length() >= 2) gradients.put(theme);
-        }
-        return gradients;
-    }
-
-    private JSONArray rawCustomThemes() {
-        try {
-            return new JSONArray(getSharedPreferences("appearance", MODE_PRIVATE)
-                    .getString("custom_themes", "[]"));
-        } catch (JSONException ignored) {
-            return new JSONArray();
-        }
-    }
-
-    private JSONObject customTheme(int index) {
-        JSONArray themes = customThemes();
-        JSONObject theme = themes.optJSONObject(index - BUILTIN_THEME_COUNT);
-        return theme == null ? new JSONObject() : theme;
-    }
-
-    private boolean isGradientTheme(int index) {
-        return index >= 0 && index < themeCount() && themeGradientColors(index).length > 1;
-    }
-
-    private boolean isThemeFavorite(int index) {
-        if (index >= BUILTIN_THEME_COUNT) return customTheme(index).optBoolean("favorite", false);
-        Set<Integer> favorites = new HashSet<>();
-        String saved = getSharedPreferences("appearance", MODE_PRIVATE).getString("favorite_builtin_themes", "");
-        for (String item : saved.split(",")) {
-            try { if (!item.isEmpty()) favorites.add(Integer.parseInt(item)); }
-            catch (NumberFormatException ignored) { }
-        }
-        return favorites.contains(index);
-    }
-
-    private List<Integer> favoriteThemeIndices() {
-        List<Integer> result = new ArrayList<>();
-        for (int i = 0; i < themeCount(); i++) if (isThemeFavorite(i)) result.add(i);
-        return result;
-    }
-
-    private void setThemeFavorite(int index, boolean favorite) {
-        SharedPreferences preferences = getSharedPreferences("appearance", MODE_PRIVATE);
-        if (index >= BUILTIN_THEME_COUNT) {
-            JSONArray themes = customThemes();
-            JSONObject theme = themes.optJSONObject(index - BUILTIN_THEME_COUNT);
-            if (theme == null) return;
-            try { theme.put("favorite", favorite); }
-            catch (JSONException ignored) { return; }
-            preferences.edit().putString("custom_themes", themes.toString()).apply();
-            return;
-        }
-        Set<Integer> favorites = new java.util.TreeSet<>();
-        String saved = preferences.getString("favorite_builtin_themes", "");
-        for (String item : saved.split(",")) {
-            try { if (!item.isEmpty()) favorites.add(Integer.parseInt(item)); }
-            catch (NumberFormatException ignored) { }
-        }
-        if (favorite) favorites.add(index); else favorites.remove(index);
-        StringBuilder value = new StringBuilder();
-        for (Integer item : favorites) {
-            if (value.length() > 0) value.append(',');
-            value.append(item);
-        }
-        preferences.edit().putString("favorite_builtin_themes", value.toString()).apply();
-    }
-
-    private void applyGradientTheme(GradientDrawable drawable, int index) {
-        applyGradientTheme(drawable, index, 260);
-    }
-
-    private void applyGradientTheme(GradientDrawable drawable, int index, int radialRadiusDp) {
-        int[] colors = themeGradientColors(index);
-        if (colors.length < 2) { drawable.setColor(PURPLE); return; }
-        drawable.setOrientation(index < BUILTIN_THEME_COUNT
-                ? GRADIENT_ORIENTATIONS[index] : GradientDrawable.Orientation.LEFT_RIGHT);
-        drawable.setColors(colors);
-        if (index == GRADIENT_COLORS.length - 1) {
-            drawable.setGradientType(GradientDrawable.RADIAL_GRADIENT);
-            drawable.setGradientRadius(dp(radialRadiusDp));
-        }
-    }
-
-    private void applySecondaryGradientTheme(GradientDrawable drawable, int index) {
-        int[] colors = themeGradientColors(index);
-        if (colors.length < 2) { drawable.setColor(SECONDARY_ACCENT); return; }
-        if (colors.length == 2) { drawable.setColor(SECONDARY_ACCENT); return; }
-        int start = Math.max(0, colors.length / 2);
-        int count = colors.length - start;
-        if (count < 2) { start = Math.max(0, colors.length - 2); count = colors.length - start; }
-        int[] secondary = new int[count];
-        System.arraycopy(colors, start, secondary, 0, count);
-        drawable.setOrientation(index < BUILTIN_THEME_COUNT
-                ? GRADIENT_ORIENTATIONS[index] : GradientDrawable.Orientation.LEFT_RIGHT);
-        drawable.setColors(secondary);
-    }
-
     private int contrastOnAccent() {
         int red = Color.red(PURPLE), green = Color.green(PURPLE), blue = Color.blue(PURPLE);
         double luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255.0;
@@ -571,7 +386,16 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false);
         else window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-        systemRoot = new SwipeRoot(this);
+        SwipeRootLayout swipeRoot = new SwipeRootLayout(this, new SwipeRootLayout.Callbacks() {
+            @Override public boolean drawerSwipeAvailable() { return MainActivity.this.drawerSwipeAvailable(); }
+            @Override public boolean drawerIsOpen() { return MainActivity.this.drawerOpen; }
+            @Override public int drawerWidth() { return MainActivity.this.drawerWidth(); }
+            @Override public void openDrawer() { MainActivity.this.openDrawer(); }
+            @Override public void beginDrawerGesture(float progress) { MainActivity.this.beginDrawerGesture(progress); }
+            @Override public void updateDrawerGesture(float progress) { MainActivity.this.updateDrawerGesture(progress); }
+            @Override public void settleDrawerGesture(boolean open) { MainActivity.this.settleDrawerGesture(open); }
+        }, dp(64), dp(SWIPE_MIN_DISTANCE), dp(SWIPE_THRESHOLD_VELOCITY), dp(SWIPE_MAX_OFF_PATH), dp(8));
+        systemRoot = swipeRoot;
         systemRoot.setBackgroundColor(BG);
         systemRoot.setOnApplyWindowInsetsListener((view, insets) -> {
             int left, top, right, bottom;
@@ -616,6 +440,7 @@ public final class MainActivity extends Activity {
         panelParams.width = (int) (getResources().getDisplayMetrics().widthPixels * (2f / 3f));
         drawerPanel.setTranslationX(panelParams.width);
         drawerLayer.addView(drawerPanel, panelParams);
+        swipeRoot.attachDrawerViews(drawerLayer, drawerPanel);
         drawerPanel.setOnClickListener(v -> { });
         buildDrawer();
         systemRoot.addView(drawerLayer, new FrameLayout.LayoutParams(-1, -1));
@@ -652,7 +477,7 @@ public final class MainActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setGravity(Gravity.CENTER);
         content.setPadding(dp(42), dp(30), dp(42), dp(30));
-        ReaderSplashArt art = new ReaderSplashArt(this);
+        ReaderSplashArt art = new ReaderSplashArt(this, PURPLE);
         content.addView(art, new LinearLayout.LayoutParams(dp(156), dp(142)));
         splashArtAnimator = ObjectAnimator.ofFloat(art, "pulse", 0.97f, 1.03f);
         splashArtAnimator.setDuration(1150);
@@ -804,20 +629,6 @@ public final class MainActivity extends Activity {
                 .put("genres", new JSONArray()).put("collections", collections);
     }
 
-    private final class ResumeTarget {
-        final String bookId;
-        final String collectionId;
-        final int storageIndex;
-        final int chapterPosition;
-
-        ResumeTarget(JSONObject book, JSONObject chapter, int position) {
-            bookId = book.optString("id");
-            collectionId = book.optString("collectionId", "other");
-            storageIndex = chapterStorageIndex(chapter, position);
-            chapterPosition = position;
-        }
-    }
-
     private void showResumePromptOnce() {
         if (resumePromptShownThisLaunch) return;
         resumePromptShownThisLaunch = true;
@@ -828,7 +639,7 @@ public final class MainActivity extends Activity {
         JSONObject chapter = chapters == null ? null : chapters.optJSONObject(target.chapterPosition);
         if (book == null || chapter == null) return;
         resumeReadingPrompt.show(systemRoot, drawerLayer, book.optString("title"),
-                chapterLabel(chapter, target.chapterPosition), vazir, SURFACE, TEXT, MUTED,
+                ChapterCatalog.label(chapter, target.chapterPosition), vazir, SURFACE, TEXT, MUTED,
                 PURPLE, contrastOnAccent(), () -> openResumeTarget(target));
     }
 
@@ -839,8 +650,9 @@ public final class MainActivity extends Activity {
         if (savedChapters != null && savedStorageIndex > 0) {
             for (int i = 0; i < savedChapters.length(); i++) {
                 JSONObject chapter = savedChapters.optJSONObject(i);
-                if (chapter != null && chapterStorageIndex(chapter, i) == savedStorageIndex) {
-                    return new ResumeTarget(savedBook, chapter, i);
+                if (chapter != null && ChapterCatalog.storageIndex(chapter, i) == savedStorageIndex) {
+                    return new ResumeTarget(savedBook.optString("id"),
+                            savedBook.optString("collectionId", "other"), ChapterCatalog.storageIndex(chapter, i), i);
                 }
             }
         }
@@ -855,7 +667,8 @@ public final class MainActivity extends Activity {
                 JSONObject chapter = chapters.optJSONObject(i);
                 if (chapter != null && !chapter.optBoolean("done")
                         && (chapter.optInt("scroll", 0) > 0 || chapter.optInt("percent", 0) > 0)) {
-                    fallback = new ResumeTarget(book, chapter, i);
+                    fallback = new ResumeTarget(book.optString("id"),
+                            book.optString("collectionId", "other"), ChapterCatalog.storageIndex(chapter, i), i);
                 }
             }
         }
@@ -870,7 +683,7 @@ public final class MainActivity extends Activity {
         int position = -1;
         for (int i = 0; i < chapters.length(); i++) {
             JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter != null && chapterStorageIndex(chapter, i) == target.storageIndex) {
+            if (chapter != null && ChapterCatalog.storageIndex(chapter, i) == target.storageIndex) {
                 position = i;
                 break;
             }
@@ -892,64 +705,12 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(outState);
     }
 
-    private static int coverCacheBudgetKb() {
-        long heapKb = Runtime.getRuntime().maxMemory() / 1024L;
-        return (int) Math.max(8 * 1024L, Math.min(32 * 1024L, heapKb / 8L));
-    }
-
-    /** Initializes each list alphabetically once, then follows its saved orderIndex. */
-    private void ensureOrderIndexes(JSONArray items, boolean chapterNames) {
-        if (items == null) return;
-        List<JSONObject> ordered = new ArrayList<>();
-        Set<Integer> used = new HashSet<>();
-        boolean hasValidIndexes = true;
-        for (int i = 0; i < items.length(); i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item == null) continue;
-            ordered.add(item);
-            int index = item.optInt("orderIndex", Integer.MIN_VALUE);
-            if (!item.has("orderIndex") || index < 0 || !used.add(index)) hasValidIndexes = false;
-        }
-        final boolean preserveSavedOrder = hasValidIndexes;
-        Collections.sort(ordered, (first, second) -> {
-            if (preserveSavedOrder) {
-                int order = Integer.compare(first.optInt("orderIndex"), second.optInt("orderIndex"));
-                if (order != 0) return order;
-            }
-            String firstTitle = first.optString("title", "");
-            String secondTitle = second.optString("title", "");
-            if (chapterNames) {
-                BigDecimal firstNumber = chapterNumber(firstTitle);
-                BigDecimal secondNumber = chapterNumber(secondTitle);
-                if (firstNumber != null && secondNumber != null) {
-                    int numberOrder = firstNumber.compareTo(secondNumber);
-                    if (numberOrder != 0) return numberOrder;
-                }
-            }
-            return String.CASE_INSENSITIVE_ORDER.compare(firstTitle, secondTitle);
-        });
-        for (int i = 0; i < ordered.size(); i++) {
-            putJson(ordered.get(i), "orderIndex", i);
-            try { items.put(i, ordered.get(i)); } catch (JSONException ignored) { }
-        }
-    }
-
     private void appendUniqueGenre(JSONArray genres, String value) {
-        String candidate = canonicalGenre(value);
-        if (candidate.isEmpty() || "Other".equalsIgnoreCase(candidate)) return;
-        for (int i = 0; i < genres.length(); i++) {
-            if (candidate.equalsIgnoreCase(genres.optString(i).trim())) return;
-        }
-        genres.put(candidate);
+        GenreCatalog.appendUnique(library, genres, value);
     }
 
     private void appendUniqueRawGenre(JSONArray genres, String value) {
-        String candidate = value == null ? "" : value.trim();
-        if (candidate.isEmpty() || "Other".equalsIgnoreCase(candidate)) return;
-        for (int i = 0; i < genres.length(); i++) {
-            if (candidate.equalsIgnoreCase(genres.optString(i).trim())) return;
-        }
-        genres.put(candidate);
+        GenreCatalog.appendUniqueRaw(genres, value);
     }
 
     private boolean saveLibrary() {
@@ -1248,10 +1009,6 @@ public final class MainActivity extends Activity {
         drawerSettingsAnimator.start();
     }
 
-    private void showExtensions() {
-        showColloquializer();
-    }
-
     private void showColloquializer() {
         setPage("colloquializer");
         appColumn.removeAllViews();
@@ -1261,14 +1018,14 @@ public final class MainActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(8), dp(18), dp(3));
-        boolean installed = extensionManager.colloquializerInstalled();
+        boolean installed = colloquializerStore.isInstalled();
         content.addView(textButton("انتخاب فایل JSON", "scan_text", PURPLE,
                 this::chooseColloquializerRules), fieldParams());
         addColloquializerControls(content);
         if (installed) {
             try {
                 ArrayList<ColloquializerRule> rules = readColloquializerRules(
-                        new JSONArray(extensionManager.colloquializerRules()));
+                        new JSONArray(colloquializerStore.readRules()));
                 addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
                         "enabled.colloquializer", true);
                 TextView count = text("", 12, MUTED);
@@ -1397,7 +1154,7 @@ public final class MainActivity extends Activity {
         deleteParams.leftMargin = dp(7);
         actions.addView(textButton("حذف قوانین", "delete", RED, () -> {
             try {
-                extensionManager.saveColloquializerRules("[]");
+                colloquializerStore.saveRules("[]");
                 toast("قوانین جایگزینی پاک شدند.");
                 showColloquializer();
             } catch (Exception error) {
@@ -1482,7 +1239,7 @@ public final class MainActivity extends Activity {
                     }
                     ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
                     updated.set(index, new ColloquializerRule(newSource, newReplacement, exceptions));
-                    extensionManager.saveColloquializerRules(writeColloquializerRules(updated).toString());
+                    colloquializerStore.saveRules(writeColloquializerRules(updated).toString());
                     rules.clear();
                     rules.addAll(updated);
                     refresh.run();
@@ -1507,8 +1264,8 @@ public final class MainActivity extends Activity {
     private void showAddColloquializerRuleDialog() {
         showColloquializerPairDialog("افزودن جفت جایگزینی", "", Collections.emptyList(), false,
                 (newSource, newReplacement, exceptions, ignored) -> {
-                    JSONArray current = extensionManager.colloquializerInstalled()
-                            ? new JSONArray(extensionManager.colloquializerRules()) : new JSONArray();
+                    JSONArray current = colloquializerStore.isInstalled()
+                            ? new JSONArray(colloquializerStore.readRules()) : new JSONArray();
                     for (int i = 0; i < current.length(); i++) {
                         JSONArray pair = current.optJSONArray(i);
                         if (pair != null && newSource.equals(pair.optString(0))) {
@@ -1518,7 +1275,7 @@ public final class MainActivity extends Activity {
                     JSONArray pair = new JSONArray().put(newSource).put(newReplacement);
                     if (!exceptions.isEmpty()) pair.put(new JSONArray(exceptions));
                     current.put(pair);
-                    extensionManager.saveColloquializerRules(current.toString());
+                    colloquializerStore.saveRules(current.toString());
                     showColloquializer();
                     toast("جفت جایگزینی ذخیره شد.");
                 });
@@ -1595,7 +1352,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private ArrayList<String> parseColloquializerExceptions(String text) {
@@ -1631,7 +1388,7 @@ public final class MainActivity extends Activity {
                     ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
                     updated.remove(index);
                     try {
-                        extensionManager.saveColloquializerRules(writeColloquializerRules(updated).toString());
+                        colloquializerStore.saveRules(writeColloquializerRules(updated).toString());
                         rules.clear();
                         rules.addAll(updated);
                         refresh.run();
@@ -1643,18 +1400,6 @@ public final class MainActivity extends Activity {
                 .create();
         dialog.show();
         styleDialogWindow(dialog);
-    }
-
-    private static final class ColloquializerRule {
-        final String source;
-        final String replacement;
-        final ArrayList<String> exceptions;
-
-        ColloquializerRule(String source, String replacement, List<String> exceptions) {
-            this.source = source;
-            this.replacement = replacement;
-            this.exceptions = new ArrayList<>(exceptions);
-        }
     }
 
     private void chooseColloquializerRules() {
@@ -1672,7 +1417,7 @@ public final class MainActivity extends Activity {
                 .setMessage("در حال بررسی فایل قوانین…").setCancelable(false).create();
         progressDialog.show();
         styleDialogWindow(progressDialog);
-        pluginExecutor.execute(() -> {
+        colloquializerExecutor.execute(() -> {
             String errorMessage = null;
             try (InputStream input = getContentResolver().openInputStream(uri);
                  ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -1685,7 +1430,7 @@ public final class MainActivity extends Activity {
                     if (total > 10 * 1024 * 1024) throw new IOException("حجم فایل بیشتر از ۱۰ مگابایت است.");
                     output.write(buffer, 0, count);
                 }
-                extensionManager.saveColloquializerRules(output.toString("UTF-8"));
+                colloquializerStore.saveRules(output.toString("UTF-8"));
             } catch (Exception error) {
                 errorMessage = error.getMessage() == null ? "فایل JSON معتبر نیست." : error.getMessage();
             }
@@ -1701,134 +1446,6 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private View extensionCard(ExtensionManager.Plugin plugin) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(18), dp(16), dp(18), dp(16));
-        card.setBackground(roundDrawable(SURFACE, 0xFF302A38, 16));
-
-        TextView title = text(plugin.name, 18, TEXT);
-        title.setGravity(Gravity.CENTER);
-        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView description = text(plugin.description, 14, MUTED);
-        description.setGravity(Gravity.CENTER);
-        description.setPadding(0, dp(7), 0, dp(5));
-        card.addView(description, new LinearLayout.LayoutParams(-1, -2));
-        TextView version = text("نسخهٔ " + plugin.version, 12, MUTED);
-        version.setGravity(Gravity.CENTER);
-        card.addView(version, new LinearLayout.LayoutParams(-1, dp(26)));
-
-        Switch enabled = new Switch(this);
-        enabled.setText("فعال‌سازی افزونه");
-        enabled.setTextColor(TEXT);
-        enabled.setTextSize(14);
-        enabled.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-        enabled.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        enabled.setGravity(Gravity.CENTER_VERTICAL);
-        enabled.setChecked(extensionManager.isEnabled(plugin.id));
-        enabled.setOnCheckedChangeListener((button, checked) -> {
-            extensionManager.setEnabled(plugin.id, checked);
-            if ("reader".equals(page)) showReader();
-        });
-        card.addView(enabled, new LinearLayout.LayoutParams(-1, dp(46)));
-
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        View update = textButton("به‌روزرسانی", "undo", PURPLE,
-                () -> showExtensionAddressDialog(extensionManager.sourceUrl(plugin.id)));
-        View remove = textButton("حذف", "delete", RED, () -> confirmRemoveExtension(plugin));
-        buttons.addView(update, new LinearLayout.LayoutParams(0, dp(48), 1));
-        LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(0, dp(48), 1);
-        removeParams.leftMargin = dp(8);
-        buttons.addView(remove, removeParams);
-        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(-1, dp(48));
-        buttonsParams.topMargin = dp(8);
-        card.addView(buttons, buttonsParams);
-        return card;
-    }
-
-    private void showExtensionAddressDialog(String initialUrl) {
-        EditText address = edit("آدرس HTTPS فایل extension.json", false);
-        address.setSingleLine(true);
-        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        address.setText(initialUrl == null ? "" : initialUrl);
-        address.setSelection(address.length());
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(initialUrl == null || initialUrl.isEmpty() ? "افزودن افزونه" : "به‌روزرسانی افزونه")
-                .setView(dialogPadding(clearableInput(address)))
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("دریافت", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
-            String url = address.getText().toString().trim();
-            if (!url.startsWith("https://")) {
-                address.setError("آدرس باید با https:// شروع شود.");
-                return;
-            }
-            dialog.dismiss();
-            installExtension(url);
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
-    private void installExtension(String manifestUrl) {
-        AlertDialog progressDialog = new AlertDialog.Builder(this)
-                .setMessage("در حال دریافت افزونه…").setCancelable(false).create();
-        progressDialog.show();
-        styleDialogWindow(progressDialog);
-        pluginExecutor.execute(() -> {
-            ExtensionManager.Plugin installed = null;
-            String errorMessage = null;
-            try {
-                installed = extensionManager.install(manifestUrl);
-            } catch (Exception error) {
-                String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-                if (message.contains("Extension file is too large:")) {
-                    errorMessage = "فایل افزونه از سقف مجاز بزرگ‌تر است: "
-                            + message.substring(message.indexOf(':') + 1).trim();
-                } else if (message.contains("Extension rule count is too large")) {
-                    errorMessage = "فایل قوانین افزونه بیش از ۱۰٬۰۰۰ جایگزینی دارد.";
-                } else {
-                    errorMessage = message;
-                }
-            }
-            final ExtensionManager.Plugin result = installed;
-            final String resultError = errorMessage;
-            runOnUiThread(() -> {
-                if (isFinishing()) return;
-                progressDialog.dismiss();
-                if (resultError != null) toast("دریافت افزونه ناموفق بود: " + resultError);
-                else toast("افزونهٔ «" + result.name + "» دریافت شد.");
-                if ("extensions".equals(page)) showExtensions();
-                else if ("reader".equals(page)) showReader();
-            });
-        });
-    }
-
-    private void confirmRemoveExtension(ExtensionManager.Plugin plugin) {
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setMessage("افزونهٔ «" + plugin.name + "» حذف شود؟")
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("حذف", (ignored, which) -> {
-                    if (!extensionManager.remove(plugin.id)) toast("حذف افزونه انجام نشد: " + storage.lastError());
-                    showExtensions();
-                }).create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
-    private List<ExtensionManager.Action> enabledExtensionActions() {
-        List<ExtensionManager.Action> actions = new ArrayList<>();
-        if (extensionManager == null || !extensionManager.colloquializerEnabled()) return actions;
-        try {
-            ExtensionManager.Plugin plugin = extensionManager.load("colloquializer");
-            if (plugin != null) actions.addAll(plugin.actions);
-        } catch (Exception ignored) { }
-        return actions;
-    }
-
     private FrameLayout createReaderOptionsButton() {
         FrameLayout button = new FrameLayout(this);
         styleIconButton(button, false);
@@ -1837,35 +1454,20 @@ public final class MainActivity extends Activity {
         button.setFocusable(true);
         applyPressScale(button);
         button.setOnClickListener(view -> showReaderOptions());
-        readerExtensionButton = button;
-        readerExtensionIcon = new NativeIconView(this, "menu", PURPLE);
-        button.addView(readerExtensionIcon,
+        readerActionButton = button;
+        readerActionIcon = new NativeIconView(this, "menu", PURPLE);
+        button.addView(readerActionIcon,
                 new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
-        readerExtensionSpinner = new ProgressBar(this);
-        readerExtensionSpinner.setIndeterminate(true);
+        readerActionSpinner = new ProgressBar(this);
+        readerActionSpinner.setIndeterminate(true);
         if (Build.VERSION.SDK_INT >= 21) {
-            readerExtensionSpinner.setIndeterminateTintList(
+            readerActionSpinner.setIndeterminateTintList(
                     android.content.res.ColorStateList.valueOf(PURPLE));
         }
-        readerExtensionSpinner.setVisibility(View.GONE);
-        button.addView(readerExtensionSpinner,
+        readerActionSpinner.setVisibility(View.GONE);
+        button.addView(readerActionSpinner,
                 new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
         return button;
-    }
-
-    private void confirmExtensionAction(ExtensionManager.Action action) {
-        if ("colloquializer".equals(action.pluginId)) {
-            showChapterColloquializerDialog();
-            return;
-        }
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(action.confirmTitle)
-                .setMessage(action.confirmMessage)
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("ادامه", (ignored, which) -> runExtensionAction(action))
-                .create();
-        dialog.show();
-        styleDialogWindow(dialog);
     }
 
     private void showChapterColloquializerDialog() {
@@ -1892,7 +1494,7 @@ public final class MainActivity extends Activity {
         if (!"reader".equals(page) || chapterEditor == null) return;
         ArrayList<String> labels = new ArrayList<>();
         ArrayList<Runnable> actions = new ArrayList<>();
-        if (extensionManager != null && extensionManager.colloquializerEnabled()) {
+        if (colloquializerStore != null && colloquializerStore.isEnabled()) {
             labels.add("محاوره‌ای‌سازی");
             actions.add(this::showChapterColloquializerDialog);
         }
@@ -1900,11 +1502,6 @@ public final class MainActivity extends Activity {
         actions.add(() -> setChapterEnd(!chapterEnd));
         labels.add("وارد کردن متن از فایل");
         actions.add(this::pickChapterTextFile);
-        for (ExtensionManager.Action action : enabledExtensionActions()) {
-            if ("colloquializer".equals(action.pluginId)) continue;
-            labels.add(action.label + " · " + action.pluginName);
-            actions.add(() -> confirmExtensionAction(action));
-        }
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("گزینه‌های Chapter")
                 .setItems(labels.toArray(new String[0]), (ignored, which) -> actions.get(which).run())
@@ -1993,9 +1590,9 @@ public final class MainActivity extends Activity {
         final boolean wasColloquialized = chapterColloquialized;
         final String originalFile = chapterOriginalFileName();
         if (originalFile == null) return;
-        final FrameLayout targetButton = readerExtensionButton;
-        final NativeIconView targetIcon = readerExtensionIcon;
-        final ProgressBar targetSpinner = readerExtensionSpinner;
+        final FrameLayout targetButton = readerActionButton;
+        final NativeIconView targetIcon = readerActionIcon;
+        final ProgressBar targetSpinner = readerActionSpinner;
         final LinearLayout targetBottomBar = readerBottomBar;
 
         targetEditor.setEnabled(false);
@@ -2008,28 +1605,12 @@ public final class MainActivity extends Activity {
         if (targetIcon != null) targetIcon.setVisibility(View.GONE);
         if (targetSpinner != null) targetSpinner.setVisibility(View.VISIBLE);
 
-        pluginExecutor.execute(() -> {
-            String source = null;
-            String output = null;
-            String errorMessage = null;
-            try {
-                if (restoreOriginal || wasColloquialized) {
-                    source = storage.readChapterOriginal(originalFile);
-                    if (source == null) throw new IOException("نسخهٔ اصلی این Chapter پیدا نشد.");
-                } else {
-                    source = currentText;
-                    if (!storage.writeChapterOriginal(originalFile, source)) {
-                        throw new IOException(storage.lastError());
-                    }
-                }
-                output = restoreOriginal ? source : extensionManager.transformColloquializer(source);
-            } catch (Exception error) {
-                errorMessage = error.getMessage() == null
-                        ? error.getClass().getSimpleName() : error.getMessage();
-            }
-            final String original = source;
-            final String transformed = output;
-            final String failure = errorMessage;
+        colloquializerExecutor.execute(() -> {
+            ChapterColloquializerProcessor.Result result = chapterColloquializerProcessor.process(
+                    originalFile, currentText, restoreOriginal, wasColloquialized);
+            final String original = result.source;
+            final String transformed = result.output;
+            final String failure = result.error;
             runOnUiThread(() -> {
                 if (targetSpinner != null) targetSpinner.setVisibility(View.GONE);
                 if (targetIcon != null) targetIcon.setVisibility(View.VISIBLE);
@@ -2073,9 +1654,7 @@ public final class MainActivity extends Activity {
             hasPendingReaderScrollFraction = true;
         }
         String current = chapterEditor.getText().toString();
-        chapterUndoStack.addLast(current);
-        while (chapterUndoStack.size() > 80) chapterUndoStack.removeFirst();
-        chapterRedoStack.clear();
+        chapterEditHistory.pushUndo(current);
         int selection = Math.max(0, chapterEditor.getSelectionStart());
         chapterColloquialized = colloquialized;
         applyingChapterColloquializer = true;
@@ -2091,65 +1670,6 @@ public final class MainActivity extends Activity {
             restoreReaderAfterRender = true;
             renderReaderPreview();
         }
-    }
-
-    private void runExtensionAction(ExtensionManager.Action action) {
-        if (chapterEditor == null || !"reader".equals(page) || !saveCurrentChapter()) return;
-        final EditText targetEditor = chapterEditor;
-        final String targetBookId = activeBookId;
-        final int targetChapter = activeChapter;
-        final String source = targetEditor.getText().toString();
-        if (source.trim().isEmpty()) { toast("متن این Chapter خالی است."); return; }
-        final int selection = Math.max(0, targetEditor.getSelectionStart());
-        final FrameLayout targetButton = readerExtensionButton;
-        final NativeIconView targetIcon = readerExtensionIcon;
-        final ProgressBar targetSpinner = readerExtensionSpinner;
-        final LinearLayout targetBottomBar = readerBottomBar;
-        targetEditor.setEnabled(false);
-        if (targetButton != null) targetButton.setEnabled(false);
-        if (targetBottomBar != null) {
-            for (int i = 0; i < targetBottomBar.getChildCount(); i++) targetBottomBar.getChildAt(i).setEnabled(false);
-        }
-        if (targetIcon != null) targetIcon.setVisibility(View.GONE);
-        if (targetSpinner != null) targetSpinner.setVisibility(View.VISIBLE);
-
-        pluginExecutor.execute(() -> {
-            String output = null;
-            String errorMessage = null;
-            try {
-                ExtensionManager.Plugin plugin = extensionManager.load(action.pluginId);
-                if (plugin == null || !extensionManager.isEnabled(action.pluginId)) {
-                    throw new IOException("افزونه نصب یا فعال نیست.");
-                }
-                output = extensionManager.runTextReplacement(plugin, action, source);
-            } catch (Exception error) {
-                errorMessage = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            }
-            final String result = output;
-            final String resultError = errorMessage;
-            runOnUiThread(() -> {
-                if (targetSpinner != null) targetSpinner.setVisibility(View.GONE);
-                if (targetIcon != null) targetIcon.setVisibility(View.VISIBLE);
-                if (targetButton != null) targetButton.setEnabled(true);
-                if (targetBottomBar != null) {
-                    for (int i = 0; i < targetBottomBar.getChildCount(); i++) targetBottomBar.getChildAt(i).setEnabled(true);
-                }
-                targetEditor.setEnabled(true);
-                if (!"reader".equals(page) || chapterEditor != targetEditor
-                        || !targetBookId.equals(activeBookId) || targetChapter != activeChapter) return;
-                if (resultError != null || result == null) {
-                    toast("اجرای افزونه ناموفق بود: " + (resultError == null ? "پاسخی دریافت نشد." : resultError));
-                    return;
-                }
-                if (source.equals(result)) { toast("تغییری برای اعمال پیدا نشد."); return; }
-                targetEditor.setText(result);
-                targetEditor.setSelection(Math.min(selection, targetEditor.length()));
-                chapterText = result;
-                chapterDirty = true;
-                updateProgress();
-                if (saveCurrentChapter()) toast("متن Chapter با افزونه به‌روزرسانی شد.");
-            });
-        });
     }
 
     private void showSettings() {
@@ -2222,25 +1742,11 @@ public final class MainActivity extends Activity {
     }
 
     private void calculateAndStoreChapterEstimate(JSONObject chapter, String text) {
-        if (chapter == null) return;
-        long words = ChapterTextFormatter.countWords(text);
-        int minutes = words <= 0 ? 0 : (int) Math.ceil(words / (double) readingSpeedWordsPerMinute());
-        putJson(chapter, "estimatedMinutes", minutes);
+        ChapterCatalog.calculateAndStoreEstimate(chapter, text, readingSpeedWordsPerMinute());
     }
 
     private String remainingChapterTimeLabel(JSONObject chapter) {
-        if (chapter == null || !chapter.optBoolean("hasText") || !chapter.optBoolean("end")) {
-            return "0 min";
-        }
-        int totalMinutes = Math.max(0, chapter.optInt("estimatedMinutes", 0));
-        int percent = chapter.optBoolean("done") ? 100
-                : Math.max(0, Math.min(100, chapter.optInt("percent", 0)));
-        long remaining = (long) Math.ceil(totalMinutes * (100 - percent) / 100.0);
-        if (remaining <= 0) return "0 min";
-        long hours = remaining / 60;
-        long minutes = remaining % 60;
-        if (hours == 0) return remaining + " min";
-        return minutes == 0 ? hours + " h" : hours + " h " + minutes + " min";
+        return ChapterCatalog.remainingTimeLabel(chapter);
     }
 
     private String bookSortLabel() {
@@ -2299,7 +1805,7 @@ public final class MainActivity extends Activity {
         grid.setColumnCount(2);
         grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
         grid.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        for (int i = 0; i < themeCount(); i++) {
+        for (int i = 0; i < themeCatalog.themeCount(); i++) {
             GridLayout.LayoutParams params = new GridLayout.LayoutParams();
             int screenWidthDp = (int) (getResources().getDisplayMetrics().widthPixels
                     / getResources().getDisplayMetrics().density);
@@ -2327,27 +1833,27 @@ public final class MainActivity extends Activity {
         card.setFocusable(true);
 
         FrameLayout favorite = new FrameLayout(this);
-        NativeIconView heart = new NativeIconView(this, isThemeFavorite(index) ? "heart_filled" : "heart_outline",
-                isThemeFavorite(index) ? RED : MUTED);
+        NativeIconView heart = new NativeIconView(this, themeCatalog.isFavorite(index) ? "heart_filled" : "heart_outline",
+                themeCatalog.isFavorite(index) ? RED : MUTED);
         favorite.addView(heart, new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
         favorite.setContentDescription("پسندیدن تم");
         favorite.setClickable(true);
         favorite.setFocusable(true);
         applyPressScale(favorite, .98f);
         favorite.setOnClickListener(v -> {
-            setThemeFavorite(index, !isThemeFavorite(index));
+            themeCatalog.setFavorite(index, !themeCatalog.isFavorite(index));
             rerenderCurrentPage();
         });
         card.addView(favorite, new LinearLayout.LayoutParams(dp(30), dp(40)));
 
         GradientDrawable preview = new GradientDrawable();
         preview.setCornerRadius(dp(9));
-        applyGradientTheme(preview, index, 19);
+        themeCatalog.applyGradient(preview, index, PURPLE, dp(19));
         FrameLayout swatch = new FrameLayout(this);
         swatch.setBackground(preview);
         card.addView(swatch, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
-        TextView label = text(themeName(index), 12, TEXT);
+        TextView label = text(themeCatalog.themeName(index), 12, TEXT);
         label.setMaxLines(2);
         label.setEllipsize(android.text.TextUtils.TruncateAt.END);
         label.setGravity(Gravity.CENTER);
@@ -2392,7 +1898,7 @@ public final class MainActivity extends Activity {
                         if (!value.startsWith("#")) value = "#" + value;
                         parsedColors.put(Color.parseColor(value));
                     }
-                    JSONArray themes = customThemes();
+                    JSONArray themes = themeCatalog.customThemes();
                     JSONObject theme = new JSONObject();
                     theme.put("name", themeName);
                     theme.put("colors", parsedColors);
@@ -2400,7 +1906,7 @@ public final class MainActivity extends Activity {
                     themes.put(theme);
                     getSharedPreferences("appearance", MODE_PRIVATE).edit()
                             .putString("custom_themes", themes.toString()).apply();
-                    accentIndex = BUILTIN_THEME_COUNT + themes.length() - 1;
+                    accentIndex = ThemeCatalog.BUILTIN_THEME_COUNT + themes.length() - 1;
                     getSharedPreferences("appearance", MODE_PRIVATE).edit().putInt("accent", accentIndex).apply();
                     dialog.dismiss();
                     applyThemeColors();
@@ -2503,7 +2009,7 @@ public final class MainActivity extends Activity {
         else if ("recommendationSettings".equals(page)) showRecommendationSettings();
         else if ("statistics".equals(page)) showStatistics();
         else if ("tagSettings".equals(page)) showTagSettings();
-        else if ("extensions".equals(page) || "colloquializer".equals(page)) showColloquializer();
+        else if ("colloquializer".equals(page)) showColloquializer();
         else if ("authors".equals(page)) showAuthors();
         else if ("genres".equals(page)) showGenres();
         else if ("authorBooks".equals(page)) showAllBooksForAuthor(activeAuthor);
@@ -2646,7 +2152,7 @@ public final class MainActivity extends Activity {
             else if ("settings".equals(state.page)) showSettings();
             else if ("themes".equals(state.page)) showThemes();
             else if ("tagSettings".equals(state.page)) showTagSettings();
-            else if ("colloquializer".equals(state.page) || "extensions".equals(state.page)) showColloquializer();
+            else if ("colloquializer".equals(state.page)) showColloquializer();
             else showBookShelfPage(true);
         } finally {
             suppressNavigationHistory = false;
@@ -2654,22 +2160,6 @@ public final class MainActivity extends Activity {
         if ("settings".equals(state.page) && settingsScroll != null) {
             settingsScroll.post(() -> settingsScroll.scrollTo(0, state.settingsScrollY));
         }
-    }
-
-    private static final class NavigationState {
-        String page;
-        String activeBookId;
-        int activeChapter;
-        String activeCollectionId;
-        String activeAuthor;
-        String activeGenre;
-        String bookShelfReturnPage;
-        String chaptersReturnPage;
-        String bookInfoReturnPage;
-        String collectionBooksReturnPage;
-        String bookShelfSearchQuery;
-        int settingsScrollY;
-        final Set<String> activeGenreFilter = new HashSet<>();
     }
 
     private void showAuthors() {
@@ -2755,10 +2245,6 @@ public final class MainActivity extends Activity {
         showAuthorInfoPage(author);
     }
 
-    private void startAuthorSelection(String author) {
-        toggleAuthorSelection(author);
-    }
-
     private void toggleAuthorSelection(String author) {
         if (containsIgnoreCase(selectedAuthorNames, author)) removeIgnoreCase(selectedAuthorNames, author);
         else selectedAuthorNames.add(author);
@@ -2810,7 +2296,7 @@ public final class MainActivity extends Activity {
         JSONObject item = new JSONObject();
         putJson(item, "name", author.trim());
         putJson(item, "description", "");
-        putJson(item, "orderIndex", nextOrderIndex(authorDetails()));
+        putJson(item, "orderIndex", LibraryOrdering.nextOrderIndex(authorDetails()));
         authorDetails().put(item);
         return item;
     }
@@ -2829,24 +2315,7 @@ public final class MainActivity extends Activity {
     }
 
     private void ensureOrderIndexesByName(JSONArray items, String nameKey) {
-        if (items == null) return;
-        List<JSONObject> ordered = new ArrayList<>();
-        for (int i = 0; i < items.length(); i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item != null) ordered.add(item);
-        }
-        boolean valid = true;
-        Set<Integer> indexes = new HashSet<>();
-        for (JSONObject item : ordered) {
-            int index = item.optInt("orderIndex", -1);
-            if (index < 0 || !indexes.add(index)) valid = false;
-        }
-        if (!valid) Collections.sort(ordered, (a, b) -> String.CASE_INSENSITIVE_ORDER.compare(
-                a.optString(nameKey, ""), b.optString(nameKey, "")));
-        for (int i = 0; i < ordered.size(); i++) {
-            putJson(ordered.get(i), "orderIndex", i);
-            try { items.put(i, ordered.get(i)); } catch (JSONException ignored) { }
-        }
+        LibraryOrdering.ensureNamedOrderIndexes(items, nameKey);
     }
 
     private void showAuthorInfoPage(String author) {
@@ -3000,7 +2469,7 @@ public final class MainActivity extends Activity {
                 .setView(content).create();
         cancel.setOnClickListener(v -> dialog.dismiss());
         save.setOnClickListener(v -> {
-            String newName = titleCaseWords(name.getText().toString());
+            String newName = TextNormalization.titleCaseWords(name.getText().toString());
             if (newName.isEmpty()) { name.setError("نام نویسنده را وارد کن"); return; }
             if (!renameAuthor(originalName, newName, genders[selectedGender[0]])) return;
             JSONObject savedAuthor = ensureAuthorDetail(newName);
@@ -3014,7 +2483,7 @@ public final class MainActivity extends Activity {
         dialog.show();
         styleDialogWindow(dialog);
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
             int availableHeight = Math.max(dp(360), getResources().getDisplayMetrics().heightPixels - dp(180));
             dialog.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(32), dp(480)),
                     Math.min(dp(590), availableHeight));
@@ -3750,7 +3219,7 @@ public final class MainActivity extends Activity {
         item = new JSONObject();
         putJson(item, "name", genre.trim());
         putJson(item, "description", "");
-        putJson(item, "orderIndex", nextOrderIndex(genreDetails()));
+        putJson(item, "orderIndex", LibraryOrdering.nextOrderIndex(genreDetails()));
         genreDetails().put(item);
         return item;
     }
@@ -3833,11 +3302,6 @@ public final class MainActivity extends Activity {
         refreshGenreSelection();
     }
 
-    private void clearGenreSelection() {
-        selectedGenreNames.clear();
-        refreshGenreSelection();
-    }
-
     private void refreshGenreSelection() {
         if (!"genres".equals(page) || appColumn == null || appColumn.getChildCount() == 0) return;
         appColumn.removeViewAt(0);
@@ -3870,7 +3334,7 @@ public final class MainActivity extends Activity {
                 .setView(dialogPadding(clearableInput(name))).setNegativeButton("لغو", null)
                 .setPositiveButton("افزودن", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String genre = canonicalGenre(titleCaseWords(name.getText().toString()));
+            String genre = canonicalGenre(TextNormalization.titleCaseWords(name.getText().toString()));
             if (genre.isEmpty()) { name.setError("نام ژانر را وارد کن"); return; }
             if (findGenreName(allGenres(), genre) != null) { name.setError("این ژانر از قبل وجود دارد"); return; }
             JSONArray genres = library.optJSONArray("genres");
@@ -3887,7 +3351,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void showGenreInfo(String genre) {
@@ -3987,7 +3451,7 @@ public final class MainActivity extends Activity {
                 styleDialogWindow(confirm);
             });
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String renamed = canonicalGenre(titleCaseWords(name.getText().toString()));
+                String renamed = canonicalGenre(TextNormalization.titleCaseWords(name.getText().toString()));
                 if (renamed.isEmpty()) { name.setError("نام ژانر را وارد کن"); return; }
                 String existing = findGenreName(allGenres(), renamed);
                 if (existing != null && !existing.equalsIgnoreCase(oldGenre)) {
@@ -4022,7 +3486,7 @@ public final class MainActivity extends Activity {
         });
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void ensureFavoriteTagsDefined() {
@@ -4094,7 +3558,7 @@ public final class MainActivity extends Activity {
     }
 
     private void addManagedTag(EditText search, LinearLayout rows) {
-        String tag = canonicalGenre(titleCaseWords(search.getText().toString()));
+        String tag = canonicalGenre(TextNormalization.titleCaseWords(search.getText().toString()));
         if (tag.isEmpty()) { search.setError("نام ژانر را وارد کن"); return; }
         JSONArray tags = library.optJSONArray("genres");
         if (tags == null) tags = new JSONArray();
@@ -4130,7 +3594,7 @@ public final class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v ->
                     confirmDeleteTag(oldTag, rows, search, dialog));
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String newTag = titleCaseWords(name.getText().toString());
+                String newTag = TextNormalization.titleCaseWords(name.getText().toString());
                 if (newTag.isEmpty()) { name.setError("نام ژانر را وارد کن"); return; }
                 String existing = findGenreName(library.optJSONArray("genres"), newTag);
                 if (existing != null && !existing.equalsIgnoreCase(oldTag)) {
@@ -4156,7 +3620,7 @@ public final class MainActivity extends Activity {
         });
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private boolean renameTag(String oldTag, String newTag) {
@@ -4328,96 +3792,23 @@ public final class MainActivity extends Activity {
     }
 
     private JSONArray genreEquivalentGroups() {
-        JSONArray groups = library.optJSONArray("genreEquivalents");
-        return groups == null ? new JSONArray() : groups;
+        return GenreCatalog.equivalentGroups(library);
     }
 
     private String canonicalGenre(String value) {
-        String candidate = value == null ? "" : value.trim();
-        if (candidate.isEmpty()) return "";
-        JSONArray groups = genreEquivalentGroups();
-        Set<String> visited = new HashSet<>();
-        for (int pass = 0; pass <= groups.length(); pass++) {
-            if (!visited.add(candidate.toLowerCase(Locale.ROOT))) break;
-            String primary = null;
-            for (int i = 0; i < groups.length() && primary == null; i++) {
-                JSONObject group = groups.optJSONObject(i);
-                if (group == null) continue;
-                JSONArray aliases = group.optJSONArray("aliases");
-                if (aliases == null) continue;
-                for (int j = 0; j < aliases.length(); j++) {
-                    if (candidate.equalsIgnoreCase(aliases.optString(j).trim())) {
-                        primary = group.optString("primary", "").trim();
-                        break;
-                    }
-                }
-            }
-            if (primary == null || primary.isEmpty()) break;
-            candidate = primary;
-        }
-        String known = findGenreName(library.optJSONArray("genres"), candidate);
-        return known == null ? titleCaseWords(candidate) : known;
+        return GenreCatalog.canonicalName(library, value);
     }
 
     private void canonicalizeGenrePreferences() {
-        Set<String> favoriteGenres = new LinkedHashSet<>();
-        for (String value : favoriteGenrePreferences) {
-            String canonical = canonicalGenre(value);
-            if (!canonical.isEmpty()) favoriteGenres.add(canonical);
-        }
-        favoriteGenrePreferences.clear();
-        favoriteGenrePreferences.addAll(favoriteGenres);
-
-        Set<String> dislikedGenres = new LinkedHashSet<>();
-        for (String value : dislikedGenrePreferences) {
-            String canonical = canonicalGenre(value);
-            if (!canonical.isEmpty() && !containsIgnoreCase(favoriteGenres, canonical)) dislikedGenres.add(canonical);
-        }
-        dislikedGenrePreferences.clear();
-        dislikedGenrePreferences.addAll(dislikedGenres);
-
-        Set<String> filters = new HashSet<>();
-        for (String value : activeGenreFilter) {
-            String canonical = canonicalGenre(value);
-            if (!canonical.isEmpty()) filters.add(canonical);
-        }
-        activeGenreFilter.clear();
-        activeGenreFilter.addAll(filters);
+        GenreCatalog.canonicalizePreferences(library, favoriteGenrePreferences, dislikedGenrePreferences, activeGenreFilter);
     }
 
     private void canonicalizeLibraryGenres() {
-        JSONArray known = library.optJSONArray("genres");
-        JSONArray canonical = new JSONArray();
-        if (known != null) for (int i = 0; i < known.length(); i++) {
-            appendUniqueGenre(canonical, known.optString(i));
-        }
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book == null) continue;
-            JSONArray source = book.optJSONArray("genres");
-            JSONArray bookGenres = new JSONArray();
-            if (source != null) for (int j = 0; j < source.length(); j++) {
-                appendUniqueGenre(bookGenres, source.optString(j));
-            }
-            putJson(book, "genres", bookGenres);
-            for (int j = 0; j < bookGenres.length(); j++) appendUniqueGenre(canonical, bookGenres.optString(j));
-        }
-        putJson(library, "genres", canonical);
-        canonicalizeGenrePreferences();
+        GenreCatalog.canonicalizeLibrary(library, favoriteGenrePreferences, dislikedGenrePreferences, activeGenreFilter);
     }
 
     private List<String> allGenreCandidates() {
-        LinkedHashSet<String> values = new LinkedHashSet<>();
-        JSONArray genres = allGenres();
-        for (int i = 0; i < genres.length(); i++) values.add(genres.optString(i));
-        JSONArray groups = genreEquivalentGroups();
-        for (int i = 0; i < groups.length(); i++) {
-            JSONObject group = groups.optJSONObject(i);
-            JSONArray aliases = group == null ? null : group.optJSONArray("aliases");
-            if (aliases != null) for (int j = 0; j < aliases.length(); j++) values.add(aliases.optString(j));
-        }
-        return new ArrayList<>(values);
+        return GenreCatalog.allCandidates(library, allGenres());
     }
 
     private void showGenreEquivalents() {
@@ -4515,11 +3906,11 @@ public final class MainActivity extends Activity {
                 .setView(dialogPadding(form)).setNegativeButton("لغو", null)
                 .setPositiveButton("ذخیره", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String main = titleCaseWords(primary[0]);
+            String main = TextNormalization.titleCaseWords(primary[0]);
             if (main.isEmpty()) { toast("یک ژانر اصلی انتخاب کن."); return; }
             LinkedHashSet<String> cleanAliases = new LinkedHashSet<>();
             for (String alias : aliases) {
-                String clean = titleCaseWords(alias);
+                String clean = TextNormalization.titleCaseWords(alias);
                 if (!clean.isEmpty() && !clean.equalsIgnoreCase(main)) cleanAliases.add(clean);
             }
             if (cleanAliases.isEmpty()) { toast("حداقل یک ژانر معادل انتخاب کن."); return; }
@@ -4544,7 +3935,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("انتخاب ژانر اصلی").setItems(items, (dialog, which) -> {
             if (which == items.length - 1) {
                 showBookTextEntryDialog("ژانر اصلی تازه", "نام ژانر", "", value -> {
-                    selected[0] = titleCaseWords(value);
+                    selected[0] = TextNormalization.titleCaseWords(value);
                     target.setText("ژانر اصلی: " + selected[0]);
                 });
             } else {
@@ -4580,7 +3971,7 @@ public final class MainActivity extends Activity {
             }
             if (merged) {
                 if (!replacing && aliases != null) for (int j = 0; j < aliases.length(); j++) {
-                    String alias = titleCaseWords(aliases.optString(j));
+                    String alias = TextNormalization.titleCaseWords(aliases.optString(j));
                     if (!alias.isEmpty() && !alias.equalsIgnoreCase(primary)) addGenreName(mergedAliases, alias);
                 }
                 continue;
@@ -4645,82 +4036,27 @@ public final class MainActivity extends Activity {
     }
 
     private JSONArray renamedTags(JSONArray source, String oldTag, String newTag) {
-        JSONArray result = new JSONArray();
-        if (source == null) return result;
-        for (int i = 0; i < source.length(); i++) {
-            String value = source.optString(i);
-            appendUniqueGenre(result, value.equalsIgnoreCase(oldTag) ? newTag : value);
-        }
-        return result;
+        return GenreCatalog.renamedTags(library, source, oldTag, newTag);
     }
 
     private void replaceSetValue(Set<String> values, String oldValue, String newValue) {
-        boolean found = false;
-        for (String value : new ArrayList<>(values)) {
-            if (value.equalsIgnoreCase(oldValue)) { values.remove(value); found = true; }
-        }
-        if (found) values.add(newValue);
+        GenreCatalog.replaceSetValue(values, oldValue, newValue);
     }
 
     private void addGenreName(Collection<String> genres, String value) {
-        String candidate = value == null ? "" : value.trim();
-        if (candidate.isEmpty()) return;
-        for (String genre : genres) if (genre.equalsIgnoreCase(candidate)) return;
-        genres.add(candidate);
+        GenreCatalog.addName(genres, value);
     }
 
     private String findGenreName(Collection<String> genres, String value) {
-        for (String genre : genres) if (genre.equalsIgnoreCase(value)) return genre;
-        return null;
+        return GenreCatalog.findName(genres, value);
     }
 
     private String findGenreName(JSONArray genres, String value) {
-        for (int i = 0; i < genres.length(); i++) {
-            String genre = genres.optString(i);
-            if (genre.equalsIgnoreCase(value)) return genre;
-        }
-        return null;
-    }
-
-    private String rememberRecommendationGenre(Map<String, String> genres, String value) {
-        String name = value == null ? "" : value.trim();
-        if (name.isEmpty() || "Other".equalsIgnoreCase(name)) return null;
-        String key = name.toLowerCase(Locale.ROOT);
-        if (!genres.containsKey(key)) genres.put(key, name);
-        return key;
+        return GenreCatalog.findName(genres, value);
     }
 
     private void rebuildRecommendationWeights() {
-        Map<String, String> genreNames = new HashMap<>();
-        JSONArray knownGenres = allGenres();
-        for (int i = 0; i < knownGenres.length(); i++) {
-            rememberRecommendationGenre(genreNames, knownGenres.optString(i));
-        }
-
-        Set<String> preferredGenreKeys = new HashSet<>();
-        Set<String> dislikedGenreKeys = new HashSet<>();
-        for (String genre : favoriteGenrePreferences) {
-            String key = rememberRecommendationGenre(genreNames, genre);
-            if (key != null) preferredGenreKeys.add(key);
-        }
-        for (String genre : dislikedGenrePreferences) {
-            String key = rememberRecommendationGenre(genreNames, genre);
-            if (key != null) dislikedGenreKeys.add(key);
-        }
-
-        recommendationPreferences.genreWeights.clear();
-        for (Map.Entry<String, String> entry : genreNames.entrySet()) {
-            recommendationPreferences.genreWeights.put(entry.getKey(), 10);
-        }
-        for (String key : preferredGenreKeys) {
-            if (genreNames.containsKey(key)) recommendationPreferences.genreWeights.put(key, 30);
-        }
-        for (String key : dislikedGenreKeys) {
-            if (!preferredGenreKeys.contains(key) && genreNames.containsKey(key)) {
-                recommendationPreferences.genreWeights.put(key, 1);
-            }
-        }
-
+        if (recommendationStateStore != null) recommendationStateStore.rebuildWeights(allGenres());
     }
 
     private List<BookRecommendationEngine.Book> recommendationBooks(Boolean currentlyReading,
@@ -4786,31 +4122,15 @@ public final class MainActivity extends Activity {
     }
 
     private int seriesBookNumber(JSONObject book) {
-        if (book == null) return 0;
-        int number = book.optInt("seriesNumber", 0);
-        return number > 0 ? number : Math.max(1, book.optInt("orderIndex", 0) + 1);
+        return LibraryMetrics.seriesBookNumber(book);
     }
 
     private int nextSeriesBookNumber(String collectionId) {
-        int next = 1;
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null && collectionId.equals(book.optString("collectionId", "other"))) {
-                next = Math.max(next, seriesBookNumber(book) + 1);
-            }
-        }
-        return next;
+        return LibraryMetrics.nextSeriesBookNumber(collectionId, library.optJSONArray("books"));
     }
 
     private String displayBookTitle(JSONObject book) {
-        if (book == null) return "";
-        String title = book.optString("title", "بدون عنوان");
-        if (!"other".equals(book.optString("collectionId", "other"))) {
-            int number = seriesBookNumber(book);
-            if (number > 0) return title + " #" + number;
-        }
-        return title;
+        return LibraryMetrics.displayBookTitle(book);
     }
 
     private JSONObject findBookByRecommendationId(long recommendationId) {
@@ -4824,62 +4144,11 @@ public final class MainActivity extends Activity {
     }
 
     private void loadRecommendationState() {
-        if (recommendationState == null) return;
-        try {
-            JSONObject savedWeights = new JSONObject(recommendationState.getString("genre_weights", "{}"));
-            Iterator<String> names = savedWeights.keys();
-            while (names.hasNext()) {
-                String genre = names.next();
-                recommendationPreferences.genreWeights.put(genre.trim().toLowerCase(Locale.ROOT),
-                        Math.max(1, savedWeights.optInt(genre, 10)));
-            }
-        } catch (Exception ignored) { }
-        Set<String> savedIds = recommendationState.getStringSet("seen_books", Collections.emptySet());
-        if (savedIds != null) {
-            for (String id : savedIds) {
-                try { seenRecommendationIds.add(Long.parseLong(id)); }
-                catch (NumberFormatException ignored) { }
-            }
-        }
-        Set<String> savedGenres = recommendationState.getStringSet("favorite_genres", Collections.emptySet());
-        if (savedGenres != null) for (String genre : savedGenres) {
-            String normalized = titleCaseWords(genre);
-            if (!normalized.isEmpty()) favoriteGenrePreferences.add(normalized);
-        }
-        Set<String> savedDislikedGenres = recommendationState.getStringSet("disliked_genres", Collections.emptySet());
-        if (savedDislikedGenres != null) for (String genre : savedDislikedGenres) {
-            String normalized = titleCaseWords(genre);
-            if (!normalized.isEmpty()) dislikedGenrePreferences.add(normalized);
-        }
-        Set<String> savedAuthors = recommendationState.getStringSet("favorite_authors", Collections.emptySet());
-        if (savedAuthors != null) for (String author : savedAuthors) {
-            String normalized = titleCaseWords(author);
-            if (!normalized.isEmpty()) favoriteAuthorPreferences.add(normalized);
-        }
-        Set<String> savedDislikedAuthors = recommendationState.getStringSet("disliked_authors", Collections.emptySet());
-        if (savedDislikedAuthors != null) for (String author : savedDislikedAuthors) {
-            String normalized = titleCaseWords(author);
-            if (!normalized.isEmpty()) dislikedAuthorPreferences.add(normalized);
-        }
+        if (recommendationStateStore != null) recommendationStateStore.load();
     }
 
     private void persistRecommendationState() {
-        if (recommendationState == null) return;
-        JSONObject weights = new JSONObject();
-        for (Map.Entry<String, Integer> entry : recommendationPreferences.genreWeights.entrySet()) {
-            try { weights.put(entry.getKey(), Math.max(1, entry.getValue())); }
-            catch (JSONException ignored) { }
-        }
-        Set<String> ids = new HashSet<>();
-        for (Long id : seenRecommendationIds) ids.add(Long.toString(id));
-        recommendationState.edit().putString("genre_weights", weights.toString())
-                .putStringSet("seen_books", ids)
-                .putStringSet("favorite_genres", new HashSet<>(favoriteGenrePreferences))
-                .putStringSet("disliked_genres", new HashSet<>(dislikedGenrePreferences))
-                .remove("favorite_book_ids")
-                .remove("disliked_book_ids")
-                .putStringSet("favorite_authors", new HashSet<>(favoriteAuthorPreferences))
-                .putStringSet("disliked_authors", new HashSet<>(dislikedAuthorPreferences)).apply();
+        if (recommendationStateStore != null) recommendationStateStore.save();
     }
 
     private JSONArray collectionArray() {
@@ -4889,15 +4158,6 @@ public final class MainActivity extends Activity {
             try { library.put("collections", result); } catch (JSONException ignored) { }
         }
         return result;
-    }
-
-    private int nextOrderIndex(JSONArray items) {
-        int next = 0;
-        if (items != null) for (int i = 0; i < items.length(); i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item != null) next = Math.max(next, item.optInt("orderIndex", -1) + 1);
-        }
-        return next;
     }
 
     private boolean startReorderDrag(View source, String listType, String itemId) {
@@ -4960,7 +4220,7 @@ public final class MainActivity extends Activity {
         if ("collection".equals(listType)) {
             JSONArray items = collectionArray();
             if (moveJsonItem(items, "id", sourceId, targetId)) {
-                ensureOrderIndexes(items, false);
+                LibraryOrdering.ensureOrderIndexes(items, false);
                 refreshCollectionSelection();
                 changed = true;
             }
@@ -4970,18 +4230,18 @@ public final class MainActivity extends Activity {
             JSONObject book = activeBook();
             JSONArray items = book == null ? null : book.optJSONArray("chapters");
             if (moveJsonItem(items, "storageIndex", sourceId, targetId)) {
-                ensureOrderIndexes(items, true);
+                LibraryOrdering.ensureOrderIndexes(items, true);
                 refreshChapterSelection();
                 changed = true;
             }
         } else if ("author".equals(listType)) {
-            changed = moveJsonItem(authorDetails(), "name", sourceId, targetId);
+            changed = LibraryOrdering.moveJsonItem(authorDetails(), "name", sourceId, targetId);
             if (changed) {
                 ensureOrderIndexesByName(authorDetails(), "name");
                 refreshAuthorSelection();
             }
         } else if ("genre".equals(listType)) {
-            changed = moveJsonItem(genreDetails(), "name", sourceId, targetId);
+            changed = LibraryOrdering.moveJsonItem(genreDetails(), "name", sourceId, targetId);
             if (changed) {
                 ensureOrderIndexesByName(genreDetails(), "name");
                 refreshGenreSelection();
@@ -5067,67 +4327,12 @@ public final class MainActivity extends Activity {
     }
 
     private boolean moveJsonItem(JSONArray items, String key, String sourceId, String targetId) {
-        if (items == null) return false;
-        List<JSONObject> ordered = new ArrayList<>();
-        for (int i = 0; i < items.length(); i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item != null) ordered.add(item);
-        }
-        int from = -1, to = -1;
-        for (int i = 0; i < ordered.size(); i++) {
-            JSONObject item = ordered.get(i);
-            String id = "storageIndex".equals(key)
-                    ? Integer.toString(chapterStorageIndex(item, i)) : item.optString(key);
-            if (sourceId.equals(id)) from = i;
-            if (targetId.equals(id)) to = i;
-        }
-        if (from < 0 || to < 0 || from == to) return false;
-        JSONObject moving = ordered.remove(from);
-        ordered.add(to, moving);
-        for (int i = 0; i < ordered.size(); i++) {
-            putJson(ordered.get(i), "orderIndex", i);
-            try { items.put(i, ordered.get(i)); } catch (JSONException ignored) { }
-        }
-        return true;
+        return LibraryOrdering.moveJsonItem(items, key, sourceId, targetId);
     }
 
     private boolean reorderVisibleBooks(String sourceId, String targetId) {
         if (bookAdapter == null) return false;
-        List<JSONObject> visible = new ArrayList<>(bookAdapter.visible());
-        int from = -1, to = -1;
-        for (int i = 0; i < visible.size(); i++) {
-            String id = visible.get(i).optString("id");
-            if (sourceId.equals(id)) from = i;
-            if (targetId.equals(id)) to = i;
-        }
-        if (from < 0 || to < 0 || from == to) return false;
-        JSONObject moving = visible.remove(from);
-        visible.add(to, moving);
-        Set<String> visibleIds = new HashSet<>();
-        for (JSONObject item : visible) visibleIds.add(item.optString("id"));
-        JSONArray allBooks = library.optJSONArray("books");
-        if (allBooks == null) return false;
-        int nextVisible = 0;
-        for (int i = 0; i < allBooks.length(); i++) {
-            JSONObject item = allBooks.optJSONObject(i);
-            if (item != null && visibleIds.contains(item.optString("id"))) {
-                try { allBooks.put(i, visible.get(nextVisible++)); } catch (JSONException ignored) { }
-            }
-        }
-        for (int i = 0; i < allBooks.length(); i++) {
-            JSONObject item = allBooks.optJSONObject(i);
-            if (item != null) putJson(item, "orderIndex", i);
-        }
-        Map<String, Integer> seriesPositions = new HashMap<>();
-        for (int i = 0; i < allBooks.length(); i++) {
-            JSONObject item = allBooks.optJSONObject(i);
-            if (item == null) continue;
-            String collectionId = item.optString("collectionId", "other");
-            if ("other".equals(collectionId)) continue;
-            int number = seriesPositions.containsKey(collectionId) ? seriesPositions.get(collectionId) : 1;
-            putJson(item, "seriesNumber", number);
-            seriesPositions.put(collectionId, number + 1);
-        }
+        if (!LibraryOrdering.reorderVisibleBooks(library, bookAdapter.visible(), sourceId, targetId)) return false;
         refreshDashboardSelection();
         return true;
     }
@@ -5197,13 +4402,13 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("ساخت", null).create();
         String before = library.toString();
         dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
-            String title = titleCaseWords(name.getText().toString());
+            String title = TextNormalization.titleCaseWords(name.getText().toString());
             if (title.isEmpty()) { name.setError("نام مجموعه را وارد کن"); return; }
             JSONObject collection = new JSONObject();
             String id = UUID.randomUUID().toString();
             try {
                 collection.put("id", id).put("title", title);
-                collection.put("orderIndex", nextOrderIndex(collectionArray()));
+                collection.put("orderIndex", LibraryOrdering.nextOrderIndex(collectionArray()));
                 collectionArray().put(collection);
                 for (String bookId : selected) {
                     JSONObject book = findBookById(bookId);
@@ -5223,7 +4428,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void showEditCollectionDialog(JSONObject collection) {
@@ -5244,7 +4449,7 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("ذخیره", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String title = "other".equals(collectionId) ? collection.optString("title")
-                    : titleCaseWords(name.getText().toString());
+                    : TextNormalization.titleCaseWords(name.getText().toString());
             if (title.isEmpty()) { name.setError("نام سری را وارد کن"); return; }
             JSONObject current = findCollectionById(collectionId);
             if (current == null) { dialog.dismiss(); return; }
@@ -5262,7 +4467,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void refreshCollectionUi() {
@@ -5425,22 +4630,7 @@ public final class MainActivity extends Activity {
     }
 
     private int collectionReadPercent(JSONObject collection) {
-        long read = 0;
-        long total = 0;
-        JSONArray books = library.optJSONArray("books");
-        if (books != null) for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book == null || !collection.optString("id").equals(book.optString("collectionId", "other"))) continue;
-            JSONArray chapters = book.optJSONArray("chapters");
-            if (chapters == null) continue;
-            for (int j = 0; j < chapters.length(); j++) {
-                JSONObject chapter = chapters.optJSONObject(j);
-                if (chapter == null) continue;
-                total++;
-                if (chapter.optBoolean("done", false)) read++;
-            }
-        }
-        return total == 0 ? 0 : (int) Math.min(100, read * 100 / total);
+        return LibraryMetrics.collectionReadPercent(collection, library.optJSONArray("books"));
     }
 
     private void refreshCollectionSelection() {
@@ -5578,7 +4768,7 @@ public final class MainActivity extends Activity {
                 if (!genre.isEmpty()) { genrePreview.put(genre); added++; }
             }
         }
-        GenreCloud genreChips = new GenreCloud(this);
+        GenreCloud genreChips = new GenreCloud(this, uiComponents, PURPLE, contrastOnAccent(), SURFACE_ALT, TEXT);
         genreChips.setReadOnly(true);
         genreChips.showGenres(genrePreview, Collections.emptySet(), "");
         LinearLayout.LayoutParams genreChipsParams = new LinearLayout.LayoutParams(-1, -2);
@@ -5652,29 +4842,8 @@ public final class MainActivity extends Activity {
         body.addView(row, params);
     }
 
-    private String genreSummary(JSONArray genres) {
-        if (genres == null || genres.length() == 0) return "—";
-        List<String> values = new ArrayList<>();
-        for (int i = 0; i < genres.length(); i++) {
-            String value = genres.optString(i).trim();
-            if (!value.isEmpty()) values.add(value);
-        }
-        return values.isEmpty() ? "—" : android.text.TextUtils.join(" · ", values);
-    }
-
     private int bookReadPercent(JSONObject book) {
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null || chapters.length() == 0) return 0;
-        int total = 0;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter == null) continue;
-            boolean finishedWriting = chapter.optBoolean("end", false);
-            int percent = !finishedWriting ? 0 : chapter.optBoolean("done")
-                    ? 100 : chapter.optInt("percent", 0);
-            total += Math.max(0, Math.min(100, percent));
-        }
-        return Math.round(total / (float) chapters.length());
+        return LibraryMetrics.bookReadPercent(book);
     }
 
     private void addBookCoverFilterSwitch(LinearLayout body, JSONObject book,
@@ -5935,7 +5104,7 @@ public final class MainActivity extends Activity {
         chaptersList.setPadding(dp(12), dp(6), dp(12), dp(6)); chaptersList.setClipToPadding(false);
         chapterAdapter = new ChapterAdapter(); chaptersList.setAdapter(chapterAdapter);
         appColumn.addView(chaptersList, new LinearLayout.LayoutParams(-1, 0, 1));
-        int next = firstUnread(book);
+        int next = ChapterCatalog.firstUnread(book);
         chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
     }
 
@@ -6020,7 +5189,7 @@ public final class MainActivity extends Activity {
     }
 
     private String chapterSelectionKey(JSONObject chapter, int position) {
-        return Integer.toString(chapterStorageIndex(chapter, position));
+        return Integer.toString(ChapterCatalog.storageIndex(chapter, position));
     }
 
     private void toggleChapterSelection(JSONObject chapter, int position) {
@@ -6126,7 +5295,7 @@ public final class MainActivity extends Activity {
         if (selected == null) return;
         String before = library.toString();
         EditText title = edit("Chapter title", false);
-        title.setText(chapterLabel(selected, selectedPosition));
+        title.setText(ChapterCatalog.label(selected, selectedPosition));
         title.setSelection(title.length());
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Edit Chapter")
                 .setView(dialogPadding(title)).setNegativeButton("Cancel", null)
@@ -6144,7 +5313,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void addChapter() {
@@ -6167,12 +5336,12 @@ public final class MainActivity extends Activity {
             JSONArray currentChapters = currentBook == null ? null : currentBook.optJSONArray("chapters");
             if (currentChapters == null || currentChapters.length() >= 5000) return;
             String before = library.toString();
-            ensureChapterStorageIndexes(currentChapters);
-            JSONObject chapter = newChapter();
+            ChapterCatalog.ensureStorageIndexes(currentChapters);
+            JSONObject chapter = ChapterCatalog.newChapter();
             putJson(chapter, "title", label);
             int storageIndex = currentChapters.length() + 1;
             putJson(chapter, "storageIndex", storageIndex);
-            int insertAt = chapterInsertionIndex(currentChapters, label);
+            int insertAt = ChapterCatalog.insertionIndex(currentChapters, label);
             JSONArray ordered = new JSONArray();
             for (int i = 0; i <= currentChapters.length(); i++) {
                 if (i == insertAt) ordered.put(chapter);
@@ -6189,108 +5358,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
-    }
-
-    private void ensureChapterStorageIndexes(JSONArray chapters) {
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter != null && chapter.optInt("storageIndex", 0) < 1) {
-                putJson(chapter, "storageIndex", i + 1);
-            }
-        }
-    }
-
-    private int chapterInsertionIndex(JSONArray chapters, String newLabel) {
-        BigDecimal number = chapterNumber(newLabel);
-        if (number == null) return chapters.length();
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            BigDecimal existing = chapterNumber(chapter == null ? "" : chapter.optString("title"));
-            if (existing != null && existing.compareTo(number) > 0) return i;
-        }
-        return chapters.length();
-    }
-
-    private BigDecimal chapterNumber(String label) {
-        if (label == null) return null;
-        Matcher matcher = CHAPTER_NUMBER_PATTERN.matcher(label.trim());
-        if (!matcher.matches()) return null;
-        try { return new BigDecimal(matcher.group(1)); }
-        catch (NumberFormatException ignored) { return null; }
-    }
-
-    private int largestWholeChapterNumber(JSONObject book) {
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null) return 0;
-        int largest = 0;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            BigDecimal number = chapterNumber(chapter == null ? "" : chapter.optString("title"));
-            if (number != null && number.stripTrailingZeros().scale() <= 0
-                    && number.compareTo(BigDecimal.ONE) >= 0
-                    && number.compareTo(BigDecimal.valueOf(5000)) <= 0) {
-                largest = Math.max(largest, number.intValue());
-            }
-        }
-        return largest;
-    }
-
-    private void addMissingWholeChapters(JSONObject book, int targetCount) {
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (chapters == null || targetCount < 1) return;
-        ensureChapterStorageIndexes(chapters);
-        Set<Integer> present = new HashSet<>();
-        int nextStorageIndex = 1;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter == null) continue;
-            nextStorageIndex = Math.max(nextStorageIndex, chapterStorageIndex(chapter, i) + 1);
-            BigDecimal number = chapterNumber(chapter.optString("title"));
-            if (number != null && number.stripTrailingZeros().scale() <= 0
-                    && number.compareTo(BigDecimal.ONE) >= 0
-                    && number.compareTo(BigDecimal.valueOf(5000)) <= 0) present.add(number.intValue());
-        }
-        for (int number = 1; number <= targetCount; number++) {
-            if (present.contains(number)) continue;
-            JSONObject chapter = newChapter();
-            putJson(chapter, "title", "Chapter " + number);
-            putJson(chapter, "storageIndex", nextStorageIndex++);
-            int insertion = chapterInsertionIndex(chapters, "Chapter " + number);
-            JSONArray reordered = new JSONArray();
-            for (int i = 0; i <= chapters.length(); i++) {
-                if (i == insertion) reordered.put(chapter);
-                if (i < chapters.length()) reordered.put(chapters.opt(i));
-            }
-            chapters = reordered;
-            present.add(number);
-        }
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter != null) putJson(chapter, "orderIndex", i);
-        }
-        putJson(book, "chapters", chapters);
-    }
-
-    private int chapterStorageIndex(JSONObject chapter, int position) {
-        int saved = chapter == null ? 0 : chapter.optInt("storageIndex", 0);
-        return saved > 0 ? saved : position + 1;
-    }
-
-    private String chapterLabel(JSONObject chapter, int index) {
-        String savedTitle = chapter == null ? "" : chapter.optString("title").trim();
-        return savedTitle.isEmpty() ? "Chapter " + (index + 1) : savedTitle;
-    }
-
-    private int firstUnread(JSONObject book) {
-        JSONArray chapters = book.optJSONArray("chapters");
-        if (chapters == null || chapters.length() == 0) return 0;
-        for (int i = 0; i < chapters.length(); i++) {
-            JSONObject chapter = chapters.optJSONObject(i);
-            if (chapter == null || !chapter.optBoolean("end", false)
-                    || !chapter.optBoolean("done")) return i;
-        }
-        return chapters.length() - 1;
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void showReader() {
@@ -6300,12 +5368,12 @@ public final class MainActivity extends Activity {
         catch (JSONException ignored) { readerRestoreState = chapter; }
         setPage("reader"); appColumn.removeAllViews();
         animatePageTransition();
-        readerExtensionButton = null;
-        readerExtensionIcon = null;
-        readerExtensionSpinner = null;
+        readerActionButton = null;
+        readerActionIcon = null;
+        readerActionSpinner = null;
         readerBottomBar = null;
         View readerHeaderBar = makeCompactReaderHeader(book.optString("title"),
-                chapterLabel(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length());
+                ChapterCatalog.label(chapter, activeChapter) + " of " + book.optJSONArray("chapters").length());
         appColumn.addView(readerHeaderBar, new LinearLayout.LayoutParams(-1, dp(80)));
         FrameLayout progressTrack = new FrameLayout(this);
         progressTrack.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 3));
@@ -6319,7 +5387,7 @@ public final class MainActivity extends Activity {
         readerFrame = new FrameLayout(this); readerFrame.setBackgroundColor(BG);
         lastReaderProgressWidth = -1;
         readerFrame.setFocusableInTouchMode(true);
-        readerScroll = new ReaderScrollView(this);
+        readerScroll = new ReaderScrollView(this, this::showQuickScroll);
         readerScroll.setFillViewport(true);
         readerScroll.setSmoothScrollingEnabled(true);
         readerScroll.setVerticalScrollBarEnabled(false); readerScroll.setHorizontalScrollBarEnabled(false);
@@ -6474,7 +5542,6 @@ public final class MainActivity extends Activity {
             @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
             @Override public void afterTextChanged(Editable text) { }
         });
-        lastFastFlickDirection = 0; fastFlickCount = 0; lastFastFlickAt = 0;
         restoringScroll = true;
         if (readerEditing) afterReaderLayout(() -> {
             int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
@@ -6682,10 +5749,10 @@ public final class MainActivity extends Activity {
                     if (!exceptions.isEmpty()) chapterPair.put(new JSONArray(exceptions));
                     singlePair.put(chapterPair);
                     if (!onlyThisChapter) {
-                        JSONArray rules = extensionManager.colloquializerInstalled()
-                                ? new JSONArray(extensionManager.colloquializerRules()) : new JSONArray();
+                    JSONArray rules = colloquializerStore.isInstalled()
+                            ? new JSONArray(colloquializerStore.readRules()) : new JSONArray();
                         putReplacementPair(rules, ruleSource, replacement, exceptions);
-                        extensionManager.saveColloquializerRules(rules.toString());
+                        colloquializerStore.saveRules(rules.toString());
                     }
                     String updated = TextReplacementEngine.transform(current, singlePair.toString());
                     String transformedPrefix = TextReplacementEngine.transform(
@@ -6714,9 +5781,7 @@ public final class MainActivity extends Activity {
             pendingReaderScrollFraction = readerScrollFraction();
             hasPendingReaderScrollFraction = true;
         }
-        chapterUndoStack.addLast(chapterEditor.getText().toString());
-        while (chapterUndoStack.size() > 80) chapterUndoStack.removeFirst();
-        chapterRedoStack.clear();
+        chapterEditHistory.pushUndo(chapterEditor.getText().toString());
         chapterEditor.setText(updated);
         chapterEditor.setSelection(Math.max(0, Math.min(selection, updated.length())));
         chapterText = updated;
@@ -6748,33 +5813,27 @@ public final class MainActivity extends Activity {
     }
 
     private void rememberChapterUndo(CharSequence text, int start, int count, int after) {
-            if (restoringChapterUndo) return;
-        chapterRedoStack.clear();
-        long now = android.os.SystemClock.uptimeMillis();
-        boolean typing = count == 0 && after == 1;
-        boolean coalesce = typing && lastUndoWasTyping && start == lastUndoEnd && now - lastUndoAt < 850;
-        if (!coalesce && (chapterUndoStack.isEmpty() || !chapterUndoStack.peekLast().contentEquals(text))) {
-            chapterUndoStack.addLast(text.toString());
-            while (chapterUndoStack.size() > 80) chapterUndoStack.removeFirst();
-        }
-        lastUndoWasTyping = typing;
-        lastUndoAt = now;
-        lastUndoEnd = start + after;
+        chapterEditHistory.recordBeforeChange(text, start, count, after);
     }
 
     private void undoChapterEdit() {
-        if (chapterEditor == null || chapterUndoStack.isEmpty()) {
+        if (chapterEditor == null) {
             toast("تغییری برای بازگردانی نیست");
             return;
         }
-        pushChapterHistory(chapterRedoStack, chapterEditor.getText().toString());
-        String previous = chapterUndoStack.removeLast();
+        String previous = chapterEditHistory.undo(chapterEditor.getText().toString());
+        if (previous == null) {
+            toast("تغییری برای بازگردانی نیست");
+            return;
+        }
         int selection = Math.max(0, chapterEditor.getSelectionStart());
-        restoringChapterUndo = true;
-        chapterEditor.setText(previous);
-        chapterEditor.setSelection(Math.min(selection, previous.length()));
-        restoringChapterUndo = false;
-        lastUndoWasTyping = false;
+        chapterEditHistory.beginRestore();
+        try {
+            chapterEditor.setText(previous);
+            chapterEditor.setSelection(Math.min(selection, previous.length()));
+        } finally {
+            chapterEditHistory.endRestore();
+        }
         chapterText = previous;
         chapterDirty = true;
         scheduleSave();
@@ -6782,98 +5841,28 @@ public final class MainActivity extends Activity {
     }
 
     private void redoChapterEdit() {
-        if (chapterEditor == null || chapterRedoStack.isEmpty()) {
+        if (chapterEditor == null) {
             toast("تغییری برای بازانجام نیست");
             return;
         }
-        pushChapterHistory(chapterUndoStack, chapterEditor.getText().toString());
-        String next = chapterRedoStack.removeLast();
+        String next = chapterEditHistory.redo(chapterEditor.getText().toString());
+        if (next == null) {
+            toast("تغییری برای بازانجام نیست");
+            return;
+        }
         int selection = Math.max(0, chapterEditor.getSelectionStart());
-        restoringChapterUndo = true;
-        chapterEditor.setText(next);
-        chapterEditor.setSelection(Math.min(selection, next.length()));
-        restoringChapterUndo = false;
-        lastUndoWasTyping = false;
+        chapterEditHistory.beginRestore();
+        try {
+            chapterEditor.setText(next);
+            chapterEditor.setSelection(Math.min(selection, next.length()));
+        } finally {
+            chapterEditHistory.endRestore();
+        }
         chapterText = next;
         chapterDirty = true;
         scheduleSave();
         updateProgress();
     }
-
-    private void pushChapterHistory(Deque<String> history, String text) {
-        if (history.isEmpty() || !history.peekLast().equals(text)) history.addLast(text);
-        while (history.size() > 80) history.removeFirst();
-    }
-
-    private void setReaderImeVisible(boolean visible) {
-        if (readerImeVisible == visible) return;
-        readerImeVisible = visible;
-        EditText editor = chapterEditor;
-        FrameLayout frame = readerFrame;
-        if (editor == null || frame == null || !"reader".equals(page)) return;
-        if (visible) {
-            if (editor.hasFocus()) {
-                editor.setCursorVisible(true);
-                if (pendingReaderCursorOffset >= 0) {
-                    int cursorOffset = pendingReaderCursorOffset;
-                    editor.post(() -> positionReaderCursorInUpperHalf(cursorOffset));
-                    pendingReaderCursorOffset = -1;
-                }
-            }
-            return;
-        }
-        editor.setCursorVisible(false);
-        if (editor.hasFocus()) {
-            editor.clearFocus();
-            frame.requestFocus();
-        }
-        saveCurrentChapter();
-        leaveReaderEditMode();
-    }
-
-    private void openChapters(JSONObject book) {
-        selectedChapterKeys.clear();
-        activeBookId = book.optString("id");
-        activeCollectionId = book.optString("collectionId", "other");
-        chaptersReturnPage = bookInfoReturnPage;
-        showChapters();
-    }
-
-    private void openReader(int index) {
-        selectedChapterKeys.clear();
-        saveCurrentChapter();
-        JSONObject book = activeBook();
-        JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
-        if (book == null || chapters == null || index < 0 || index >= chapters.length()) return;
-        String bookId = book.optString("id");
-        JSONObject chapterForFile = chapters.optJSONObject(index);
-        String fileName = chapterTextFileName(chapterForFile);
-        int generation = ++chapterLoadGeneration;
-        showChapterLoadingOverlay();
-        chapterIoExecutor.execute(() -> {
-            String content = null;
-            String failure = null;
-            try {
-                content = storage.readChapterFile(bookId, fileName);
-            }
-            catch (Exception error) {
-                failure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            }
-            final String loaded = content;
-            final String loadFailure = failure;
-            runOnUiThread(() -> {
-                if (generation != chapterLoadGeneration || isFinishing()) return;
-                hideChapterLoadingOverlay();
-                if (!bookId.equals(activeBookId)) return;
-                if (loadFailure != null) {
-                    toast("خواندن Chapter ناموفق بود: " + loadFailure);
-                    return;
-                }
-                finishOpenReader(bookId, index, loaded);
-            });
-        });
-    }
-
     private void finishOpenReader(String bookId, int index, String loadedText) {
         JSONObject book = findBookById(bookId);
         JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
@@ -6887,10 +5876,7 @@ public final class MainActivity extends Activity {
         activeChapter = index;
         rememberRecentReading();
         putJson(book, "lastReadAt", System.currentTimeMillis());
-        chapterUndoStack.clear();
-        chapterRedoStack.clear();
-        lastUndoWasTyping = false;
-        lastUndoEnd = -1;
+        chapterEditHistory.clear();
         chapterText = loadedText == null ? "" : loadedText;
         chapterEnd = activeChapterObject() != null
                 && activeChapterObject().optBoolean("end", false);
@@ -7001,7 +5987,7 @@ public final class MainActivity extends Activity {
         JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null || readingPositionStore == null) return;
         readingPositionStore.rememberChapter(book.optString("id"),
-                book.optString("collectionId", "other"), chapterStorageIndex(chapter, activeChapter));
+                book.optString("collectionId", "other"), ChapterCatalog.storageIndex(chapter, activeChapter));
     }
 
     private void scheduleReadingPositionSave() {
@@ -7019,7 +6005,7 @@ public final class MainActivity extends Activity {
         int viewportHeight = readerScroll.getHeight();
         int scrollRange = Math.max(0, readerContentHeight() - viewportHeight);
         readingPositionStore.savePosition(book.optString("id"), book.optString("collectionId", "other"),
-                chapterStorageIndex(chapter, activeChapter), chapter, readerScroll.getScrollY(),
+                ChapterCatalog.storageIndex(chapter, activeChapter), chapter, readerScroll.getScrollY(),
                 viewportHeight, scrollRange, commit);
     }
 
@@ -7027,7 +6013,7 @@ public final class MainActivity extends Activity {
         if (readingPositionStore == null || chapter == null) return 0;
         JSONObject savedState = readerRestoreState == null ? chapter : readerRestoreState;
         int restored = readingPositionStore.restoreScroll(activeBookId,
-                chapterStorageIndex(chapter, activeChapter), savedState,
+                ChapterCatalog.storageIndex(chapter, activeChapter), savedState,
                 readerScroll == null ? 0 : readerScroll.getHeight(), scrollRange);
         readerRestoreState = null;
         return restored;
@@ -7082,54 +6068,18 @@ public final class MainActivity extends Activity {
     }
 
     private void startReadingTimer() {
-        if (!"reader".equals(page) || !chapterEnd) {
-            stopReadingTimer();
-            return;
+        if (readingSessionTimer != null) {
+            readingSessionTimer.markActivity("reader".equals(page) && chapterEnd);
         }
-        if (!readingTimerRunning) {
-            readingTimerRunning = true;
-            lastReadingTickAt = android.os.SystemClock.elapsedRealtime();
-            lastReadingWallAt = System.currentTimeMillis();
-            readingTickRunnable = new Runnable() {
-                @Override public void run() {
-                    if (!readingTimerRunning || !"reader".equals(page)) return;
-                    long tick = android.os.SystemClock.elapsedRealtime();
-                    if (readingStats != null) {
-                        readingStats.addReadingMillis(activeBookId,
-                                Math.max(0, tick - lastReadingTickAt), lastReadingWallAt);
-                    }
-                    lastReadingTickAt = tick;
-                    lastReadingWallAt = System.currentTimeMillis();
-                    handler.postDelayed(this, READING_TICK_MS);
-                }
-            };
-            handler.postDelayed(readingTickRunnable, READING_TICK_MS);
-        }
-        if (readingIdleRunnable != null) handler.removeCallbacks(readingIdleRunnable);
-        readingIdleRunnable = this::stopReadingTimer;
-        handler.postDelayed(readingIdleRunnable, READING_IDLE_TIMEOUT_MS);
     }
 
     private void stopReadingTimer() {
-        if (readingIdleRunnable != null) handler.removeCallbacks(readingIdleRunnable);
-        readingIdleRunnable = null;
-        if (!readingTimerRunning) return;
-        long now = android.os.SystemClock.elapsedRealtime();
-        if (now > lastReadingTickAt && readingStats != null) {
-            readingStats.addReadingMillis(activeBookId, now - lastReadingTickAt, lastReadingWallAt);
-        }
-        readingTimerRunning = false;
-        if (readingTickRunnable != null) handler.removeCallbacks(readingTickRunnable);
-        readingTickRunnable = null;
-        if (readingStats != null) readingStats.persist();
+        if (readingSessionTimer != null) readingSessionTimer.stop();
     }
 
     private void markReadingActivity() {
-        if ("reader".equals(page) && chapterEnd) {
-            startReadingTimer();
-        }
+        startReadingTimer();
     }
-
     private void showQuickScroll(boolean toTop) {
         if (quickScrollButton == null || chapterEditor == null || readerScroll == null) return;
         int range = readerContentHeight() - readerScroll.getHeight();
@@ -7161,70 +6111,6 @@ public final class MainActivity extends Activity {
 
     private interface BookGenreSelectionAction {
         void save(LinkedHashSet<String> selected, ArrayList<String> available);
-    }
-
-    private static final class BookJsonData {
-        String title = "";
-        String author = "";
-        String description = "";
-        String collection = "";
-        String coverUrl = "";
-        int chapterCount;
-        int seriesNumber;
-        boolean hasTitle;
-        boolean hasAuthor;
-        boolean hasDescription;
-        boolean hasGenres;
-        boolean hasCollection;
-        boolean hasChapterCount;
-        boolean hasSeriesNumber;
-        boolean hasCoverUrl;
-        final ArrayList<String> genres = new ArrayList<>();
-    }
-
-    private static final class BookJsonImportTarget {
-        final EditText title;
-        final EditText author;
-        final EditText count;
-        final EditText seriesNumber;
-        final String[] description;
-        final String[] collectionId;
-        final LinkedHashSet<String> selectedGenres;
-        final ArrayList<String> availableGenres;
-        final View descriptionEntry;
-        final View genreEntry;
-        final Runnable refreshCollectionChoice;
-        final Runnable showDetails;
-        final boolean isNew;
-        final ImageView coverPreview;
-        final View coverRemoveButton;
-        final String originalCoverName;
-        final ArrayList<String> createdCollectionIds = new ArrayList<>();
-        TextView saveButton;
-
-        BookJsonImportTarget(EditText title, EditText author, EditText count, EditText seriesNumber,
-                             String[] description, String[] collectionId,
-                             LinkedHashSet<String> selectedGenres, ArrayList<String> availableGenres,
-                             View descriptionEntry, View genreEntry, Runnable refreshCollectionChoice,
-                             Runnable showDetails, boolean isNew,
-                             ImageView coverPreview, View coverRemoveButton, String originalCoverName) {
-            this.title = title;
-            this.author = author;
-            this.count = count;
-            this.seriesNumber = seriesNumber;
-            this.description = description;
-            this.collectionId = collectionId;
-            this.selectedGenres = selectedGenres;
-            this.availableGenres = availableGenres;
-            this.descriptionEntry = descriptionEntry;
-            this.genreEntry = genreEntry;
-            this.refreshCollectionChoice = refreshCollectionChoice;
-            this.showDetails = showDetails;
-            this.isNew = isNew;
-            this.coverPreview = coverPreview;
-            this.coverRemoveButton = coverRemoveButton;
-            this.originalCoverName = originalCoverName == null ? "" : originalCoverName;
-        }
     }
 
     private void chooseBookJson() {
@@ -7265,7 +6151,7 @@ public final class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 BookJsonData imported;
                 try {
-                    imported = parseBookJsonText(input.getText().toString());
+                    imported = BookJsonParser.parseText(input.getText().toString());
                 } catch (Exception error) {
                     toast("JSON معتبر نیست؛ متن را بررسی کن.");
                     return;
@@ -7282,7 +6168,7 @@ public final class MainActivity extends Activity {
         });
         dialog.show();
         styleDialogWindow(dialog);
-        if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void openBookJsonFilePicker() {
@@ -7302,7 +6188,7 @@ public final class MainActivity extends Activity {
     private void importBookJson(Uri uri) {
         try (InputStream input = getContentResolver().openInputStream(uri)) {
             if (input == null) throw new IOException("Empty input stream");
-            BookJsonData imported = parseBookJsonText(readUtf8(input));
+            BookJsonData imported = BookJsonParser.parseText(readUtf8(input));
             if (activeBookJsonImportTarget == null) {
                 toast("فرم کتاب بسته شده است.");
                 return;
@@ -7313,68 +6199,12 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private BookJsonData parseBookJsonText(String value) throws JSONException {
-        String source = value == null ? "" : value.trim();
-        if (source.startsWith("```") && source.endsWith("```")) {
-            int firstLine = source.indexOf('\n');
-            if (firstLine >= 0) source = source.substring(firstLine + 1, source.length() - 3).trim();
-        }
-        if (source.isEmpty()) throw new JSONException("Empty JSON");
-        JSONObject root = new JSONObject(source);
-        JSONObject nestedBook = root.optJSONObject("book");
-        return parseBookJson(nestedBook == null ? root : nestedBook);
-    }
-
     private String readUtf8(InputStream input) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         byte[] buffer = new byte[4096];
         int read;
         while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
         return new String(output.toByteArray(), StandardCharsets.UTF_8);
-    }
-
-    private BookJsonData parseBookJson(JSONObject json) {
-        BookJsonData result = new BookJsonData();
-        result.hasTitle = json.has("title") || json.has("name");
-        result.title = json.optString("title", json.optString("name", "")).trim();
-        result.hasAuthor = json.has("author");
-        result.author = json.optString("author", "").trim();
-        Object rawCover = json.has("coverUrl") ? json.opt("coverUrl")
-                : json.has("cover_url") ? json.opt("cover_url") : json.opt("cover");
-        if (rawCover instanceof String) {
-            result.coverUrl = ((String) rawCover).trim();
-            result.hasCoverUrl = result.coverUrl.startsWith("https://");
-        }
-        result.hasDescription = json.has("description");
-        result.description = json.optString("description", "").trim();
-        result.hasCollection = json.has("collection") || json.has("series");
-        result.collection = json.optString("collection", json.optString("series", "")).trim();
-        result.hasSeriesNumber = json.has("seriesNumber") || json.has("bookNumber");
-        result.seriesNumber = json.optInt("seriesNumber", json.optInt("bookNumber", 0));
-
-        Object rawCount = json.has("chapterCount") ? json.opt("chapterCount") : json.opt("chaptersCount");
-        result.hasChapterCount = json.has("chapterCount") || json.has("chaptersCount");
-        if (rawCount instanceof Number) result.chapterCount = ((Number) rawCount).intValue();
-        else if (rawCount instanceof String) {
-            try { result.chapterCount = Integer.parseInt(((String) rawCount).trim()); }
-            catch (NumberFormatException ignored) { result.chapterCount = 0; }
-        }
-
-        String genreKey = json.has("genres") ? "genres" : "tags";
-        result.hasGenres = json.has(genreKey);
-        Object rawGenres = json.opt(genreKey);
-        if (rawGenres instanceof JSONArray) {
-            JSONArray genres = (JSONArray) rawGenres;
-            for (int i = 0; i < genres.length(); i++) {
-                String value = genres.optString(i, "").trim();
-                if (!value.isEmpty()) result.genres.add(value);
-            }
-        } else if (rawGenres instanceof String) {
-            for (String value : ((String) rawGenres).split("[,،]")) {
-                if (!value.trim().isEmpty()) result.genres.add(value.trim());
-            }
-        }
-        return result;
     }
 
     private void showBookJsonImportPreview(BookJsonData data, BookJsonImportTarget target) {
@@ -7474,14 +6304,14 @@ public final class MainActivity extends Activity {
     }
 
     private String createCollectionForBookJson(String title, BookJsonImportTarget target) {
-        String collectionTitle = titleCaseWords(title);
+        String collectionTitle = TextNormalization.titleCaseWords(title);
         if (collectionTitle.isEmpty()) return null;
         String existingId = findCollectionIdByTitle(collectionTitle);
         if (existingId != null) return existingId;
         String id = UUID.randomUUID().toString();
         try {
             collectionArray().put(new JSONObject().put("id", id).put("title", collectionTitle)
-                    .put("orderIndex", nextOrderIndex(collectionArray())));
+                    .put("orderIndex", LibraryOrdering.nextOrderIndex(collectionArray())));
             target.createdCollectionIds.add(id);
             return id;
         } catch (JSONException error) {
@@ -7548,23 +6378,9 @@ public final class MainActivity extends Activity {
         target.showDetails.run();
     }
 
-    private String defaultBookJsonPrompt() {
-        try (InputStream input = getAssets().open("book_info_prompt.txt")) {
-            return readUtf8(input);
-        } catch (IOException error) {
-            return "";
-        }
-    }
-
-    private String bookJsonPromptTemplate() {
-        SharedPreferences preferences = getSharedPreferences("general", MODE_PRIVATE);
-        String saved = preferences.getString("book_json_prompt", null);
-        return saved == null ? defaultBookJsonPrompt() : saved;
-    }
-
     private void showBookJsonPromptSettings() {
         EditText promptEditor = edit("متن پرایمت", true);
-        promptEditor.setText(bookJsonPromptTemplate());
+        promptEditor.setText(bookJsonPromptStore.load());
         promptEditor.setMinLines(12);
         promptEditor.setMaxLines(22);
         promptEditor.setGravity(Gravity.RIGHT | Gravity.TOP);
@@ -7580,37 +6396,36 @@ public final class MainActivity extends Activity {
                 .create();
         dialog.setOnShowListener(ignored -> {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v ->
-                    promptEditor.setText(defaultBookJsonPrompt()));
+                    promptEditor.setText(bookJsonPromptStore.defaultPrompt()));
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 String value = promptEditor.getText().toString().trim();
                 if (value.isEmpty()) {
                     promptEditor.setError("متن پرایمت نمی‌تواند خالی باشد");
                     return;
                 }
-                getSharedPreferences("general", MODE_PRIVATE).edit()
-                        .putString("book_json_prompt", value).apply();
+                bookJsonPromptStore.save(value);
                 dialog.dismiss();
                 toast("متن پرایمت ذخیره شد.");
             });
         });
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void showBookJsonPrompt() {
-        String prompt = bookJsonPromptTemplate();
+        String prompt = bookJsonPromptStore.load();
         if (prompt.trim().isEmpty()) {
             toast("متن پرایمت خالی است؛ آن را در تنظیمات عمومی بنویس.");
             return;
         }
         BookJsonImportTarget target = activeBookJsonImportTarget;
         if (target != null) {
-            prompt = fillBookPromptField(prompt, "عنوان کتاب:", target.title.getText().toString());
-            prompt = fillBookPromptField(prompt, "نویسنده:", target.author.getText().toString());
+            prompt = bookJsonPromptStore.fillField(prompt, "عنوان کتاب:", target.title.getText().toString());
+            prompt = bookJsonPromptStore.fillField(prompt, "نویسنده:", target.author.getText().toString());
             JSONObject collection = "other".equals(target.collectionId[0])
                     ? null : findCollectionById(target.collectionId[0]);
-            prompt = fillBookPromptField(prompt, "مجموعه:",
+            prompt = bookJsonPromptStore.fillField(prompt, "مجموعه:",
                     collection == null ? "" : collection.optString("title", ""));
         }
         final String promptText = prompt;
@@ -7634,19 +6449,6 @@ public final class MainActivity extends Activity {
                 .create();
         dialog.show();
         styleDialogWindow(dialog);
-    }
-
-    private String fillBookPromptField(String prompt, String label, String value) {
-        int labelStart = prompt.indexOf(label);
-        if (labelStart < 0) return prompt;
-        int valueStart = labelStart + label.length();
-        int lineEnd = prompt.indexOf('\n', valueStart);
-        if (lineEnd < 0) lineEnd = prompt.length();
-        int contentEnd = lineEnd;
-        if (contentEnd > valueStart && prompt.charAt(contentEnd - 1) == '\r') contentEnd--;
-        String cleanValue = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').trim();
-        return prompt.substring(0, valueStart) + (cleanValue.isEmpty() ? "" : " " + cleanValue)
-                + prompt.substring(contentEnd);
     }
 
     private void shareBookPrompt(String prompt) {
@@ -7683,7 +6485,7 @@ public final class MainActivity extends Activity {
         detailsDialog.show();
         styleDialogWindow(detailsDialog);
         if (detailsDialog.getWindow() != null) {
-            detailsDialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+            detailsDialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
     }
 
@@ -7773,11 +6575,11 @@ public final class MainActivity extends Activity {
                 }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void addGenreSelection(String raw, List<String> available, Set<String> selected) {
-        String value = canonicalGenre(titleCaseWords(raw));
+        String value = canonicalGenre(TextNormalization.titleCaseWords(raw));
         if (value.isEmpty()) return;
         String[] words = value.trim().split("\\s+");
         if (words.length > 1) {
@@ -7818,7 +6620,7 @@ public final class MainActivity extends Activity {
         addParams.leftMargin = dp(7);
         searchRow.addView(addGenre, addParams);
 
-        GenreCloud cloud = new GenreCloud(this);
+        GenreCloud cloud = new GenreCloud(this, uiComponents, PURPLE, contrastOnAccent(), SURFACE_ALT, TEXT);
         Runnable render = () -> {
             String query = search.getText().toString();
             int comma = Math.max(query.lastIndexOf(','), query.lastIndexOf('،'));
@@ -7863,7 +6665,7 @@ public final class MainActivity extends Activity {
                 }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private void showBookDialog(JSONObject existing) {
@@ -7937,7 +6739,7 @@ public final class MainActivity extends Activity {
                                 }));
         EditText count = edit("تعداد Chapter", false);
         count.setInputType(InputType.TYPE_CLASS_NUMBER);
-        count.setText(isNew ? "" : Integer.toString(largestWholeChapterNumber(existing)));
+        count.setText(isNew ? "" : Integer.toString(ChapterCatalog.largestWholeChapterNumber(existing)));
         LinearLayout titleAuthorFields = new LinearLayout(this);
         titleAuthorFields.setOrientation(LinearLayout.VERTICAL);
         titleAuthorFields.addView(clearableInput(title), fieldParams());
@@ -8069,9 +6871,9 @@ public final class MainActivity extends Activity {
                 activeBookJsonImportTarget.saveButton = saveButton;
             }
             saveButton.setOnClickListener(v -> {
-            String bookTitle = titleCaseWords(title.getText().toString());
+            String bookTitle = TextNormalization.titleCaseWords(title.getText().toString());
             if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
-            String bookAuthor = titleCaseWords(author.getText().toString());
+            String bookAuthor = TextNormalization.titleCaseWords(author.getText().toString());
             int chapterTotal = 0;
             String chapterCountValue = count.getText().toString().trim();
             if (isNew || !chapterCountValue.isEmpty()) {
@@ -8106,7 +6908,7 @@ public final class MainActivity extends Activity {
             }
             LinkedHashSet<String> normalizedSelected = new LinkedHashSet<>();
             for (String value : selected) {
-                String normalized = canonicalGenre(titleCaseWords(value));
+                String normalized = canonicalGenre(TextNormalization.titleCaseWords(value));
                 if (!normalized.isEmpty()) normalizedSelected.add(normalized);
             }
             JSONArray savedGenres = new JSONArray();
@@ -8119,7 +6921,7 @@ public final class MainActivity extends Activity {
             if (isNew) {
                 JSONArray chapters = new JSONArray();
                 for (int i = 0; i < chapterTotal; i++) {
-                    JSONObject chapter = newChapter();
+                    JSONObject chapter = ChapterCatalog.newChapter();
                     putJson(chapter, "title", "Chapter " + (i + 1));
                     putJson(chapter, "storageIndex", i + 1);
                     putJson(chapter, "orderIndex", i);
@@ -8136,7 +6938,7 @@ public final class MainActivity extends Activity {
                     book.put("cover", pendingCoverName == null ? "" : pendingCoverName);
                     book.put("collectionId", chosenCollectionId[0]);
                     if (bookNumber > 0) book.put("seriesNumber", bookNumber);
-                    book.put("orderIndex", nextOrderIndex(library.optJSONArray("books")));
+                    book.put("orderIndex", LibraryOrdering.nextOrderIndex(library.optJSONArray("books")));
                     book.put("chapters", chapters);
                     library.getJSONArray("books").put(book);
                 } catch (JSONException ignoredError) { }
@@ -8164,7 +6966,7 @@ public final class MainActivity extends Activity {
                 putJson(existing, "collectionId", chosenCollectionId[0]);
                 if (bookNumber > 0) putJson(existing, "seriesNumber", bookNumber);
                 else existing.remove("seriesNumber");
-                if (chapterTotal > 0) addMissingWholeChapters(existing, chapterTotal);
+                if (chapterTotal > 0) ChapterCatalog.addMissingWholeChapters(existing, chapterTotal);
                 if (!saveLibrary()) {
                     restoreLibrary(libraryBeforeSave);
                     dialog.dismiss();
@@ -8223,13 +7025,13 @@ public final class MainActivity extends Activity {
                 .setView(dialogPadding(clearableInput(name))).setNegativeButton("لغو", null)
                 .setPositiveButton("ساخت", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String title = titleCaseWords(name.getText().toString());
+            String title = TextNormalization.titleCaseWords(name.getText().toString());
             if (title.isEmpty()) { name.setError("نام مجموعه را وارد کن"); return; }
             String before = library.toString();
             String id = UUID.randomUUID().toString();
             try {
                 collectionArray().put(new JSONObject().put("id", id).put("title", title)
-                        .put("orderIndex", nextOrderIndex(collectionArray())));
+                        .put("orderIndex", LibraryOrdering.nextOrderIndex(collectionArray())));
             } catch (JSONException error) { return; }
             if (!saveLibrary()) { restoreLibrary(before); return; }
             selectedId[0] = id;
@@ -8238,7 +7040,7 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManagerFlags.ADJUST_RESIZE);
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
     private JSONArray genreArray(List<String> values) {
@@ -8247,28 +7049,6 @@ public final class MainActivity extends Activity {
         Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
         for (String value : sorted) result.put(value);
         return result;
-    }
-
-    private String titleCaseWords(String value) {
-        String[] words = value == null ? new String[0] : value.trim().toLowerCase(Locale.ROOT).split("\\s+");
-        StringBuilder result = new StringBuilder();
-        for (String word : words) {
-            if (word.isEmpty()) continue;
-            if (result.length() > 0) result.append(' ');
-            int index = 0;
-            while (index < word.length()) {
-                int codePoint = word.codePointAt(index);
-                if (Character.isLetter(codePoint)) {
-                    result.append(word.substring(0, index));
-                    result.append(new String(Character.toChars(codePoint)).toUpperCase(Locale.ROOT));
-                    result.append(word.substring(index + Character.charCount(codePoint)));
-                    break;
-                }
-                index += Character.charCount(codePoint);
-            }
-            if (index >= word.length()) result.append(word);
-        }
-        return result.toString();
     }
 
     private void showReaderHelp() {
@@ -8307,7 +7087,7 @@ public final class MainActivity extends Activity {
     }
 
     private void loadImageForCover(Uri uri) {
-        imageExecutor.execute(() -> {
+        coverStore.execute(() -> {
             Bitmap bitmap = null;
             try {
                 BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
@@ -8340,77 +7120,29 @@ public final class MainActivity extends Activity {
             return;
         }
         if (target.saveButton != null) target.saveButton.setEnabled(false);
-        imageExecutor.execute(() -> {
-            Bitmap bitmap = null;
-            HttpURLConnection connection = null;
-            try {
-                connection = (HttpURLConnection) new URL(imageUrl).openConnection();
-                connection.setConnectTimeout(12_000);
-                connection.setReadTimeout(18_000);
-                connection.setInstanceFollowRedirects(true);
-                connection.setRequestProperty("User-Agent", "NovelReader/1.4.34 (Android)");
-                connection.connect();
-                int status = connection.getResponseCode();
-                if (status < 200 || status >= 300) throw new IOException("HTTP " + status);
-                if (connection.getContentLength() > 24 * 1024 * 1024) {
-                    throw new IOException("Cover file is too large");
+        coverDownloader.download(imageUrl, fileName -> runOnUiThread(() -> {
+            if (fileName == null) {
+                if (activeBookJsonImportTarget == target) {
+                    if (target.saveButton != null) target.saveButton.setEnabled(true);
+                    toast("دانلود جلد ناموفق بود؛ می‌توانی بعداً جلد را انتخاب کنی.");
                 }
-                byte[] bytes;
-                try (InputStream input = connection.getInputStream();
-                     ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    while ((read = input.read(buffer)) != -1) {
-                        if (output.size() + read > 24 * 1024 * 1024) {
-                            throw new IOException("Cover file is too large");
-                        }
-                        output.write(buffer, 0, read);
-                    }
-                    bytes = output.toByteArray();
-                }
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                    throw new IOException("Invalid cover image");
-                }
-                int sample = 1;
-                while (Math.max(bounds.outWidth, bounds.outHeight) / sample > 1800) sample *= 2;
-                BitmapFactory.Options options = new BitmapFactory.Options();
-                options.inSampleSize = sample;
-                bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
-                if (bitmap == null) throw new IOException("Could not decode cover image");
-            } catch (Exception error) {
-                android.util.Log.w("NovelReader", "Could not download book cover", error);
-            } finally {
-                if (connection != null) connection.disconnect();
+                return;
             }
-
-            String fileName = bitmap == null ? null : saveCoverBitmap(bitmap);
-            runOnUiThread(() -> {
-                if (fileName == null) {
-                    if (activeBookJsonImportTarget == target) {
-                        if (target.saveButton != null) target.saveButton.setEnabled(true);
-                        toast("دانلود جلد ناموفق بود؛ می‌توانی بعداً جلد را انتخاب کنی.");
-                    }
-                    return;
-                }
-                if (isFinishing() || activeBookJsonImportTarget != target) {
-                    deleteCoverFile(fileName);
-                    return;
-                }
-                String previous = pendingCoverName;
-                pendingCoverName = fileName;
-                if (target.saveButton != null) target.saveButton.setEnabled(true);
-                if (target.coverPreview != null) renderCoverPreview(target.coverPreview, fileName);
-                if (target.coverRemoveButton != null) target.coverRemoveButton.setVisibility(View.VISIBLE);
-                if (previous != null && !previous.isEmpty() && !previous.equals(target.originalCoverName)
-                        && !previous.equals(fileName) && !isCoverUsedByBook(previous)) {
-                    deleteCoverFile(previous);
-                }
-                toast("جلد کتاب دریافت شد.");
-            });
-        });
+            if (isFinishing() || activeBookJsonImportTarget != target) {
+                deleteCoverFile(fileName);
+                return;
+            }
+            String previous = pendingCoverName;
+            pendingCoverName = fileName;
+            if (target.saveButton != null) target.saveButton.setEnabled(true);
+            if (target.coverPreview != null) renderCoverPreview(target.coverPreview, fileName);
+            if (target.coverRemoveButton != null) target.coverRemoveButton.setVisibility(View.VISIBLE);
+            if (previous != null && !previous.isEmpty() && !previous.equals(target.originalCoverName)
+                    && !previous.equals(fileName) && !isCoverUsedByBook(previous)) {
+                deleteCoverFile(previous);
+            }
+            toast("جلد کتاب دریافت شد.");
+        }));
     }
 
     private boolean isCoverUsedByBook(String coverName) {
@@ -8424,37 +7156,11 @@ public final class MainActivity extends Activity {
     }
 
     private String saveCoverBitmap(Bitmap bitmap) {
-        String name = "cover-" + UUID.randomUUID().toString() + ".jpg";
-        try (java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, output)) return null;
-            output.flush();
-            return storage.writeImage(name, output.toByteArray()) ? name : null;
-        } catch (Exception error) { android.util.Log.e("NovelReader", "Could not save cover", error); return null; }
-        finally { if (!bitmap.isRecycled()) bitmap.recycle(); }
+        return coverStore.save(bitmap);
     }
 
     private Bitmap loadCoverBitmap(String name) {
-        if (name == null || name.isEmpty()) return null;
-        Bitmap cached = coverCache.get(name); if (cached != null && !cached.isRecycled()) return cached;
-        try {
-            byte[] bytes = storage.readImage(name);
-            if (bytes == null) return null;
-            BitmapFactory.Options bounds = new BitmapFactory.Options();
-            bounds.inJustDecodeBounds = true;
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
-            int targetEdge = Math.max(720, Math.min(1200, getResources().getDisplayMetrics().widthPixels));
-            int sample = 1;
-            while (bounds.outWidth > 0 && bounds.outHeight > 0
-                    && Math.max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= targetEdge) sample *= 2;
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = sample;
-            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
-            if (bitmap != null) coverCache.put(name, bitmap);
-            return bitmap;
-        } catch (Exception error) {
-            android.util.Log.w("NovelReader", "Could not load cover " + name, error);
-            return null;
-        }
+        return coverStore.load(name, getResources().getDisplayMetrics().widthPixels);
     }
 
     private void bindBookCover(ImageView image, View placeholder, JSONObject book) {
@@ -8470,7 +7176,7 @@ public final class MainActivity extends Activity {
     private void bindCover(ImageView image, View placeholder, String name) {
         image.setTag(name);
         image.setImageDrawable(null);
-        Bitmap cached = name == null ? null : coverCache.get(name);
+        Bitmap cached = name == null ? null : coverStore.cached(name);
         if (cached != null && !cached.isRecycled()) {
             image.setImageBitmap(cached);
             placeholder.setVisibility(View.GONE);
@@ -8478,7 +7184,7 @@ public final class MainActivity extends Activity {
         }
         placeholder.setVisibility(View.VISIBLE);
         if (name == null || name.isEmpty()) return;
-        imageExecutor.execute(() -> {
+        coverStore.execute(() -> {
             Bitmap loaded = loadCoverBitmap(name);
             runOnUiThread(() -> {
                 if (isFinishing() || image.getTag() == null || !name.equals(image.getTag())) return;
@@ -8498,16 +7204,13 @@ public final class MainActivity extends Activity {
     }
 
     private void deleteCoverFile(String name) {
-        if (name == null || name.isEmpty()) return;
-        coverCache.remove(name);
-        try { imageExecutor.execute(() -> storage.deleteImage(name)); }
-        catch (java.util.concurrent.RejectedExecutionException ignored) { }
+        coverStore.delete(name);
     }
 
     private void showGenreFilter() {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8), dp(4), dp(8), dp(4));
         EditText search = edit("جستجوی ژانرها", false); search.setSingleLine(true); box.addView(clearableInput(search), fieldParams());
-        GenreCloud cloud = new GenreCloud(this); Set<String> selected = new HashSet<>(activeGenreFilter);
+        GenreCloud cloud = new GenreCloud(this, uiComponents, PURPLE, contrastOnAccent(), SURFACE_ALT, TEXT); Set<String> selected = new HashSet<>(activeGenreFilter);
         Runnable render = () -> cloud.showGenres(allGenres(), selected, search.getText().toString()); render.run();
         search.addTextChangedListener(watcher(render)); box.addView(cloud);
         ScrollView scroll = new ScrollView(this);
@@ -8520,18 +7223,6 @@ public final class MainActivity extends Activity {
         }));
         dialog.show();
         styleDialogWindow(dialog);
-    }
-
-    private JSONObject newChapter() {
-        JSONObject chapter = new JSONObject();
-        try {
-            chapter.put("id", UUID.randomUUID().toString());
-            chapter.put("end", false);
-            chapter.put("hasText", false); chapter.put("percent", 0); chapter.put("done", false);
-            chapter.put("scroll", 0); chapter.put("manualDone", false);
-            chapter.put("estimatedMinutes", 0);
-        } catch (JSONException ignored) { }
-        return chapter;
     }
 
     private JSONArray allGenres() {
@@ -8649,8 +7340,8 @@ public final class MainActivity extends Activity {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);
             systemBackCallback = null;
         }
-        imageExecutor.shutdown();
-        pluginExecutor.shutdownNow();
+        coverStore.shutdown();
+        colloquializerExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -8799,223 +7490,83 @@ public final class MainActivity extends Activity {
     }
 
     private FrameLayout iconButton(String icon, int color, boolean selected, Runnable action) {
-        return makeIconButton(icon, color, selected, action, true);
+        return uiComponents.iconButton(icon, color, selected, action);
     }
 
     private FrameLayout plainIconButton(String icon, int color, Runnable action) {
-        return makeIconButton(icon, color, false, action, false);
+        return uiComponents.plainIconButton(icon, color, action);
     }
 
     private FrameLayout pairedEditCheckedButton(int color, Runnable action) {
-        FrameLayout button = new FrameLayout(this);
-        button.setBackgroundColor(Color.TRANSPARENT);
-        LinearLayout icons = new LinearLayout(this);
-        icons.setGravity(Gravity.CENTER);
-        icons.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-        NativeIconView pencil = new NativeIconView(this, "edit", color);
-        NativeIconView check = new NativeIconView(this, "check", color);
-        LinearLayout.LayoutParams pencilParams = new LinearLayout.LayoutParams(dp(17), dp(17));
-        pencilParams.rightMargin = dp(1);
-        icons.addView(pencil, pencilParams);
-        icons.addView(check, new LinearLayout.LayoutParams(dp(17), dp(17)));
-        button.addView(icons, new FrameLayout.LayoutParams(dp(36), dp(24), Gravity.CENTER));
-        button.setContentDescription("نشانگر پایان Chapter");
-        button.setClickable(true);
-        button.setFocusable(true);
-        applyPressScale(button);
-        if (action != null) button.setOnClickListener(v -> action.run());
-        return button;
-    }
-
-    private FrameLayout makeIconButton(String icon, int color, boolean selected, Runnable action, boolean circular) {
-        FrameLayout button = new FrameLayout(this);
-        if (circular) styleIconButton(button, selected);
-        else button.setBackgroundColor(Color.TRANSPARENT);
-        View glyph;
-        if ("exclamation".equals(icon)) {
-            TextView marker = text("!", 24, color);
-            marker.setGravity(Gravity.CENTER);
-            glyph = marker;
-        } else {
-            glyph = new NativeIconView(this, icon, color);
-        }
-        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER);
-        button.addView(glyph, p);
-        button.setContentDescription(iconDescription(icon)); button.setClickable(true); button.setFocusable(true);
-        applyPressScale(button);
-        if (action != null) button.setOnClickListener(v -> action.run());
-        return button;
+        return uiComponents.pairedEditCheckedButton(color, action);
     }
 
     private FrameLayout weightedIconButton(String icon, Runnable action) {
-        FrameLayout holder = new FrameLayout(this);
-        holder.addView(iconButton(icon, PURPLE, false, action),
-                new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER));
-        return holder;
+        return uiComponents.weightedIconButton(icon, action);
     }
 
     private void styleIconButton(FrameLayout button, boolean selected) {
-        GradientDrawable bg = new GradientDrawable(); bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(selected ? 0xFF30203D : SURFACE);
-        bg.setStroke(dp(1), selected ? PURPLE : themedStrokeColor(0xFF302A38)); button.setBackground(bg);
+        uiComponents.styleIconButton(button, selected);
     }
 
     private View textButton(String label, String icon, int color, Runnable action) {
-        LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setOrientation(LinearLayout.HORIZONTAL);
-        NativeIconView glyph = new NativeIconView(this, icon, color);
-        row.addView(glyph, new LinearLayout.LayoutParams(dp(22), dp(22)));
-        TextView text = text(label, 15, TEXT); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1); tp.leftMargin = dp(12); text.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); row.addView(text, tp);
-        row.setPadding(dp(14), 0, dp(14), 0); row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 14)); row.setOnClickListener(v -> action.run());
-        row.setClickable(true); row.setFocusable(true); applyPressScale(row); return row;
+        return uiComponents.textButton(label, icon, color, action);
     }
 
     private void applyPressScale(View view) {
-        applyPressScale(view, .96f);
+        uiComponents.applyPressScale(view);
     }
 
     private void applyPressScale(View view, float pressedScale) {
-        TouchFeedback.applyPressScale(view, pressedScale);
-    }
-
-    private String iconDescription(String icon) {
-        switch (icon) {
-            case "menu": return "منو"; case "add": return "افزودن"; case "filter": return "فیلتر";
-            case "back": return "بازگشت"; case "next": return "بعدی";
-            case "help": return "راهنمای توالی‌های ویژه";
-            case "undo": return "بازگردانی ویرایش";
-            case "redo": return "بازانجام ویرایش";
-            case "edit": return "ویرایش";
-            case "hide": return "مخفی کردن کتاب"; case "show": return "نمایش کتاب";
-            case "delete": return "حذف"; case "image": return "تصویر جلد"; case "settings": return "تنظیمات";
-            case "favorite": return "افزودن به علاقه‌مندی‌ها";
-            case "select": return "انتخاب کتاب";
-            case "exclamation": return "جزئیات مجموعه";
-            default: return icon;
-        }
+        uiComponents.applyPressScale(view, pressedScale);
     }
 
     private TextView emptyLabel(String value) {
-        TextView empty = text(value, 15, MUTED); empty.setGravity(Gravity.CENTER); return empty;
+        return uiComponents.emptyLabel(value);
     }
 
     private TextView text(String value, int sp, int color) {
-        TextView view = new TextView(this); view.setText(value); view.setTextSize(sp); view.setTextColor(color);
-        view.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); view.setGravity(Gravity.CENTER_VERTICAL);
-        view.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG); view.setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE); return view;
+        return uiComponents.text(value, sp, color);
     }
 
     private EditText edit(String hint, boolean multiline) {
-        EditText view = multiline ? new ReaderEditText(this) : new EditText(this);
-        view.setTextColor(TEXT); view.setHintTextColor(0xFF77717D);
-        view.setTypeface(vazir == null ? Typeface.DEFAULT : vazir); view.setTextSize(16); view.setHint(hint);
-        view.setLayoutDirection(View.LAYOUT_DIRECTION_LOCALE); view.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
-        view.setPadding(dp(13), dp(9), dp(13), dp(9)); view.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 12));
-        view.setSingleLine(!multiline); view.setGravity(multiline ? Gravity.TOP | Gravity.RIGHT : Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        view.setHighlightColor(selectionHighlightColor());
-        if (Build.VERSION.SDK_INT >= 29) {
-            view.setTextSelectHandle(new SelectionHandleDrawable(PURPLE, 0));
-            view.setTextSelectHandleLeft(new SelectionHandleDrawable(PURPLE, 1));
-            view.setTextSelectHandleRight(new SelectionHandleDrawable(PURPLE, -1));
-        }
-        return view;
+        return uiComponents.edit(hint, multiline);
     }
 
     private int selectionHighlightColor() {
-        return Color.argb(0x88, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE));
+        return uiComponents.selectionHighlightColor();
     }
 
     private View clearableInput(EditText input) {
-        FrameLayout field = new FrameLayout(this);
-        field.setLayoutDirection(input.getLayoutDirection());
-        input.setPadding(dp(46), input.getPaddingTop(), input.getPaddingRight(), input.getPaddingBottom());
-        field.addView(input, new FrameLayout.LayoutParams(-1, -1));
-
-        FrameLayout clear = new FrameLayout(this);
-        clear.setContentDescription("پاک کردن متن");
-        clear.setClickable(true);
-        clear.setFocusable(true);
-        NativeIconView close = new NativeIconView(this, "close", MUTED);
-        clear.addView(close, new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER));
-        clear.setOnClickListener(v -> { input.setText(""); input.requestFocus(); });
-        applyPressScale(clear);
-        field.addView(clear, new FrameLayout.LayoutParams(dp(42), -1, Gravity.LEFT | Gravity.CENTER_VERTICAL));
-        return field;
+        return uiComponents.clearableInput(input);
     }
 
     private GradientDrawable roundDrawable(int color, int stroke, int radiusDp) {
-        GradientDrawable drawable = new GradientDrawable();
-        if (color == PURPLE && isGradientTheme(accentIndex)) applyGradientTheme(drawable, accentIndex);
-        else if (color == SECONDARY_ACCENT && isGradientTheme(accentIndex)) {
-            applySecondaryGradientTheme(drawable, accentIndex);
-        }
-        else drawable.setColor(color);
-        drawable.setCornerRadius(dp(radiusDp));
-        if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), themedStrokeColor(stroke));
-        return drawable;
+        return uiComponents.roundDrawable(color, stroke, radiusDp);
     }
 
     private int themedStrokeColor(int color) {
-        if (!lightTheme || color == PURPLE) return color;
-        int red = Color.red(color), green = Color.green(color), blue = Color.blue(color);
-        int maximum = Math.max(red, Math.max(green, blue));
-        int minimum = Math.min(red, Math.min(green, blue));
-        if (maximum < 115 && maximum - minimum < 75) return Color.rgb(216, 213, 221);
-        return color;
+        return uiComponents.themedStrokeColor(color);
     }
 
     private LinearLayout.LayoutParams fieldParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(48)); params.bottomMargin = dp(9); return params;
+        return uiComponents.fieldParams();
     }
 
     private View dialogPadding(View child) {
-        LinearLayout wrap = new LinearLayout(this);
-        wrap.setGravity(Gravity.CENTER_HORIZONTAL);
-        wrap.setPadding(dp(20), dp(8), dp(20), dp(8));
-        wrap.addView(child, new LinearLayout.LayoutParams(-1, -2));
-        return wrap;
+        return uiComponents.dialogPadding(child);
     }
 
     private void styleDialogWindow(AlertDialog dialog) {
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(roundDrawable(SURFACE,
-                    lightTheme ? 0xFFD8D2E0 : 0xFF352D3F, 20));
-            window.setGravity(Gravity.CENTER);
-            int width = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(36));
-            window.setLayout(Math.min(width, dp(460)), android.view.WindowManager.LayoutParams.WRAP_CONTENT);
-        }
-        int titleId = dialog.getContext().getResources().getIdentifier("alertTitle", "id", "android");
-        TextView title = titleId == 0 ? null : dialog.findViewById(titleId);
-        if (title != null) {
-            title.setTextColor(TEXT);
-            title.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-            title.setGravity(Gravity.CENTER);
-        }
-        TextView message = dialog.findViewById(android.R.id.message);
-        if (message != null) {
-            message.setTextColor(TEXT);
-            message.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-            message.setGravity(Gravity.CENTER);
-        }
-        for (int which : new int[]{AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL}) {
-            android.widget.Button button = dialog.getButton(which);
-            if (button != null) {
-                button.setTextColor(PURPLE);
-                button.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-                applyPressScale(button, .98f);
-            }
-        }
-        int buttonPanelId = dialog.getContext().getResources().getIdentifier("buttonPanel", "id", "android");
-        View buttonPanel = buttonPanelId == 0 ? null : dialog.findViewById(buttonPanelId);
-        if (buttonPanel instanceof LinearLayout) ((LinearLayout) buttonPanel).setGravity(Gravity.CENTER_HORIZONTAL);
-        if (window != null) applyDialogTypeface(window.getDecorView());
+        uiComponents.styleDialogWindow(dialog);
     }
 
     private void applyDialogTypeface(View view) {
-        if (view instanceof TextView) ((TextView) view).setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-        if (!(view instanceof ViewGroup)) return;
-        ViewGroup group = (ViewGroup) view;
-        for (int i = 0; i < group.getChildCount(); i++) applyDialogTypeface(group.getChildAt(i));
+        uiComponents.applyDialogTypeface(view);
+    }
+
+    private int dp(float value) {
+        return uiComponents.dp(value);
     }
 
     private TextWatcher watcher(Runnable run) {
@@ -9026,42 +7577,6 @@ public final class MainActivity extends Activity {
         };
     }
 
-    private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-
-    private final class SelectionHandleDrawable extends Drawable {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final int pointDirection;
-
-        SelectionHandleDrawable(int color, int pointDirection) {
-            paint.setColor(color);
-            this.pointDirection = pointDirection;
-        }
-
-        @Override public void draw(Canvas canvas) {
-            android.graphics.Rect bounds = getBounds();
-            if (bounds.isEmpty()) return;
-            canvas.save();
-            canvas.translate(bounds.left, bounds.top);
-            canvas.scale(bounds.width() / 48f, bounds.height() / 24f);
-            float pathOffsetX = pointDirection > 0 ? 24f : pointDirection < 0 ? 0f : 12f;
-            canvas.translate(pathOffsetX, -2f);
-            Path shape = new Path();
-            shape.moveTo(12f, 22f);
-            shape.cubicTo(16.4183f, 22f, 20f, 18.4183f, 20f, 14f);
-            shape.cubicTo(20f, 9.58172f, 12f, 2f, 12f, 2f);
-            shape.cubicTo(12f, 2f, 4f, 9.58172f, 4f, 14f);
-            shape.cubicTo(4f, 18.4183f, 7.58172f, 22f, 12f, 22f);
-            shape.close();
-            canvas.drawPath(shape, paint);
-            canvas.restore();
-        }
-
-        @Override public int getIntrinsicWidth() { return dp(48); }
-        @Override public int getIntrinsicHeight() { return dp(24); }
-        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
-        @Override public void setColorFilter(ColorFilter colorFilter) { paint.setColorFilter(colorFilter); invalidateSelf(); }
-        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
-    }
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
 
     private void putJson(JSONObject object, String key, Object value) {
@@ -9069,199 +7584,6 @@ public final class MainActivity extends Activity {
         catch (JSONException error) { android.util.Log.e("NovelReader", "Could not save " + key, error); }
     }
 
-    private static final class WindowManagerFlags { static final int ADJUST_RESIZE = android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE; }
-
-    private final class SwipeRoot extends FrameLayout {
-        private float startX, startY, startProgress, lastProgress;
-        private boolean gestureCandidate, trackingDrawer;
-        private final GestureDetector gestureDetector;
-
-        SwipeRoot(Context context) {
-            super(context);
-            gestureDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
-                @Override public boolean onFling(MotionEvent first, MotionEvent last,
-                                                float velocityX, float velocityY) {
-                    if (first == null || last == null || !drawerSwipeAvailable()) return false;
-                    float horizontal = first.getX() - last.getX();
-                    float vertical = Math.abs(first.getY() - last.getY());
-                    boolean startedAtRightEdge = first.getX() >= getWidth() - dp(64);
-                    if (startedAtRightEdge && horizontal > dp(SWIPE_MIN_DISTANCE)
-                            && Math.abs(velocityX) > dp(SWIPE_THRESHOLD_VELOCITY)
-                            && velocityX < 0f && vertical < dp(SWIPE_MAX_OFF_PATH)) {
-                        openDrawer();
-                        return true;
-                    }
-                    return false;
-                }
-            });
-        }
-
-        @Override public boolean dispatchTouchEvent(MotionEvent event) {
-            int action = event.getActionMasked();
-            gestureDetector.onTouchEvent(event);
-            if (action == MotionEvent.ACTION_DOWN) {
-                startX = event.getX();
-                startY = event.getY();
-                float width = Math.max(1f, drawerWidth());
-                boolean drawerVisible = drawerLayer.getVisibility() == View.VISIBLE;
-                startProgress = drawerVisible
-                        ? Math.max(0f, Math.min(1f, 1f - drawerPanel.getTranslationX() / width))
-                        : drawerOpen ? 1f : 0f;
-                gestureCandidate = drawerVisible && startProgress > 0f
-                        || drawerSwipeAvailable() && startX >= getWidth() - dp(64);
-                trackingDrawer = false;
-                lastProgress = startProgress;
-                return super.dispatchTouchEvent(event);
-            }
-
-            if (!trackingDrawer && action == MotionEvent.ACTION_MOVE && gestureCandidate) {
-                float dx = event.getX() - startX;
-                float dy = event.getY() - startY;
-                boolean opening = dx < 0f && startProgress < 1f;
-                boolean closing = dx > 0f && startProgress > 0f;
-                if (Math.abs(dx) > dp(8) && Math.abs(dx) > Math.abs(dy) * 1.15f
-                        && (opening || closing)) {
-                    trackingDrawer = true;
-                    beginDrawerGesture(startProgress);
-                    MotionEvent cancel = MotionEvent.obtain(event);
-                    cancel.setAction(MotionEvent.ACTION_CANCEL);
-                    super.dispatchTouchEvent(cancel);
-                    cancel.recycle();
-                    lastProgress = startProgress - dx / Math.max(1f, drawerWidth());
-                    updateDrawerGesture(lastProgress);
-                    return true;
-                }
-            }
-
-            if (trackingDrawer) {
-                if (action == MotionEvent.ACTION_MOVE) {
-                    lastProgress = startProgress - (event.getX() - startX) / Math.max(1f, drawerWidth());
-                    updateDrawerGesture(lastProgress);
-                    return true;
-                }
-                if (action == MotionEvent.ACTION_UP) {
-                    boolean open = lastProgress >= 0.5f;
-                    trackingDrawer = false;
-                    gestureCandidate = false;
-                    settleDrawerGesture(open);
-                    return true;
-                }
-                if (action == MotionEvent.ACTION_CANCEL) {
-                    trackingDrawer = false;
-                    gestureCandidate = false;
-                    settleDrawerGesture(startProgress >= 0.5f);
-                    return true;
-                }
-                return true;
-            }
-
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                gestureCandidate = false;
-            }
-            return super.dispatchTouchEvent(event);
-        }
-    }
-    private void recordFastFlick(MotionEvent event) {
-        int action = event.getActionMasked();
-        if (action == MotionEvent.ACTION_DOWN) {
-            scrollGestureStartY = event.getY();
-            scrollGestureStartAt = event.getEventTime();
-        } else if (action == MotionEvent.ACTION_UP) {
-            float distance = event.getY() - scrollGestureStartY;
-            long duration = event.getEventTime() - scrollGestureStartAt;
-            int direction = distance < 0 ? 1 : -1;
-            if (Math.abs(distance) >= dp(72) && duration <= 360) {
-                long now = event.getEventTime();
-                if (direction == lastFastFlickDirection && now - lastFastFlickAt <= 1000) fastFlickCount++;
-                else fastFlickCount = 1;
-                lastFastFlickDirection = direction;
-                lastFastFlickAt = now;
-                if (fastFlickCount >= 2) {
-                    showQuickScroll(direction < 0);
-                    fastFlickCount = 0;
-                    lastFastFlickDirection = 0;
-                }
-            } else {
-                fastFlickCount = 0;
-                lastFastFlickDirection = 0;
-            }
-        } else if (action == MotionEvent.ACTION_CANCEL) {
-            fastFlickCount = 0;
-            lastFastFlickDirection = 0;
-        }
-    }
-
-    private final class ReaderScrollView extends ScrollView {
-        ReaderScrollView(Context context) { super(context); }
-        @Override public boolean dispatchTouchEvent(MotionEvent event) {
-            recordFastFlick(event);
-            return super.dispatchTouchEvent(event);
-        }
-    }
-
-    private final class ReaderEditText extends EditText {
-        private float startX;
-        private float startY;
-        private float lastTapX;
-        private float lastTapY;
-        private long lastTapTime;
-        private int tapCount;
-        private boolean tapMoved;
-
-        ReaderEditText(Context context) { super(context); }
-
-        @Override public boolean onTouchEvent(MotionEvent event) {
-            boolean handled = super.onTouchEvent(event);
-            int action = event.getActionMasked();
-            if (action == MotionEvent.ACTION_DOWN) {
-                startX = event.getX();
-                startY = event.getY();
-                tapMoved = false;
-                allowParentScroll();
-            } else if (action == MotionEvent.ACTION_MOVE
-                    && Math.abs(event.getY() - startY) > dp(8)
-                    && Math.abs(event.getY() - startY) > Math.abs(event.getX() - startX) * 1.2f) {
-                allowParentScroll();
-                if (Math.hypot(event.getX() - startX, event.getY() - startY) > dp(24)) tapMoved = true;
-            } else if (action == MotionEvent.ACTION_UP) {
-                long now = event.getEventTime();
-                boolean shortTap = !tapMoved && now - event.getDownTime() < 500
-                        && Math.hypot(event.getX() - startX, event.getY() - startY) < dp(24);
-                if (shortTap && now - lastTapTime < 650
-                        && Math.hypot(event.getX() - lastTapX, event.getY() - lastTapY) < dp(36)) {
-                    tapCount++;
-                } else {
-                    tapCount = shortTap ? 1 : 0;
-                }
-                lastTapTime = now;
-                lastTapX = event.getX();
-                lastTapY = event.getY();
-                if (tapCount >= 3) {
-                    int offset = getOffsetForPosition(event.getX(), event.getY());
-                    tapCount = 0;
-                    post(() -> selectLogicalLine(offset));
-                }
-            }
-            return handled;
-        }
-
-        private void selectLogicalLine(int offset) {
-            Editable text = getText();
-            if (text == null || text.length() == 0) return;
-            int safeOffset = Math.max(0, Math.min(offset, text.length()));
-            int previousNewline = safeOffset == 0 ? -1 : text.toString().lastIndexOf('\n', safeOffset - 1);
-            int lineStart = previousNewline + 1;
-            int lineEnd = text.toString().indexOf('\n', safeOffset);
-            if (lineEnd < 0) lineEnd = text.length();
-            if (lineEnd == lineStart && lineEnd < text.length()) lineEnd++;
-            setSelection(lineStart, lineEnd);
-        }
-
-        private void allowParentScroll() {
-            ViewParent parent = getParent();
-            if (parent != null) parent.requestDisallowInterceptTouchEvent(false);
-        }
-    }
 
     private final class AuthorAdapter extends BaseAdapter {
         private List<String> cachedAuthors;
@@ -9347,14 +7669,7 @@ public final class MainActivity extends Activity {
     }
 
     private int authorBookCount(String author) {
-        JSONArray books = library.optJSONArray("books");
-        if (books == null) return 0;
-        int count = 0;
-        for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null && author.equalsIgnoreCase(book.optString("author", "").trim())) count++;
-        }
-        return count;
+        return LibraryMetrics.authorBookCount(author, library.optJSONArray("books"));
     }
 
     private final class GenreAdapter extends BaseAdapter {
@@ -9458,14 +7773,7 @@ public final class MainActivity extends Activity {
     }
 
     private int collectionBookCount(String collectionId) {
-        JSONArray books = library.optJSONArray("books");
-        if (books == null) return 0;
-        int count = 0;
-        for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null && collectionId.equals(book.optString("collectionId", "other"))) count++;
-        }
-        return count;
+        return LibraryMetrics.collectionBookCount(collectionId, library.optJSONArray("books"));
     }
 
     private final class BookAdapter extends BaseAdapter {
@@ -9479,52 +7787,10 @@ public final class MainActivity extends Activity {
 
         private List<JSONObject> visible() {
             if (cachedBooks != null) return cachedBooks;
-            List<JSONObject> result = new ArrayList<>(); JSONArray books = library.optJSONArray("books"); if (books == null) return cachedBooks = result;
-            query = searchField == null ? "" : searchField.getText().toString().trim().toLowerCase(Locale.ROOT);
-            for (int i = 0; i < books.length(); i++) {
-                JSONObject book = books.optJSONObject(i); if (book == null) continue;
-                if (!showingAllBooks()
-                        && !activeCollectionId.equals(book.optString("collectionId", "other"))) continue;
-                boolean queryMatch = query.isEmpty()
-                        || book.optString("title").toLowerCase(Locale.ROOT).contains(query)
-                        || book.optString("author").toLowerCase(Locale.ROOT).contains(query);
-                JSONArray genres = book.optJSONArray("genres");
-                if (!queryMatch && genres != null) for (int j = 0; j < genres.length(); j++) {
-                    if (genres.optString(j).toLowerCase(Locale.ROOT).contains(query)) { queryMatch = true; break; }
-                }
-                if (!queryMatch && !query.isEmpty()) {
-                    JSONObject collection = findCollectionById(book.optString("collectionId", "other"));
-                    queryMatch = collection != null
-                            && collection.optString("title").toLowerCase(Locale.ROOT).contains(query);
-                }
-                if (!queryMatch) continue;
-                boolean match = true;
-                for (String selectedGenre : activeGenreFilter) { boolean found = false; if (genres != null) for (int j = 0; j < genres.length(); j++) if (selectedGenre.equals(genres.optString(j))) found = true; if (!found) { match = false; break; } }
-                if (match) result.add(book);
-            }
-            if (!showingAllBooks() && !"other".equals(activeCollectionId)) {
-                Collections.sort(result, (first, second) -> Integer.compare(
-                        seriesBookNumber(first), seriesBookNumber(second)));
-            } else {
-                String sort = getSharedPreferences("general", MODE_PRIVATE)
-                        .getString("book_sort", "recent");
-                if ("title".equals(sort)) {
-                    Collections.sort(result, (first, second) -> String.CASE_INSENSITIVE_ORDER.compare(
-                            first.optString("title"), second.optString("title")));
-                } else if (!"manual".equals(sort)) {
-                    Collections.sort(result, (first, second) -> {
-                        int recent = Long.compare(second.optLong("lastReadAt", 0),
-                                first.optLong("lastReadAt", 0));
-                        return recent != 0 ? recent : Integer.compare(
-                                first.optInt("orderIndex", 0), second.optInt("orderIndex", 0));
-                    });
-                } else {
-                    Collections.sort(result, (first, second) -> Integer.compare(
-                            first.optInt("orderIndex", 0), second.optInt("orderIndex", 0)));
-                }
-            }
-            cachedBooks = result;
-            return cachedBooks;
+            String query = searchField == null ? "" : searchField.getText().toString();
+            String sort = getSharedPreferences("general", MODE_PRIVATE).getString("book_sort", "recent");
+            return cachedBooks = BookCatalog.visibleBooks(library, query, showingAllBooks(),
+                    activeCollectionId, activeGenreFilter, sort);
         }
         JSONObject getBook(int position) { return visible().get(position); }
         @Override public int getCount() { return visible().size(); }
@@ -9591,7 +7857,7 @@ public final class MainActivity extends Activity {
         @Override public Object getItem(int position) { return chapters().optJSONObject(position); }
         @Override public long getItemId(int position) { return position; }
         @Override public View getView(int position, View convert, ViewGroup parent) {
-            JSONObject chapter = chapters().optJSONObject(position); if (chapter == null) chapter = newChapter();
+            JSONObject chapter = chapters().optJSONObject(position); if (chapter == null) chapter = ChapterCatalog.newChapter();
             final JSONObject chapterItem = chapter;
             String key = chapterSelectionKey(chapterItem, position);
             boolean selecting = !selectedChapterKeys.isEmpty();
@@ -9615,7 +7881,7 @@ public final class MainActivity extends Activity {
             LinearLayout leading = new LinearLayout(MainActivity.this);
             leading.setGravity(Gravity.CENTER_VERTICAL);
             leading.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            TextView name = text(chapterLabel(chapterItem, position), 16, TEXT);
+            TextView name = text(ChapterCatalog.label(chapterItem, position), 16, TEXT);
             name.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
             name.setSingleLine(true);
             name.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -9673,154 +7939,5 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private final class GenreCloud extends ViewGroup {
-        private boolean readOnly;
-
-        GenreCloud(Context context) { super(context); setLayoutDirection(View.LAYOUT_DIRECTION_RTL); }
-        void setReadOnly(boolean value) { readOnly = value; }
-        void showGenres(JSONArray genres, Set<String> selected, String query) {
-            removeAllViews();
-            if (genres == null) { requestLayout(); return; }
-            String q = query.trim().toLowerCase(Locale.ROOT);
-            for (int i = 0; i < genres.length(); i++) {
-                String genre = genres.optString(i); if (!genre.toLowerCase(Locale.ROOT).contains(q)) continue;
-                TextView chip = text(genre, 13, selected.contains(genre) ? contrastOnAccent() : TEXT); chip.setGravity(Gravity.CENTER); chip.setPadding(dp(14), 0, dp(14), 0);
-                chip.setBackground(roundDrawable(selected.contains(genre) ? PURPLE : SURFACE_ALT,
-                        selected.contains(genre) ? PURPLE : themedStrokeColor(0xFF40384A), 18));
-                if (readOnly) {
-                    chip.setClickable(false);
-                    chip.setFocusable(false);
-                } else {
-                    chip.setOnClickListener(v -> {
-                        if (!selected.add(genre)) selected.remove(genre);
-                        showGenres(genres, selected, query);
-                    });
-                    applyPressScale(chip, .98f);
-                }
-                addView(chip, new MarginLayoutParams(-2, dp(38)));
-            }
-            requestLayout();
-        }
-        @Override protected ViewGroup.LayoutParams generateDefaultLayoutParams() { return new MarginLayoutParams(-2, dp(38)); }
-        @Override protected ViewGroup.LayoutParams generateLayoutParams(ViewGroup.LayoutParams p) { return new MarginLayoutParams(p); }
-        @Override protected boolean checkLayoutParams(ViewGroup.LayoutParams p) { return p instanceof MarginLayoutParams; }
-        @Override protected void onMeasure(int widthSpec, int heightSpec) {
-            int maxWidth = Math.max(0, MeasureSpec.getSize(widthSpec) - getPaddingLeft() - getPaddingRight());
-            int x = 0, y = getPaddingTop(), rowHeight = 0;
-            for (int i = 0; i < getChildCount(); i++) {
-                View child = getChildAt(i);
-                measureChild(child, widthSpec, heightSpec);
-                MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
-                int w = child.getMeasuredWidth() + lp.leftMargin + lp.rightMargin;
-                int h = child.getMeasuredHeight() + lp.topMargin + lp.bottomMargin;
-                if (x + w > maxWidth && x > 0) { x = 0; y += rowHeight + dp(6); rowHeight = 0; }
-                x += w + dp(6);
-                rowHeight = Math.max(rowHeight, h);
-            }
-            setMeasuredDimension(resolveSize(MeasureSpec.getSize(widthSpec), widthSpec),
-                    resolveSize(y + rowHeight + getPaddingBottom() + dp(2), heightSpec));
-        }
-        @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
-            int width = r - l;
-            int x = width - getPaddingRight(), y = getPaddingTop(), rowHeight = 0;
-            for (int i = 0; i < getChildCount(); i++) {
-                View child = getChildAt(i);
-                MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
-                int cw = child.getMeasuredWidth(), ch = child.getMeasuredHeight();
-                int total = cw + lp.leftMargin + lp.rightMargin;
-                if (x - total < getPaddingLeft() && x < width - getPaddingRight()) {
-                    x = width - getPaddingRight();
-                    y += rowHeight + dp(6);
-                    rowHeight = 0;
-                }
-                int childRight = x - lp.rightMargin;
-                int childLeft = childRight - cw;
-                child.layout(childLeft, y + lp.topMargin, childRight, y + lp.topMargin + ch);
-                x -= total + dp(6);
-                rowHeight = Math.max(rowHeight, ch + lp.topMargin + lp.bottomMargin);
-            }
-        }
-    }
-
-    private final class ReaderSplashArt extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private float pulse = 1f;
-
-        ReaderSplashArt(Context context) {
-            super(context);
-            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
-        }
-
-        public void setPulse(float value) {
-            pulse = value;
-            invalidate();
-        }
-
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float cx = getWidth() / 2f;
-            float cy = getHeight() / 2f;
-            canvas.save();
-            canvas.scale(pulse, pulse, cx, cy);
-
-            float glowRadius = dp(50);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(new RadialGradient(cx, cy, glowRadius,
-                    new int[]{Color.argb(90, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)),
-                            Color.TRANSPARENT}, null, android.graphics.Shader.TileMode.CLAMP));
-            canvas.drawCircle(cx, cy, glowRadius, paint);
-            paint.setShader(null);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1.2f));
-            paint.setColor(Color.argb(85, Color.red(PURPLE), Color.green(PURPLE), Color.blue(PURPLE)));
-            canvas.drawCircle(cx, cy, dp(42), paint);
-            android.graphics.RectF orbit = new android.graphics.RectF(cx - dp(52), cy - dp(25),
-                    cx + dp(52), cy + dp(25));
-            paint.setStrokeWidth(dp(1));
-            canvas.drawArc(orbit, 205, 220, false, paint);
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(PURPLE);
-            canvas.drawCircle(cx - dp(44), cy - dp(12), dp(2.2f), paint);
-            canvas.drawCircle(cx + dp(47), cy + dp(7), dp(1.7f), paint);
-            paint.setColor(0xFFDCC6FF);
-            canvas.drawCircle(cx + dp(27), cy - dp(37), dp(1.5f), paint);
-
-            Path leftPage = new Path();
-            leftPage.moveTo(cx, cy - dp(19));
-            leftPage.cubicTo(cx - dp(11), cy - dp(27), cx - dp(24), cy - dp(26), cx - dp(31), cy - dp(23));
-            leftPage.lineTo(cx - dp(31), cy + dp(19));
-            leftPage.cubicTo(cx - dp(19), cy + dp(14), cx - dp(8), cy + dp(17), cx, cy + dp(25));
-            leftPage.close();
-            Path rightPage = new Path();
-            rightPage.moveTo(cx, cy - dp(19));
-            rightPage.cubicTo(cx + dp(11), cy - dp(27), cx + dp(24), cy - dp(26), cx + dp(31), cy - dp(23));
-            rightPage.lineTo(cx + dp(31), cy + dp(19));
-            rightPage.cubicTo(cx + dp(19), cy + dp(14), cx + dp(8), cy + dp(17), cx, cy + dp(25));
-            rightPage.close();
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(new LinearGradient(cx - dp(31), cy, cx + dp(31), cy,
-                    new int[]{0xFF7B35EB, PURPLE, 0xFFD9BCFF}, null,
-                    android.graphics.Shader.TileMode.CLAMP));
-            canvas.drawPath(leftPage, paint);
-            canvas.drawPath(rightPage, paint);
-            paint.setShader(null);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1.4f));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeJoin(Paint.Join.ROUND);
-            paint.setColor(0xFFEDE1FF);
-            canvas.drawPath(leftPage, paint);
-            canvas.drawPath(rightPage, paint);
-            canvas.drawLine(cx, cy - dp(18), cx, cy + dp(23), paint);
-            canvas.drawLine(cx - dp(24), cy - dp(13), cx - dp(10), cy - dp(10), paint);
-            canvas.drawLine(cx - dp(23), cy - dp(5), cx - dp(10), cy - dp(2), paint);
-            canvas.drawLine(cx + dp(10), cy - dp(10), cx + dp(24), cy - dp(13), paint);
-            canvas.drawLine(cx + dp(10), cy - dp(2), cx + dp(23), cy - dp(5), paint);
-            canvas.restore();
-        }
-    }
 
 }
