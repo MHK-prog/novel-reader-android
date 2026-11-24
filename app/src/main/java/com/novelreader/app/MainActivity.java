@@ -47,8 +47,6 @@ import android.window.OnBackInvokedDispatcher;
 import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
-import android.widget.BaseAdapter;
-import android.widget.AbsListView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridView;
@@ -63,6 +61,7 @@ import android.widget.TextView;
 import android.widget.TextClock;
 import android.widget.Switch;
 import android.widget.Toast;
+import android.widget.BaseAdapter;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -120,17 +119,17 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     final Set<String> activeGenreFilter = new HashSet<>();
     final Set<String> selectedBookIds = new LinkedHashSet<>();
-    private final Set<String> selectedCollectionIds = new LinkedHashSet<>();
+    final Set<String> selectedCollectionIds = new LinkedHashSet<>();
     final Set<String> selectedChapterKeys = new LinkedHashSet<>();
     private final ChapterEditHistory chapterEditHistory = new ChapterEditHistory();
     private final RecommendationUserState recommendationUserState = new RecommendationUserState();
     private final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
     private final Set<String> favoriteGenrePreferences = recommendationUserState.favoriteGenres;
     private final Set<String> dislikedGenrePreferences = recommendationUserState.dislikedGenres;
-    private final Set<String> favoriteAuthorPreferences = recommendationUserState.favoriteAuthors;
-    private final Set<String> dislikedAuthorPreferences = recommendationUserState.dislikedAuthors;
-    private final Set<String> selectedAuthorNames = new LinkedHashSet<>();
-    private final Set<String> selectedGenreNames = new LinkedHashSet<>();
+    final Set<String> favoriteAuthorPreferences = recommendationUserState.favoriteAuthors;
+    final Set<String> dislikedAuthorPreferences = recommendationUserState.dislikedAuthors;
+    final Set<String> selectedAuthorNames = new LinkedHashSet<>();
+    final Set<String> selectedGenreNames = new LinkedHashSet<>();
     private final BookRecommendationEngine.UserPreferences recommendationPreferences =
             new BookRecommendationEngine.UserPreferences();
     private final BookRecommendationEngine recommendationEngine =
@@ -227,11 +226,11 @@ public final class MainActivity extends Activity {
     private GridView genresGrid;
     private ListView chaptersList;
     private BookCardAdapter bookAdapter;
-    private CollectionAdapter collectionAdapter;
-    private AuthorAdapter authorAdapter;
-    private GenreAdapter genreAdapter;
+    private CollectionCardAdapter collectionAdapter;
+    private AuthorCardAdapter authorAdapter;
+    private GenreCardAdapter genreAdapter;
     private GridView authorsGrid;
-    private EditText authorSearchField;
+    EditText authorSearchField;
     private ChapterCardAdapter chapterAdapter;
     private EditText chapterEditor;
     private TextView readerPreview;
@@ -2192,7 +2191,7 @@ public final class MainActivity extends Activity {
         authorsGrid.setBackgroundColor(BG);
         authorsGrid.setPadding(dp(12), dp(4), dp(12), dp(8));
         authorsGrid.setClipToPadding(false);
-        authorAdapter = new AuthorAdapter();
+        authorAdapter = new AuthorCardAdapter(this);
         authorsGrid.setAdapter(authorAdapter);
         authorsGrid.setOnItemClickListener((parent, view, position, id) -> {
             String author = authorAdapter.getAuthor(position);
@@ -2234,18 +2233,18 @@ public final class MainActivity extends Activity {
         return recommendationState.getString("author_gender:" + author.trim().toLowerCase(Locale.ROOT), "unknown");
     }
 
-    private String authorIcon(String author) {
+    String authorIcon(String author) {
         String gender = authorGender(author);
         if ("female".equals(gender)) return "author_woman";
         if ("male".equals(gender)) return "author_man";
         return "person";
     }
 
-    private void selectAuthorCard(String author) {
+    void selectAuthorCard(String author) {
         showAuthorInfoPage(author);
     }
 
-    private void toggleAuthorSelection(String author) {
+    void toggleAuthorSelection(String author) {
         if (containsIgnoreCase(selectedAuthorNames, author)) removeIgnoreCase(selectedAuthorNames, author);
         else selectedAuthorNames.add(author);
         refreshAuthorSelection();
@@ -2271,7 +2270,7 @@ public final class MainActivity extends Activity {
         refreshAuthorSelection();
     }
 
-    private JSONArray authorDetails() {
+    JSONArray authorDetails() {
         JSONArray details = library.optJSONArray("authorDetails");
         if (details == null) {
             details = new JSONArray();
@@ -3194,7 +3193,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private JSONArray genreDetails() {
+    JSONArray genreDetails() {
         JSONArray details = library.optJSONArray("genreDetails");
         if (details == null) {
             details = new JSONArray();
@@ -3256,7 +3255,7 @@ public final class MainActivity extends Activity {
         genresGrid.setBackgroundColor(BG);
         genresGrid.setPadding(dp(12), dp(8), dp(12), dp(8));
         genresGrid.setClipToPadding(false);
-        genreAdapter = new GenreAdapter();
+        genreAdapter = new GenreCardAdapter(this);
         genresGrid.setAdapter(genreAdapter);
         genresGrid.setOnItemClickListener((parent, view, position, id) -> {
             String genre = genreAdapter.getGenre(position);
@@ -4118,7 +4117,7 @@ public final class MainActivity extends Activity {
                 && excludedIds.contains(book.optLong("recommendationId", -1));
     }
 
-    private boolean containsIgnoreCase(Collection<String> values, String candidate) {
+    boolean containsIgnoreCase(Collection<String> values, String candidate) {
         if (candidate == null || candidate.trim().isEmpty()) return false;
         for (String value : values) if (value.equalsIgnoreCase(candidate.trim())) return true;
         return false;
@@ -4154,7 +4153,7 @@ public final class MainActivity extends Activity {
         if (recommendationStateStore != null) recommendationStateStore.save();
     }
 
-    private JSONArray collectionArray() {
+    JSONArray collectionArray() {
         JSONArray result = library.optJSONArray("collections");
         if (result == null) {
             result = new JSONArray();
@@ -4517,7 +4516,7 @@ public final class MainActivity extends Activity {
         collectionsGrid.setBackgroundColor(BG);
         collectionsGrid.setPadding(dp(12), dp(8), dp(12), dp(8));
         collectionsGrid.setClipToPadding(false);
-        collectionAdapter = new CollectionAdapter();
+        collectionAdapter = new CollectionCardAdapter(this);
         collectionsGrid.setAdapter(collectionAdapter);
         collectionsGrid.setOnItemClickListener((parent, view, position, id) -> {
             JSONObject collection = collectionAdapter.getCollection(position);
@@ -7657,194 +7656,11 @@ public final class MainActivity extends Activity {
     }
 
 
-    private final class AuthorAdapter extends BaseAdapter {
-        private List<String> cachedAuthors;
-
-        @Override public void notifyDataSetChanged() {
-            cachedAuthors = null;
-            super.notifyDataSetChanged();
-        }
-
-        private List<String> visible() {
-            if (cachedAuthors != null) return cachedAuthors;
-            List<String> unique = new ArrayList<>();
-            JSONArray details = authorDetails();
-            for (int i = 0; i < details.length(); i++) {
-                JSONObject item = details.optJSONObject(i);
-                if (item != null) addUniqueIgnoreCase(unique, item.optString("name", "").trim());
-            }
-            for (String author : favoriteAuthorPreferences) addUniqueIgnoreCase(unique, author);
-            for (String author : dislikedAuthorPreferences) addUniqueIgnoreCase(unique, author);
-            String query = authorSearchField == null ? ""
-                    : authorSearchField.getText().toString().trim().toLowerCase(Locale.ROOT);
-            List<String> result = new ArrayList<>();
-            for (String author : unique) {
-                if (author.toLowerCase(Locale.ROOT).contains(query)) result.add(author);
-            }
-            return cachedAuthors = result;
-        }
-
-        private void addUniqueIgnoreCase(List<String> values, String value) {
-            if (value == null || value.isEmpty()) return;
-            for (String current : values) if (current.equalsIgnoreCase(value)) return;
-            values.add(value);
-        }
-
-        String getAuthor(int position) { return visible().get(position); }
-        @Override public int getCount() { return visible().size(); }
-        @Override public Object getItem(int position) { return getAuthor(position); }
-        @Override public long getItemId(int position) { return position; }
-
-        @Override public View getView(int position, View convertView, ViewGroup parent) {
-            String author = getAuthor(position);
-            boolean selected = containsIgnoreCase(selectedAuthorNames, author);
-            FrameLayout frame = new FrameLayout(MainActivity.this);
-            frame.setClickable(true);
-            frame.setFocusable(true);
-            frame.setContentDescription(author + "، نمایش کتاب‌ها");
-            frame.setTag(author);
-            frame.setOnClickListener(v -> {
-                if (!selectedAuthorNames.isEmpty()) toggleAuthorSelection(author);
-                else selectAuthorCard(author);
-            });
-            frame.setOnLongClickListener(v -> {
-                if (containsIgnoreCase(selectedAuthorNames, author)) return startReorderDrag(frame, "author", author);
-                toggleAuthorSelection(author);
-                return true;
-            });
-            setReorderDropTarget(frame, "author", author);
-            LinearLayout card = new LinearLayout(MainActivity.this);
-            card.setGravity(Gravity.CENTER_VERTICAL);
-            card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-            card.setPadding(dp(14), dp(7), dp(14), dp(7));
-            card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                    selected ? PURPLE : 0xFF29242F, 12));
-            card.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
-            NativeIconView icon = new NativeIconView(MainActivity.this,
-                    selected ? "reorder" : authorIcon(author), PURPLE);
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(30), dp(30));
-            iconParams.leftMargin = dp(9);
-            card.addView(icon, iconParams);
-            TextView title = text(author, 15, TEXT);
-            title.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-            title.setSingleLine(true);
-            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            card.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-            TextView count = text(authorBookCount(author) + " کتاب", 12, MUTED);
-            count.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
-            card.addView(count, new LinearLayout.LayoutParams(-2, -1));
-            frame.addView(card, new FrameLayout.LayoutParams(-1, -1));
-            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(68)));
-            applyPressScale(frame, .96f);
-            return frame;
-        }
-    }
-
-    private int authorBookCount(String author) {
+    int authorBookCount(String author) {
         return LibraryMetrics.authorBookCount(author, library.optJSONArray("books"));
     }
 
-    private final class GenreAdapter extends BaseAdapter {
-        private List<String> visible() {
-            List<String> result = new ArrayList<>();
-            JSONArray details = genreDetails();
-            String query = "";
-            for (int i = 0; i < details.length(); i++) {
-                JSONObject item = details.optJSONObject(i);
-                if (item != null) result.add(item.optString("name"));
-            }
-            return result;
-        }
-
-        String getGenre(int position) { return visible().get(position); }
-        @Override public int getCount() { return visible().size(); }
-        @Override public Object getItem(int position) { return getGenre(position); }
-        @Override public long getItemId(int position) { return position; }
-
-        @Override public View getView(int position, View convertView, ViewGroup parent) {
-            String genre = getGenre(position);
-            boolean selected = selectedGenreNames.contains(genre);
-            FrameLayout frame = new FrameLayout(MainActivity.this);
-            frame.setTag(genre);
-            setReorderDropTarget(frame, "genre", genre);
-            LinearLayout card = new LinearLayout(MainActivity.this);
-            card.setGravity(Gravity.CENTER_VERTICAL);
-            card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-            card.setPadding(dp(14), dp(7), dp(14), dp(7));
-            card.setBackground(roundDrawable(selected
-                    ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                    selected ? PURPLE : 0xFF29242F, 12));
-            card.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
-            TextView title = text(genre, 15, TEXT);
-            title.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-            title.setMaxLines(1);
-            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            card.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-            NativeIconView icon = new NativeIconView(MainActivity.this, selected ? "reorder" : "tag", PURPLE);
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(30), dp(30));
-            iconParams.leftMargin = dp(9);
-            card.addView(icon, iconParams);
-            frame.addView(card, new FrameLayout.LayoutParams(-1, -1));
-            frame.setLayoutParams(new AbsListView.LayoutParams(-1, dp(68)));
-            applyPressScale(frame, .96f);
-            return frame;
-        }
-    }
-
-    private final class CollectionAdapter extends BaseAdapter {
-        private List<JSONObject> cachedCollections;
-
-        @Override public void notifyDataSetChanged() {
-            cachedCollections = null;
-            super.notifyDataSetChanged();
-        }
-
-        private List<JSONObject> visible() {
-            if (cachedCollections != null) return cachedCollections;
-            List<JSONObject> result = new ArrayList<>();
-            JSONArray collections = collectionArray();
-            for (int i = 0; i < collections.length(); i++) {
-                JSONObject item = collections.optJSONObject(i);
-                if (item != null) result.add(item);
-            }
-            return cachedCollections = result;
-        }
-
-        JSONObject getCollection(int position) { return visible().get(position); }
-        @Override public int getCount() { return visible().size(); }
-        @Override public Object getItem(int position) { return getCollection(position); }
-        @Override public long getItemId(int position) { return position; }
-
-        @Override public View getView(int position, View convertView, ViewGroup parent) {
-            JSONObject collection = getCollection(position);
-            boolean selected = selectedCollectionIds.contains(collection.optString("id"));
-            LinearLayout card = new LinearLayout(MainActivity.this);
-            card.setGravity(Gravity.CENTER_VERTICAL);
-            card.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-            card.setPadding(dp(14), dp(7), dp(14), dp(7));
-            card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                    selected ? PURPLE : 0xFF29242F, 12));
-            card.setLayoutParams(new AbsListView.LayoutParams(-1, dp(68)));
-            card.setTag(collection.optString("id"));
-            NativeIconView icon = new NativeIconView(MainActivity.this, selected ? "reorder" : "folder", PURPLE);
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(30), dp(30));
-            iconParams.leftMargin = dp(9);
-            card.addView(icon, iconParams);
-            TextView title = text(collection.optString("title"), 15, TEXT);
-            title.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-            title.setSingleLine(true);
-            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            card.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-            TextView count = text(collectionBookCount(collection.optString("id")) + " کتاب", 12, MUTED);
-            count.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
-            card.addView(count, new LinearLayout.LayoutParams(-2, -1));
-            applyPressScale(card, .96f);
-            setReorderDropTarget(card, "collection", collection.optString("id"));
-            return card;
-        }
-    }
-
-    private int collectionBookCount(String collectionId) {
+    int collectionBookCount(String collectionId) {
         return LibraryMetrics.collectionBookCount(collectionId, library.optJSONArray("books"));
     }
 
