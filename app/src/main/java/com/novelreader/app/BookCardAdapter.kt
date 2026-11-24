@@ -27,7 +27,7 @@ internal class BookCardAdapter(private val host: MainActivity) : BaseAdapter() {
         cachedBooks?.let { return it }
         val query = host.searchField?.text?.toString().orEmpty()
         val sort = host.getSharedPreferences("general", Activity.MODE_PRIVATE)
-            .getString("book_sort", "recent")
+            .getString("book_sort", "recent") ?: "recent"
         return BookCatalog.visibleBooks(
             host.library,
             query,

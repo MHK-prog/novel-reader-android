@@ -66,8 +66,8 @@ internal class ChapterCardAdapter(private val host: MainActivity) : BaseAdapter(
         }
         val iconColor = when {
             selecting -> if (selected) host.PURPLE else host.MUTED
-            done -> host.GREEN
-            hasText -> host.BLUE
+            done -> MainActivity.GREEN
+            hasText -> MainActivity.BLUE
             else -> host.PURPLE
         }
         val status = when {
