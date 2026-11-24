@@ -223,12 +223,12 @@ public final class MainActivity extends Activity {
     private FrameLayout genreFilterButton;
     private GridView booksGrid;
     private GridView collectionsGrid;
-    private GridView genresGrid;
+    GridView genresGrid;
     private ListView chaptersList;
     private BookCardAdapter bookAdapter;
     private CollectionCardAdapter collectionAdapter;
     AuthorCardAdapter authorAdapter;
-    private GenreCardAdapter genreAdapter;
+    GenreCardAdapter genreAdapter;
     GridView authorsGrid;
     EditText authorSearchField;
     private ChapterCardAdapter chapterAdapter;
@@ -246,6 +246,7 @@ public final class MainActivity extends Activity {
     private SettingsScreen settingsScreen;
     private AuthorInfoScreen authorInfoScreen;
     private GenreInfoScreen genreInfoScreen;
+    private GenreLibraryScreen genreLibraryScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -706,7 +707,7 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(outState);
     }
 
-    private void appendUniqueGenre(JSONArray genres, String value) {
+    void appendUniqueGenre(JSONArray genres, String value) {
         GenreCatalog.appendUnique(library, genres, value);
     }
 
@@ -2257,7 +2258,7 @@ public final class MainActivity extends Activity {
         return item;
     }
 
-    private void ensureGenreDetails() {
+    void ensureGenreDetails() {
         String before = genreDetails().toString();
         JSONArray genres = allGenres();
         for (int i = 0; i < genres.length(); i++) ensureGenreDetail(genres.optString(i));
@@ -2271,123 +2272,27 @@ public final class MainActivity extends Activity {
     }
 
     private void showGenres() {
-        setPage("genres");
-        selectedGenreNames.clear();
-        ensureGenreDetails();
-        appColumn.removeAllViews();
-        animatePageTransition();
-        addGenreLibraryHeader();
-        genresGrid = new GridView(this);
-        genresGrid.setNumColumns(1);
-        genresGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        genresGrid.setVerticalScrollBarEnabled(false);
-        genresGrid.setHorizontalScrollBarEnabled(false);
-        genresGrid.setHorizontalSpacing(dp(10));
-        genresGrid.setVerticalSpacing(dp(10));
-        genresGrid.setSelector(android.R.color.transparent);
-        genresGrid.setCacheColorHint(Color.TRANSPARENT);
-        genresGrid.setBackgroundColor(BG);
-        genresGrid.setPadding(dp(12), dp(8), dp(12), dp(8));
-        genresGrid.setClipToPadding(false);
-        genreAdapter = new GenreCardAdapter(this);
-        genresGrid.setAdapter(genreAdapter);
-        genresGrid.setOnItemClickListener((parent, view, position, id) -> {
-            String genre = genreAdapter.getGenre(position);
-            if (!selectedGenreNames.isEmpty()) toggleGenreSelection(genre);
-            else showGenreInfo(genre);
-        });
-        genresGrid.setOnItemLongClickListener((parent, view, position, id) -> {
-            String genre = genreAdapter.getGenre(position);
-            if (selectedGenreNames.contains(genre)) return startReorderDrag(view, "genre", genre);
-            toggleGenreSelection(genre);
-            return true;
-        });
-        FrameLayout frame = new FrameLayout(this);
-        frame.addView(genresGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel("هنوز ژانری ثبت نشده");
-        frame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
-        genresGrid.setEmptyView(empty);
-        appColumn.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
+        genreLibraryUi().show();
     }
 
-    private void addGenreLibraryHeader() {
-        View header;
-        if (selectedGenreNames.isEmpty()) {
-            header = makeHeader("کتابخانه ژانرها", "", "menu", "add", this::openDrawer,
-                    this::showAddGenreDialog);
-        } else {
-            String label = selectedGenreNames.size() + " انتخاب";
-            if (selectedGenreNames.size() == 1) {
-                String selected = selectedGenreNames.iterator().next();
-                header = makeHeader(label, "", "delete", "edit",
-                        this::confirmDeleteSelectedGenres,
-                        () -> showEditGenreInfoDialog(selected), 10, 118);
-            } else {
-                header = makeHeader(label, "", "delete", null,
-                        this::confirmDeleteSelectedGenres, null, 10);
-            }
-        }
-        appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
-    }
-
-    private void toggleGenreSelection(String genre) {
-        if (!selectedGenreNames.add(genre)) selectedGenreNames.remove(genre);
-        refreshGenreSelection();
-    }
-
-    private void refreshGenreSelection() {
-        if (!"genres".equals(page) || appColumn == null || appColumn.getChildCount() == 0) return;
-        appColumn.removeViewAt(0);
-        addGenreLibraryHeader();
-        if (genreAdapter != null) genreAdapter.notifyDataSetChanged();
-    }
-
-    private void confirmDeleteSelectedGenres() {
-        if (selectedGenreNames.isEmpty()) return;
-        List<String> deleting = new ArrayList<>(selectedGenreNames);
-        String message = deleting.size() == 1
-                ? "ژانر «" + deleting.get(0) + "» از فهرست و کتاب‌های مرتبط حذف شود؟"
-                : deleting.size() + " ژانر و پیوندهایشان از کتاب‌ها حذف شوند؟";
-        AlertDialog dialog = new AlertDialog.Builder(this).setMessage(message)
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("حذف", (ignored, which) -> {
-                    for (String genre : deleting) {
-                        if (!deleteTag(genre, null, null)) return;
-                    }
-                    selectedGenreNames.clear();
-                    showGenres();
-                }).create();
-        dialog.show();
-        styleDialogWindow(dialog);
+    private GenreLibraryScreen genreLibraryUi() {
+        if (genreLibraryScreen == null) genreLibraryScreen = new GenreLibraryScreen(this);
+        return genreLibraryScreen;
     }
 
     private void showAddGenreDialog() {
-        EditText name = edit("نام ژانر", false);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("ژانر جدید")
-                .setView(dialogPadding(clearableInput(name))).setNegativeButton("لغو", null)
-                .setPositiveButton("افزودن", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String genre = canonicalGenre(TextNormalization.titleCaseWords(name.getText().toString()));
-            if (genre.isEmpty()) { name.setError("نام ژانر را وارد کن"); return; }
-            if (findGenreName(allGenres(), genre) != null) { name.setError("این ژانر از قبل وجود دارد"); return; }
-            JSONArray genres = library.optJSONArray("genres");
-            if (genres == null) genres = new JSONArray();
-            appendUniqueGenre(genres, genre);
-            putJson(library, "genres", genres);
-            ensureGenreDetail(genre);
-            if (saveLibrary()) {
-                rebuildRecommendationWeights();
-                persistRecommendationState();
-                dialog.dismiss();
-                showGenres();
-            }
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        genreLibraryUi().showAddDialog();
     }
 
-    private void showGenreInfo(String genre) {
+    private void confirmDeleteSelectedGenres() {
+        genreLibraryUi().confirmDeleteSelected();
+    }
+
+    private void refreshGenreSelection() {
+        genreLibraryUi().refreshSelection();
+    }
+
+    void showGenreInfo(String genre) {
         if (genre == null || genre.trim().isEmpty()) return;
         activeGenre = genre.trim();
         genreInfoUi().showPage(activeGenre);
@@ -2709,7 +2614,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private boolean deleteTag(String tag, LinearLayout rows, EditText search) {
+    boolean deleteTag(String tag, LinearLayout rows, EditText search) {
         String before = library.toString();
         Set<String> oldFavorites = new LinkedHashSet<>(favoriteGenrePreferences);
         Set<String> oldDislikes = new LinkedHashSet<>(dislikedGenrePreferences);
@@ -2787,7 +2692,7 @@ public final class MainActivity extends Activity {
         return GenreCatalog.equivalentGroups(library);
     }
 
-    private String canonicalGenre(String value) {
+    String canonicalGenre(String value) {
         return GenreCatalog.canonicalName(library, value);
     }
 
@@ -3042,15 +2947,15 @@ public final class MainActivity extends Activity {
         GenreCatalog.addName(genres, value);
     }
 
-    private String findGenreName(Collection<String> genres, String value) {
+    String findGenreName(Collection<String> genres, String value) {
         return GenreCatalog.findName(genres, value);
     }
 
-    private String findGenreName(JSONArray genres, String value) {
+    String findGenreName(JSONArray genres, String value) {
         return GenreCatalog.findName(genres, value);
     }
 
-    private void rebuildRecommendationWeights() {
+    void rebuildRecommendationWeights() {
         if (recommendationStateStore != null) recommendationStateStore.rebuildWeights(allGenres());
     }
 
