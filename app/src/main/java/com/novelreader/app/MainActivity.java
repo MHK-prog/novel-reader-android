@@ -101,27 +101,27 @@ public final class MainActivity extends Activity {
     private static final int BG_DARK = Color.rgb(9, 9, 9);
     private static final int SURFACE_DARK = Color.rgb(20, 20, 20);
     private static final int SURFACE_ALT_DARK = Color.rgb(17, 17, 17);
-    private static final int BLUE = Color.rgb(90, 169, 255);
-    private static final int GREEN = Color.rgb(86, 201, 135);
+    static final int BLUE = Color.rgb(90, 169, 255);
+    static final int GREEN = Color.rgb(86, 201, 135);
     private static final int RED = Color.rgb(255, 76, 76);
     private static final int MAX_GENRE_WEIGHT = 50;
     private static final long READING_TICK_MS = 15_000L;
 
     private int BG = BG_DARK;
-    private int SURFACE = SURFACE_DARK;
-    private int SURFACE_ALT = SURFACE_ALT_DARK;
-    private int PURPLE = 0xFFF2C9F9;
+    int SURFACE = SURFACE_DARK;
+    int SURFACE_ALT = SURFACE_ALT_DARK;
+    int PURPLE = 0xFFF2C9F9;
     private int SECONDARY_ACCENT = 0xFFFFC1EC;
-    private int TEXT = Color.rgb(241, 241, 241);
-    private int MUTED = Color.rgb(165, 165, 165);
-    private boolean lightTheme;
+    int TEXT = Color.rgb(241, 241, 241);
+    int MUTED = Color.rgb(165, 165, 165);
+    boolean lightTheme;
     private int accentIndex;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Set<String> activeGenreFilter = new HashSet<>();
-    private final Set<String> selectedBookIds = new LinkedHashSet<>();
+    final Set<String> activeGenreFilter = new HashSet<>();
+    final Set<String> selectedBookIds = new LinkedHashSet<>();
     private final Set<String> selectedCollectionIds = new LinkedHashSet<>();
-    private final Set<String> selectedChapterKeys = new LinkedHashSet<>();
+    final Set<String> selectedChapterKeys = new LinkedHashSet<>();
     private final ChapterEditHistory chapterEditHistory = new ChapterEditHistory();
     private final RecommendationUserState recommendationUserState = new RecommendationUserState();
     private final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
@@ -148,7 +148,7 @@ public final class MainActivity extends Activity {
     private ResumeReadingPrompt resumeReadingPrompt;
     private BookJsonPromptStore bookJsonPromptStore;
     private Typeface vazir;
-    private JSONObject library = new JSONObject();
+    JSONObject library = new JSONObject();
     private String page = "dashboard";
     private final Deque<NavigationState> navigationHistory = new ArrayDeque<>();
     private boolean suppressNavigationHistory;
@@ -156,7 +156,7 @@ public final class MainActivity extends Activity {
     private String bookInfoReturnPage = "collectionBooks";
     private String chaptersReturnPage = "collectionBooks";
     private String activeBookId;
-    private String activeCollectionId = "other";
+    String activeCollectionId = "other";
     private String activeAuthor = "";
     private String pendingChapterTextBookId;
     private String pendingChapterTextChapterId;
@@ -220,19 +220,19 @@ public final class MainActivity extends Activity {
     private boolean drawerLibrariesExpanded;
     private TextView titleView;
     private TextView subtitleView;
-    private EditText searchField;
+    EditText searchField;
     private FrameLayout genreFilterButton;
     private GridView booksGrid;
     private GridView collectionsGrid;
     private GridView genresGrid;
     private ListView chaptersList;
-    private BookAdapter bookAdapter;
+    private BookCardAdapter bookAdapter;
     private CollectionAdapter collectionAdapter;
     private AuthorAdapter authorAdapter;
     private GenreAdapter genreAdapter;
     private GridView authorsGrid;
     private EditText authorSearchField;
-    private ChapterAdapter chapterAdapter;
+    private ChapterCardAdapter chapterAdapter;
     private EditText chapterEditor;
     private TextView readerPreview;
     private FrameLayout readerContentContainer;
@@ -1745,7 +1745,7 @@ public final class MainActivity extends Activity {
         ChapterCatalog.calculateAndStoreEstimate(chapter, text, readingSpeedWordsPerMinute());
     }
 
-    private String remainingChapterTimeLabel(JSONObject chapter) {
+    String remainingChapterTimeLabel(JSONObject chapter) {
         return ChapterCatalog.remainingTimeLabel(chapter);
     }
 
@@ -2560,7 +2560,7 @@ public final class MainActivity extends Activity {
                 .start();
     }
 
-    private boolean showingAllBooks() { return "allBooks".equals(page); }
+    boolean showingAllBooks() { return "allBooks".equals(page); }
 
     private void showAllBooks() {
         setRootPage("allBooks");
@@ -4132,7 +4132,7 @@ public final class MainActivity extends Activity {
         return LibraryMetrics.nextSeriesBookNumber(collectionId, library.optJSONArray("books"));
     }
 
-    private String displayBookTitle(JSONObject book) {
+    String displayBookTitle(JSONObject book) {
         return LibraryMetrics.displayBookTitle(book);
     }
 
@@ -4163,7 +4163,7 @@ public final class MainActivity extends Activity {
         return result;
     }
 
-    private boolean startReorderDrag(View source, String listType, String itemId) {
+    boolean startReorderDrag(View source, String listType, String itemId) {
         ClipData data = ClipData.newPlainText(listType, itemId);
         View.DragShadowBuilder shadow = new View.DragShadowBuilder(source);
         activeReorderType = listType;
@@ -4180,7 +4180,7 @@ public final class MainActivity extends Activity {
         return false;
     }
 
-    private void setReorderDropTarget(View target, String listType, String targetId) {
+    void setReorderDropTarget(View target, String listType, String targetId) {
         target.setOnDragListener((view, event) -> {
             if (event.getAction() == android.view.DragEvent.ACTION_DRAG_STARTED) {
                 return event.getClipDescription() != null
@@ -4678,7 +4678,7 @@ public final class MainActivity extends Activity {
         booksGrid.setHorizontalSpacing(dp(10)); booksGrid.setVerticalSpacing(dp(10)); booksGrid.setColumnWidth(dp(150));
         booksGrid.setSelector(android.R.color.transparent); booksGrid.setCacheColorHint(Color.TRANSPARENT); booksGrid.setBackgroundColor(BG);
         booksGrid.setPadding(dp(12), dp(4), dp(12), dp(8)); booksGrid.setClipToPadding(false);
-        bookAdapter = new BookAdapter(); booksGrid.setAdapter(bookAdapter);
+        bookAdapter = new BookCardAdapter(this); booksGrid.setAdapter(bookAdapter);
         FrameLayout listFrame = new FrameLayout(this);
         listFrame.addView(booksGrid, new FrameLayout.LayoutParams(-1, -1));
         TextView empty = emptyLabel(allBooks || authorShelf ? "کتابی در کتابخانه نیست"
@@ -4693,7 +4693,7 @@ public final class MainActivity extends Activity {
         }));
     }
 
-    private void onBookCardTap(JSONObject book) {
+    void onBookCardTap(JSONObject book) {
         if (!selectedBookIds.isEmpty()) toggleBookSelection(book);
         else {
             bookInfoReturnPage = page;
@@ -5048,7 +5048,7 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private void toggleBookSelection(JSONObject book) {
+    void toggleBookSelection(JSONObject book) {
         if (book == null) return;
         String id = book.optString("id");
         if (!selectedBookIds.add(id)) selectedBookIds.remove(id);
@@ -5105,7 +5105,7 @@ public final class MainActivity extends Activity {
         chaptersList.setDivider(null); chaptersList.setCacheColorHint(Color.TRANSPARENT); chaptersList.setBackgroundColor(BG);
         chaptersList.setVerticalScrollBarEnabled(false); chaptersList.setHorizontalScrollBarEnabled(false);
         chaptersList.setPadding(dp(12), dp(6), dp(12), dp(6)); chaptersList.setClipToPadding(false);
-        chapterAdapter = new ChapterAdapter(); chaptersList.setAdapter(chapterAdapter);
+        chapterAdapter = new ChapterCardAdapter(this); chaptersList.setAdapter(chapterAdapter);
         appColumn.addView(chaptersList, new LinearLayout.LayoutParams(-1, 0, 1));
         int next = ChapterCatalog.firstUnread(book);
         chaptersList.post(() -> chaptersList.setSelectionFromTop(next < 0 ? 0 : next, Math.max(dp(48), chaptersList.getHeight() / 3)));
@@ -5191,11 +5191,11 @@ public final class MainActivity extends Activity {
         appColumn.addView(header, 0, new LinearLayout.LayoutParams(-1, dp(62)));
     }
 
-    private String chapterSelectionKey(JSONObject chapter, int position) {
+    String chapterSelectionKey(JSONObject chapter, int position) {
         return Integer.toString(ChapterCatalog.storageIndex(chapter, position));
     }
 
-    private void toggleChapterSelection(JSONObject chapter, int position) {
+    void toggleChapterSelection(JSONObject chapter, int position) {
         if (chapter == null) return;
         String key = chapterSelectionKey(chapter, position);
         if (!selectedChapterKeys.add(key)) selectedChapterKeys.remove(key);
@@ -5900,7 +5900,7 @@ public final class MainActivity extends Activity {
         showChapters();
     }
 
-    private void openReader(int index) {
+    void openReader(int index) {
         selectedChapterKeys.clear();
         saveCurrentChapter();
         JSONObject book = activeBook();
@@ -7235,7 +7235,7 @@ public final class MainActivity extends Activity {
         return coverStore.load(name, getResources().getDisplayMetrics().widthPixels);
     }
 
-    private void bindBookCover(ImageView image, View placeholder, JSONObject book) {
+    void bindBookCover(ImageView image, View placeholder, JSONObject book) {
         if (book != null && book.optBoolean("coverFiltered", false)) {
             image.setTag("filtered:" + book.optString("id"));
             image.setImageDrawable(null);
@@ -7303,7 +7303,7 @@ public final class MainActivity extends Activity {
         Collections.sort(values, String.CASE_INSENSITIVE_ORDER); for (String value : values) result.put(value); return result;
     }
 
-    private JSONObject activeBook() {
+    JSONObject activeBook() {
         JSONArray books = library.optJSONArray("books"); if (books == null) return null;
         for (int i = 0; i < books.length(); i++) { JSONObject book = books.optJSONObject(i); if (book != null && activeBookId != null && activeBookId.equals(book.optString("id"))) return book; }
         return null;
@@ -7565,11 +7565,11 @@ public final class MainActivity extends Activity {
         return uiComponents.iconButton(icon, color, selected, action);
     }
 
-    private FrameLayout plainIconButton(String icon, int color, Runnable action) {
+    FrameLayout plainIconButton(String icon, int color, Runnable action) {
         return uiComponents.plainIconButton(icon, color, action);
     }
 
-    private FrameLayout pairedEditCheckedButton(int color, Runnable action) {
+    FrameLayout pairedEditCheckedButton(int color, Runnable action) {
         return uiComponents.pairedEditCheckedButton(color, action);
     }
 
@@ -7589,7 +7589,7 @@ public final class MainActivity extends Activity {
         uiComponents.applyPressScale(view);
     }
 
-    private void applyPressScale(View view, float pressedScale) {
+    void applyPressScale(View view, float pressedScale) {
         uiComponents.applyPressScale(view, pressedScale);
     }
 
@@ -7597,7 +7597,7 @@ public final class MainActivity extends Activity {
         return uiComponents.emptyLabel(value);
     }
 
-    private TextView text(String value, int sp, int color) {
+    TextView text(String value, int sp, int color) {
         return uiComponents.text(value, sp, color);
     }
 
@@ -7613,7 +7613,7 @@ public final class MainActivity extends Activity {
         return uiComponents.clearableInput(input);
     }
 
-    private GradientDrawable roundDrawable(int color, int stroke, int radiusDp) {
+    GradientDrawable roundDrawable(int color, int stroke, int radiusDp) {
         return uiComponents.roundDrawable(color, stroke, radiusDp);
     }
 
@@ -7637,7 +7637,7 @@ public final class MainActivity extends Activity {
         uiComponents.applyDialogTypeface(view);
     }
 
-    private int dp(float value) {
+    int dp(float value) {
         return uiComponents.dp(value);
     }
 
@@ -7848,168 +7848,7 @@ public final class MainActivity extends Activity {
         return LibraryMetrics.collectionBookCount(collectionId, library.optJSONArray("books"));
     }
 
-    private final class BookAdapter extends BaseAdapter {
-        private String query = "";
-        private List<JSONObject> cachedBooks;
 
-        @Override public void notifyDataSetChanged() {
-            cachedBooks = null;
-            super.notifyDataSetChanged();
-        }
-
-        private List<JSONObject> visible() {
-            if (cachedBooks != null) return cachedBooks;
-            String query = searchField == null ? "" : searchField.getText().toString();
-            String sort = getSharedPreferences("general", MODE_PRIVATE).getString("book_sort", "recent");
-            return cachedBooks = BookCatalog.visibleBooks(library, query, showingAllBooks(),
-                    activeCollectionId, activeGenreFilter, sort);
-        }
-        JSONObject getBook(int position) { return visible().get(position); }
-        @Override public int getCount() { return visible().size(); }
-        @Override public Object getItem(int position) { return getBook(position); }
-        @Override public long getItemId(int position) { return position; }
-        @Override public View getView(int position, View convert, ViewGroup parent) {
-            JSONObject book = getBook(position);
-            boolean selected = selectedBookIds.contains(book.optString("id"));
-            LinearLayout card = new LinearLayout(MainActivity.this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setTag(book.optString("id"));
-            card.setPadding(dp(7), dp(7), dp(7), dp(4));
-            card.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                    selected ? PURPLE : 0xFF29242F, 13));
-            card.setClickable(true); card.setFocusable(true);
-            applyPressScale(card, .96f);
-            card.setOnClickListener(v -> onBookCardTap(book));
-            card.setOnLongClickListener(v -> {
-                String id = book.optString("id");
-                if (selectedBookIds.contains(id)) return startReorderDrag(card, "book", id);
-                toggleBookSelection(book);
-                return true;
-            });
-            setReorderDropTarget(card, "book", book.optString("id"));
-            int gridWidth = parent.getWidth() > 0 ? parent.getWidth() : getResources().getDisplayMetrics().widthPixels;
-            int cellWidth = Math.max(dp(120), (gridWidth - dp(24 + 10)) / 2);
-            int artworkHeight = Math.max(dp(160), Math.round((cellWidth - dp(14)) * 1.42f));
-            card.setLayoutParams(new AbsListView.LayoutParams(-1, artworkHeight + dp(42 + 11)));
-
-            FrameLayout artwork = new FrameLayout(MainActivity.this);
-            artwork.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 9));
-            artwork.setClipToOutline(true);
-            ImageView cover = new ImageView(MainActivity.this);
-            cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            cover.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 9));
-            artwork.addView(cover, new FrameLayout.LayoutParams(-1, -1));
-            NativeIconView placeholder = new NativeIconView(MainActivity.this, "book", PURPLE);
-            artwork.addView(placeholder, new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER));
-            artwork.setTag(placeholder);
-            bindBookCover(cover, placeholder, book);
-            FrameLayout selectionBadge = new FrameLayout(MainActivity.this);
-            selectionBadge.setBackground(roundDrawable(selected ? PURPLE : 0x99000000,
-                    selected ? PURPLE : Color.TRANSPARENT, 20));
-            NativeIconView check = new NativeIconView(MainActivity.this, selected ? "reorder" : "select", Color.WHITE);
-            selectionBadge.addView(check, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
-            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.RIGHT);
-            badgeParams.topMargin = dp(6); badgeParams.rightMargin = dp(6);
-            artwork.addView(selectionBadge, badgeParams);
-            selectionBadge.setVisibility(selected || !selectedBookIds.isEmpty() ? View.VISIBLE : View.GONE);
-            card.addView(artwork, new LinearLayout.LayoutParams(-1, artworkHeight));
-
-            TextView title = text(displayBookTitle(book), 14, TEXT);
-            title.setMaxLines(2); title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            title.setGravity(Gravity.CENTER);
-            card.addView(title, new LinearLayout.LayoutParams(-1, dp(42)));
-
-            return card;
-        }
-    }
-
-    private final class ChapterAdapter extends BaseAdapter {
-        private JSONArray chapters() { JSONObject b = activeBook(); return b == null ? new JSONArray() : b.optJSONArray("chapters"); }
-        @Override public int getCount() { return chapters() == null ? 0 : chapters().length(); }
-        @Override public Object getItem(int position) { return chapters().optJSONObject(position); }
-        @Override public long getItemId(int position) { return position; }
-        @Override public View getView(int position, View convert, ViewGroup parent) {
-            JSONObject chapter = chapters().optJSONObject(position); if (chapter == null) chapter = ChapterCatalog.newChapter();
-            final JSONObject chapterItem = chapter;
-            String key = chapterSelectionKey(chapterItem, position);
-            boolean selecting = !selectedChapterKeys.isEmpty();
-            boolean selected = selectedChapterKeys.contains(key);
-            boolean hasText = chapterItem.optBoolean("hasText");
-            boolean finishedWriting = hasText && chapterItem.optBoolean("end");
-            boolean done = finishedWriting && chapterItem.optBoolean("done");
-            LinearLayout row = new LinearLayout(MainActivity.this);
-            row.setOrientation(LinearLayout.VERTICAL);
-            row.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            row.setPadding(dp(20), dp(16), dp(20), dp(16));
-            row.setTag(key);
-            row.setBackground(roundDrawable(selected ? (lightTheme ? 0xFFEDE3FA : 0xFF241B2C) : SURFACE,
-                    selected ? PURPLE : 0xFF29242F, 16));
-            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
-            rp.bottomMargin = dp(7);
-            row.setLayoutParams(rp);
-            LinearLayout heading = new LinearLayout(MainActivity.this);
-            heading.setGravity(Gravity.CENTER_VERTICAL);
-            heading.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            LinearLayout leading = new LinearLayout(MainActivity.this);
-            leading.setGravity(Gravity.CENTER_VERTICAL);
-            leading.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
-            TextView name = text(ChapterCatalog.label(chapterItem, position), 16, TEXT);
-            name.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-            name.setSingleLine(true);
-            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            TextView estimate = text(remainingChapterTimeLabel(chapterItem), 14, MUTED);
-            estimate.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-            String statusIcon = selecting ? (selected ? "reorder" : "select")
-                    : done ? "check" : hasText ? "edit" : "book";
-            int statusColor = selecting ? (selected ? PURPLE : MUTED) : done ? GREEN : hasText ? BLUE : PURPLE;
-            FrameLayout status = selecting
-                    ? plainIconButton(statusIcon, statusColor, () -> toggleChapterSelection(chapterItem, position))
-                    : finishedWriting && !done ? pairedEditCheckedButton(PURPLE, null)
-                    : plainIconButton(statusIcon, statusColor, null);
-            if (selecting && selected) status.setOnLongClickListener(v -> startReorderDrag(row, "chapter", key));
-            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(30), dp(30));
-            sp.rightMargin = dp(12);
-            leading.addView(status, sp);
-            leading.addView(name, new LinearLayout.LayoutParams(0, dp(26), 1));
-            heading.addView(leading, new LinearLayout.LayoutParams(0, dp(26), 1));
-            LinearLayout.LayoutParams estimateParams = new LinearLayout.LayoutParams(-2, dp(26));
-            estimateParams.leftMargin = dp(10);
-            heading.addView(estimate, estimateParams);
-            row.addView(heading, new LinearLayout.LayoutParams(-1, dp(26)));
-            FrameLayout meter = new FrameLayout(MainActivity.this);
-            meter.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 3));
-            View fill = new View(MainActivity.this);
-            GradientDrawable progressGradient = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                    new int[]{0xFFF1C40F, 0xFFE74C3C});
-            progressGradient.setCornerRadius(dp(2));
-            fill.setBackground(progressGradient);
-            final int fillPercent = !finishedWriting ? 0 : done ? 100
-                    : Math.max(0, Math.min(100, chapterItem.optInt("percent")));
-            FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams(0, dp(3), Gravity.LEFT);
-            meter.addView(fill, fillParams);
-            meter.post(() -> {
-                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) fill.getLayoutParams();
-                params.width = Math.round(meter.getWidth() * fillPercent / 100f);
-                fill.setLayoutParams(params);
-            });
-            LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(3));
-            mp.topMargin = dp(12);
-            row.addView(meter, mp);
-            row.setClickable(true);
-            row.setOnClickListener(v -> {
-                if (!selectedChapterKeys.isEmpty()) toggleChapterSelection(chapterItem, position);
-                else openReader(position);
-            });
-            row.setOnLongClickListener(v -> {
-                if (selectedChapterKeys.contains(key)) return startReorderDrag(row, "chapter", key);
-                toggleChapterSelection(chapterItem, position);
-                return true;
-            });
-            setReorderDropTarget(row, "chapter", key);
-            applyPressScale(row, .96f);
-            return row;
-        }
-    }
 
 
 }
