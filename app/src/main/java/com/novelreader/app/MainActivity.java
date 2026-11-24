@@ -247,6 +247,7 @@ public final class MainActivity extends Activity {
     private AuthorInfoScreen authorInfoScreen;
     private GenreInfoScreen genreInfoScreen;
     private GenreLibraryScreen genreLibraryScreen;
+    private TagSettingsScreen tagSettingsScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -2178,43 +2179,15 @@ public final class MainActivity extends Activity {
     }
 
     private void showTagSettings() {
-        setPage("tagSettings");
-        ensureFavoriteTagsDefined();
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("تنظیمات ژانرها", "", "menu", "help",
-                this::openDrawer, this::showTagSettingsHelp, 0, 68, true));
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(18), dp(14), dp(18), dp(24));
-        EditText tagSearch = edit("جستجو یا افزودن ژانر", false);
-        tagSearch.setSingleLine(true);
-        LinearLayout tagRows = new LinearLayout(this);
-        tagRows.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout searchRow = new LinearLayout(this);
-        searchRow.setGravity(Gravity.CENTER_VERTICAL);
-        searchRow.addView(clearableInput(tagSearch), new LinearLayout.LayoutParams(0, dp(48), 1));
-        FrameLayout addTag = iconButton("add", PURPLE, false, () -> addManagedTag(tagSearch, tagRows));
-        LinearLayout.LayoutParams addTagParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        addTagParams.leftMargin = dp(7);
-        searchRow.addView(addTag, addTagParams);
-        body.addView(searchRow, fieldParams());
-        body.addView(tagRows, new LinearLayout.LayoutParams(-1, -2));
-        tagSearch.addTextChangedListener(watcher(() -> renderManagedTags(tagRows, tagSearch)));
-        renderManagedTags(tagRows, tagSearch);
-
-        LinearLayout.LayoutParams equivalentParams = new LinearLayout.LayoutParams(-1, dp(48));
-        equivalentParams.topMargin = dp(8);
-        body.addView(textButton("ژانرهای معادل", "tag", PURPLE, this::showGenreEquivalents),
-                equivalentParams);
-        scroll.addView(body);
-        appColumn.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        tagSettingsUi().show();
     }
 
-    private void showTagSettingsHelp() {
+    private TagSettingsScreen tagSettingsUi() {
+        if (tagSettingsScreen == null) tagSettingsScreen = new TagSettingsScreen(this);
+        return tagSettingsScreen;
+    }
+
+    void showTagSettingsHelp() {
         TextView help = text("ژانرهای پسندیده روی پیشنهادها اثر می‌گذارند. مداد برای ویرایش یا ادغام است؛ حذف ژانر از داخل مودال ویرایش انجام می‌شود.", 15, TEXT);
         help.setGravity(Gravity.CENTER);
         help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
@@ -2386,7 +2359,7 @@ public final class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    private void ensureFavoriteTagsDefined() {
+    void ensureFavoriteTagsDefined() {
         JSONArray tags = library.optJSONArray("genres");
         if (tags == null) tags = new JSONArray();
         int originalCount = tags.length();
@@ -2400,42 +2373,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderManagedTags(LinearLayout rows, EditText search) {
-        rows.removeAllViews();
-        String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
-        JSONArray tags = allGenres();
-        for (int i = 0; i < tags.length(); i++) {
-            String tag = tags.optString(i);
-            if (!tag.toLowerCase(Locale.ROOT).contains(query)) continue;
-            boolean favorite = containsIgnoreCase(favoriteGenrePreferences, tag);
-            boolean disliked = containsIgnoreCase(dislikedGenrePreferences, tag);
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(10), dp(3), dp(10), dp(3));
-            row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 12));
-            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(54));
-            rowParams.bottomMargin = dp(7);
-            TextView label = text(tag, 15, TEXT);
-            label.setSingleLine(true);
-            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            row.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
-            FrameLayout likeButton = plainIconButton("thumb_up", favorite ? GREEN : MUTED,
-                    () -> { toggleGenrePreference(tag, true); renderManagedTags(rows, search); });
-            likeButton.setContentDescription(favorite ? "حذف پسند ژانر" : "پسندیدن ژانر");
-            row.addView(likeButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
-            FrameLayout dislikeButton = plainIconButton("thumb_down", disliked ? RED : MUTED,
-                    () -> { toggleGenrePreference(tag, false); renderManagedTags(rows, search); });
-            dislikeButton.setContentDescription(disliked ? "حذف نپسند ژانر" : "نپسندیدن ژانر");
-            row.addView(dislikeButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
-            FrameLayout editButton = iconButton("edit", MUTED, false,
-                    () -> showEditTagDialog(tag, rows, search));
-            editButton.setContentDescription("ویرایش یا ادغام ژانر");
-            row.addView(editButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
-            rows.addView(row, rowParams);
-        }
-        if (rows.getChildCount() == 0) {
-            TextView empty = emptyLabel(query.isEmpty() ? "هنوز ژانری ثبت نشده" : "ژانری پیدا نشد");
-            rows.addView(empty, new LinearLayout.LayoutParams(-1, dp(80)));
-        }
+        tagSettingsUi().renderManagedTags(rows, search);
     }
 
     void toggleGenrePreference(String genre, boolean liked) {
@@ -2455,26 +2393,10 @@ public final class MainActivity extends Activity {
     }
 
     private void addManagedTag(EditText search, LinearLayout rows) {
-        String tag = canonicalGenre(TextNormalization.titleCaseWords(search.getText().toString()));
-        if (tag.isEmpty()) { search.setError("نام ژانر را وارد کن"); return; }
-        JSONArray tags = library.optJSONArray("genres");
-        if (tags == null) tags = new JSONArray();
-        if (findGenreName(tags, tag) != null) {
-            search.setText("");
-            toast("این نام به ژانر «" + tag + "» تبدیل می‌شود.");
-            renderManagedTags(rows, search);
-            return;
-        }
-        appendUniqueGenre(tags, tag);
-        putJson(library, "genres", tags);
-        if (!saveLibrary()) return;
-        rebuildRecommendationWeights();
-        persistRecommendationState();
-        search.setText("");
-        renderManagedTags(rows, search);
+        tagSettingsUi().addManagedTag(search, rows);
     }
 
-    private void showEditTagDialog(String oldTag, LinearLayout rows, EditText search) {
+    void showEditTagDialog(String oldTag, LinearLayout rows, EditText search) {
         EditText name = edit("نام ژانر", false);
         name.setText(oldTag);
         name.setSelection(name.length());
@@ -2711,7 +2633,7 @@ public final class MainActivity extends Activity {
         return GenreCatalog.allCandidates(library, knownGenres);
     }
 
-    private void showGenreEquivalents() {
+    void showGenreEquivalents() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(8), dp(4), dp(8), dp(4));
