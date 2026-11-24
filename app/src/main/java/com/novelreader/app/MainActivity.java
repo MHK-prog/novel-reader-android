@@ -106,7 +106,7 @@ public final class MainActivity extends Activity {
     private static final int MAX_GENRE_WEIGHT = 50;
     private static final long READING_TICK_MS = 15_000L;
 
-    private int BG = BG_DARK;
+    int BG = BG_DARK;
     int SURFACE = SURFACE_DARK;
     int SURFACE_ALT = SURFACE_ALT_DARK;
     int PURPLE = 0xFFF2C9F9;
@@ -227,9 +227,9 @@ public final class MainActivity extends Activity {
     private ListView chaptersList;
     private BookCardAdapter bookAdapter;
     private CollectionCardAdapter collectionAdapter;
-    private AuthorCardAdapter authorAdapter;
+    AuthorCardAdapter authorAdapter;
     private GenreCardAdapter genreAdapter;
-    private GridView authorsGrid;
+    GridView authorsGrid;
     EditText authorSearchField;
     private ChapterCardAdapter chapterAdapter;
     private EditText chapterEditor;
@@ -1876,70 +1876,11 @@ public final class MainActivity extends Activity {
     }
 
     private void showAuthors() {
-        setPage("authors");
-        selectedAuthorNames.clear();
-        ensureAuthorDetails();
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("کتابخانه نویسندگان", "", "menu", "help",
-                this::openDrawer, this::showAuthorLibraryHelp, 0, 68, true),
-                new LinearLayout.LayoutParams(-1, dp(62)));
-        EditText authorSearch = edit("جستجوی نویسنده", false);
-        authorSearch.setSingleLine(true);
-        authorSearchField = authorSearch;
-        LinearLayout filters = new LinearLayout(this);
-        filters.setGravity(Gravity.CENTER_VERTICAL);
-        filters.setPadding(dp(14), dp(7), dp(14), dp(7));
-        filters.addView(clearableInput(authorSearch), new LinearLayout.LayoutParams(-1, dp(48)));
-        appColumn.addView(filters);
-
-        authorsGrid = new GridView(this);
-        authorsGrid.setNumColumns(1);
-        authorsGrid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        authorsGrid.setVerticalScrollBarEnabled(false);
-        authorsGrid.setHorizontalScrollBarEnabled(false);
-        authorsGrid.setHorizontalSpacing(dp(10));
-        authorsGrid.setVerticalSpacing(dp(10));
-        authorsGrid.setSelector(android.R.color.transparent);
-        authorsGrid.setCacheColorHint(Color.TRANSPARENT);
-        authorsGrid.setBackgroundColor(BG);
-        authorsGrid.setPadding(dp(12), dp(4), dp(12), dp(8));
-        authorsGrid.setClipToPadding(false);
-        authorAdapter = new AuthorCardAdapter(this);
-        authorsGrid.setAdapter(authorAdapter);
-        authorsGrid.setOnItemClickListener((parent, view, position, id) -> {
-            String author = authorAdapter.getAuthor(position);
-            if (!selectedAuthorNames.isEmpty()) toggleAuthorSelection(author);
-            else showAuthorInfoPage(author);
-        });
-        authorsGrid.setOnItemLongClickListener((parent, view, position, id) -> {
-            String author = authorAdapter.getAuthor(position);
-            if (containsIgnoreCase(selectedAuthorNames, author)) {
-                return startReorderDrag(view, "author", author);
-            }
-            toggleAuthorSelection(author);
-            return true;
-        });
-        FrameLayout frame = new FrameLayout(this);
-        frame.addView(authorsGrid, new FrameLayout.LayoutParams(-1, -1));
-        TextView empty = emptyLabel("کتابی با نام نویسنده ثبت نشده");
-        frame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
-        authorsGrid.setEmptyView(empty);
-        appColumn.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
-        authorSearch.addTextChangedListener(watcher(() -> {
-            if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
-        }));
+        authorInfoUi().showAuthors();
     }
 
     private void showAuthorLibraryHelp() {
-        TextView help = text("برای دیدن جزئیات، روی کارت نویسنده بزن. دکمهٔ کتاب‌های این نویسنده، کتابخانهٔ اصلی را با جستجوی همان نویسنده باز می‌کند. قلب، نویسنده را به علاقه‌مندی‌ها اضافه می‌کند و آیکون کارت برای تعیین جنسیت است.", 15, TEXT);
-        help.setGravity(Gravity.CENTER);
-        help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        help.setPadding(dp(10), dp(12), dp(10), dp(12));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("کتابخانه نویسندگان")
-                .setView(dialogPadding(help)).setPositiveButton("بستن", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
+        authorInfoUi().showLibraryHelp();
     }
 
     String authorGender(String author) {
@@ -1965,23 +1906,11 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshAuthorSelection() {
-        if (!"authors".equals(page) || appColumn == null || appColumn.getChildCount() == 0) return;
-        appColumn.removeViewAt(0);
-        if (selectedAuthorNames.isEmpty()) {
-            appColumn.addView(makeHeader("کتابخانه نویسندگان", "", "menu", "help",
-                    this::openDrawer, this::showAuthorLibraryHelp, 0, 68, true),
-                    0, new LinearLayout.LayoutParams(-1, dp(62)));
-        } else {
-            appColumn.addView(makeHeader(selectedAuthorNames.size() + " انتخاب", "", "close", null,
-                    this::clearAuthorSelection, null),
-                    0, new LinearLayout.LayoutParams(-1, dp(62)));
-        }
-        if (authorAdapter != null) authorAdapter.notifyDataSetChanged();
+        authorInfoUi().refreshSelection();
     }
 
     private void clearAuthorSelection() {
-        selectedAuthorNames.clear();
-        refreshAuthorSelection();
+        authorInfoUi().clearSelection();
     }
 
     JSONArray authorDetails() {
@@ -2014,7 +1943,7 @@ public final class MainActivity extends Activity {
         return item;
     }
 
-    private void ensureAuthorDetails() {
+    void ensureAuthorDetails() {
         String before = authorDetails().toString();
         JSONArray books = library.optJSONArray("books");
         if (books != null) for (int i = 0; i < books.length(); i++) {

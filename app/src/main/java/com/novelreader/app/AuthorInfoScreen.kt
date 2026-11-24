@@ -1,11 +1,14 @@
 package com.novelreader.app
 
 import android.app.AlertDialog
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.GridView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -14,6 +17,108 @@ import org.json.JSONObject
 
 /** Renders an author's details and edit dialog. Data changes remain owned by MainActivity. */
 internal class AuthorInfoScreen(private val host: MainActivity) {
+    fun showAuthors() {
+        host.setPage("authors")
+        host.selectedAuthorNames.clear()
+        host.ensureAuthorDetails()
+        host.appColumn.removeAllViews()
+        host.animatePageTransition()
+        host.appColumn.addView(
+            host.makeHeader("کتابخانه نویسندگان", "", "menu", "help",
+                Runnable { host.openDrawer() }, Runnable { showLibraryHelp() }, 0, 68, true),
+            LinearLayout.LayoutParams(-1, host.dp(62f))
+        )
+
+        val authorSearch = host.edit("جستجوی نویسنده", false).apply { isSingleLine = true }
+        host.authorSearchField = authorSearch
+        val filters = LinearLayout(host).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(host.dp(14f), host.dp(7f), host.dp(14f), host.dp(7f))
+            addView(host.clearableInput(authorSearch), LinearLayout.LayoutParams(-1, host.dp(48f)))
+        }
+        host.appColumn.addView(filters)
+
+        val grid = GridView(host).apply {
+            numColumns = 1
+            stretchMode = GridView.STRETCH_COLUMN_WIDTH
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            horizontalSpacing = host.dp(10f)
+            verticalSpacing = host.dp(10f)
+            setSelector(android.R.color.transparent)
+            cacheColorHint = android.graphics.Color.TRANSPARENT
+            setBackgroundColor(host.BG)
+            setPadding(host.dp(12f), host.dp(4f), host.dp(12f), host.dp(8f))
+            clipToPadding = false
+        }
+        val adapter = AuthorCardAdapter(host)
+        host.authorAdapter = adapter
+        host.authorsGrid = grid
+        grid.adapter = adapter
+        grid.setOnItemClickListener { _, _, position, _ ->
+            val author = adapter.getAuthor(position)
+            if (host.selectedAuthorNames.isNotEmpty()) host.toggleAuthorSelection(author)
+            else host.selectAuthorCard(author)
+        }
+        grid.setOnItemLongClickListener { _, view, position, _ ->
+            val author = adapter.getAuthor(position)
+            if (host.containsIgnoreCase(host.selectedAuthorNames, author)) {
+                host.startReorderDrag(view, "author", author)
+            } else {
+                host.toggleAuthorSelection(author)
+                true
+            }
+        }
+
+        val frame = FrameLayout(host).apply {
+            addView(grid, FrameLayout.LayoutParams(-1, -1))
+            setBackgroundColor(host.BG)
+        }
+        val empty = host.emptyLabel("کتابی با نام نویسنده ثبت نشده")
+        frame.addView(empty, FrameLayout.LayoutParams(-1, -1))
+        grid.emptyView = empty
+        host.appColumn.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
+        authorSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(value: Editable?) = adapter.notifyDataSetChanged()
+        })
+    }
+
+    fun showLibraryHelp() {
+        val help = host.text(
+            "برای دیدن جزئیات، روی کارت نویسنده بزن. دکمهٔ کتاب‌های این نویسنده، کتابخانهٔ اصلی را با جستجوی همان نویسنده باز می‌کند. قلب، نویسنده را به علاقه‌مندی‌ها اضافه می‌کند و آیکون کارت برای تعیین جنسیت است.",
+            15, host.TEXT
+        ).apply {
+            gravity = Gravity.CENTER
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            setPadding(host.dp(10f), host.dp(12f), host.dp(10f), host.dp(12f))
+        }
+        val dialog = AlertDialog.Builder(host).setTitle("کتابخانه نویسندگان")
+            .setView(host.dialogPadding(help)).setPositiveButton("بستن", null).create()
+        dialog.show()
+        host.styleDialogWindow(dialog)
+    }
+
+    fun refreshSelection() {
+        if (host.page != "authors" || host.appColumn.childCount == 0) return
+        host.appColumn.removeViewAt(0)
+        val header = if (host.selectedAuthorNames.isEmpty()) {
+            host.makeHeader("کتابخانه نویسندگان", "", "menu", "help",
+                Runnable { host.openDrawer() }, Runnable { showLibraryHelp() }, 0, 68, true)
+        } else {
+            host.makeHeader("${host.selectedAuthorNames.size} انتخاب", "", "close", null,
+                Runnable { clearSelection() }, null)
+        }
+        host.appColumn.addView(header, 0, LinearLayout.LayoutParams(-1, host.dp(62f)))
+        host.authorAdapter?.notifyDataSetChanged()
+    }
+
+    fun clearSelection() {
+        host.selectedAuthorNames.clear()
+        refreshSelection()
+    }
+
     fun showPage(author: String) {
         if (author.trim().isEmpty()) return
         val currentAuthor = author.trim()
