@@ -239,7 +239,7 @@ internal class BookInfoScreen(private val host: MainActivity) {
         }
         val chips = GenreCloud(host, host.uiComponents, host.PURPLE, host.contrastOnAccent(), host.SURFACE_ALT, host.TEXT)
         chips.setReadOnly(true)
-        chips.showGenres(preview, emptySet<String>(), "")
+        chips.showGenres(preview, mutableSetOf<String>(), "")
         val chipsParams = LinearLayout.LayoutParams(-1, -2)
         chipsParams.topMargin = host.dp(4f)
         card.addView(chips, chipsParams)
