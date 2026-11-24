@@ -102,7 +102,7 @@ public final class MainActivity extends Activity {
     private static final int SURFACE_ALT_DARK = Color.rgb(17, 17, 17);
     static final int BLUE = Color.rgb(90, 169, 255);
     static final int GREEN = Color.rgb(86, 201, 135);
-    private static final int RED = Color.rgb(255, 76, 76);
+    static final int RED = Color.rgb(255, 76, 76);
     private static final int MAX_GENRE_WEIGHT = 50;
     private static final long READING_TICK_MS = 15_000L;
 
@@ -110,7 +110,7 @@ public final class MainActivity extends Activity {
     int SURFACE = SURFACE_DARK;
     int SURFACE_ALT = SURFACE_ALT_DARK;
     int PURPLE = 0xFFF2C9F9;
-    private int SECONDARY_ACCENT = 0xFFFFC1EC;
+    int SECONDARY_ACCENT = 0xFFFFC1EC;
     int TEXT = Color.rgb(241, 241, 241);
     int MUTED = Color.rgb(165, 165, 165);
     boolean lightTheme;
@@ -123,16 +123,16 @@ public final class MainActivity extends Activity {
     final Set<String> selectedChapterKeys = new LinkedHashSet<>();
     private final ChapterEditHistory chapterEditHistory = new ChapterEditHistory();
     private final RecommendationUserState recommendationUserState = new RecommendationUserState();
-    private final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
-    private final Set<String> favoriteGenrePreferences = recommendationUserState.favoriteGenres;
+    final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
+    final Set<String> favoriteGenrePreferences = recommendationUserState.favoriteGenres;
     private final Set<String> dislikedGenrePreferences = recommendationUserState.dislikedGenres;
     final Set<String> favoriteAuthorPreferences = recommendationUserState.favoriteAuthors;
     final Set<String> dislikedAuthorPreferences = recommendationUserState.dislikedAuthors;
     final Set<String> selectedAuthorNames = new LinkedHashSet<>();
     final Set<String> selectedGenreNames = new LinkedHashSet<>();
-    private final BookRecommendationEngine.UserPreferences recommendationPreferences =
+    final BookRecommendationEngine.UserPreferences recommendationPreferences =
             new BookRecommendationEngine.UserPreferences();
-    private final BookRecommendationEngine recommendationEngine =
+    final BookRecommendationEngine recommendationEngine =
             new BookRecommendationEngine(recommendationPreferences);
     private final ExecutorService colloquializerExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
@@ -152,7 +152,7 @@ public final class MainActivity extends Activity {
     private final Deque<NavigationState> navigationHistory = new ArrayDeque<>();
     private boolean suppressNavigationHistory;
     private long lastRootBackPressedAt;
-    private String bookInfoReturnPage = "collectionBooks";
+    String bookInfoReturnPage = "collectionBooks";
     private String chaptersReturnPage = "collectionBooks";
     String activeBookId;
     String activeCollectionId = "other";
@@ -255,19 +255,20 @@ public final class MainActivity extends Activity {
     private ImageView bookCoverPreview;
     private String pendingCoverName;
     private int pendingReaderCursorOffset = -1;
-    private SharedPreferences recommendationState;
+    SharedPreferences recommendationState;
     private RecommendationStateStore recommendationStateStore;
     ReadingStatsStore readingStats;
     private StatisticsScreen statisticsScreen;
     private ReadingSessionTimer readingSessionTimer;
-    private boolean recommendationDetailsVisible;
-    private final Set<Long> sessionRejectedRecommendationIds = new HashSet<>();
-    private boolean recommendationCurrentReadingMode;
-    private String temporaryRecommendationGenre = "";
+    boolean recommendationDetailsVisible;
+    final Set<Long> sessionRejectedRecommendationIds = new HashSet<>();
+    boolean recommendationCurrentReadingMode;
+    String temporaryRecommendationGenre = "";
     private boolean recommendationSessionStarted;
-    private boolean recommendationGenreDialogShown;
+    boolean recommendationGenreDialogShown;
+    private RecommendationScreen recommendationScreen;
     private static final long READING_IDLE_TIMEOUT_MS = 10_000L;
-    private static final int[] RECOMMENDATION_METRIC_COLORS = {
+    static final int[] RECOMMENDATION_METRIC_COLORS = {
             0xFFB69AFF, 0xFF5AA9FF, 0xFF56C987, 0xFFFF4C4C,
             0xFFFFB45E, 0xFF4FC3F7, 0xFFF06292
     };
@@ -2602,132 +2603,19 @@ public final class MainActivity extends Activity {
         showBookShelfContent(true, null);
     }
 
-    private void showRecommendation() {
+    void showRecommendation() {
         if (!recommendationSessionStarted) startRecommendationSession();
-        setPage("recommendations");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("پیشنهاد کتاب", "", "menu", null, this::openDrawer, null));
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setGravity(Gravity.CENTER);
-        body.setPadding(dp(24), dp(20), dp(24), dp(20));
-
-        List<BookRecommendationEngine.Book> availableBooks = recommendationBooks(
-                recommendationCurrentReadingMode, sessionRejectedRecommendationIds);
-        BookRecommendationEngine.Book book = recommendationEngine.recommendBook(availableBooks, seenRecommendationIds,
-                temporaryRecommendationGenre);
-        if (book == null) {
-            TextView emptyMessage = text(availableBooks.isEmpty()
-                    ? "کتابی برای این حالت باقی نمانده است."
-                    : "کتابی برای پیشنهاد باقی نمانده است.", 15, MUTED);
-            emptyMessage.setGravity(Gravity.CENTER);
-            body.addView(emptyMessage, new LinearLayout.LayoutParams(-1, 0, 1));
-            body.addView(textButton("انتخاب ژانر محبوب", "tag", PURPLE,
-                    this::showRecommendationGenrePicker), new LinearLayout.LayoutParams(-1, dp(48)));
-            LinearLayout.LayoutParams emptyModesParams = new LinearLayout.LayoutParams(-1, dp(48));
-            emptyModesParams.topMargin = dp(7);
-            body.addView(recommendationModeButtons(), emptyModesParams);
-            appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-            if (!recommendationGenreDialogShown) {
-                recommendationGenreDialogShown = true;
-                body.post(this::showRecommendationGenrePicker);
-            }
-            return;
-        }
-
-        recommendationGenreDialogShown = false;
-        seenRecommendationIds.add(book.id);
-        persistRecommendationState();
-        JSONObject recommendedRecord = findBookByRecommendationId(book.id);
-        FrameLayout coverFrame = new FrameLayout(this);
-        coverFrame.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 14));
-        coverFrame.setClipToOutline(true);
-        ImageView cover = new ImageView(this);
-        cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        cover.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 14));
-        coverFrame.addView(cover, new FrameLayout.LayoutParams(-1, -1));
-        NativeIconView bookIcon = new NativeIconView(this, "book", PURPLE);
-        coverFrame.addView(bookIcon, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
-        if (recommendedRecord != null) bindBookCover(cover, bookIcon, recommendedRecord);
-        coverFrame.setClickable(true);
-        coverFrame.setOnClickListener(v -> {
-            if (recommendedRecord == null) return;
-            bookInfoReturnPage = "recommendations";
-            showBookInfo(recommendedRecord);
-        });
-        applyPressScale(coverFrame, .97f);
-        body.addView(coverFrame, new LinearLayout.LayoutParams(dp(184), dp(238)));
-        TextView title = text(recommendedRecord == null ? book.title : displayBookTitle(recommendedRecord), 22, TEXT);
-        title.setGravity(Gravity.CENTER);
-        title.setMaxLines(3);
-        title.setPadding(0, dp(22), 0, dp(10));
-        body.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView author = text(book.author, 16, MUTED);
-        author.setGravity(Gravity.CENTER);
-        body.addView(author, new LinearLayout.LayoutParams(-1, -2));
-        String descriptionText = recommendedRecord == null ? "" : recommendedRecord.optString("description", "").trim();
-        TextView description;
-        if (descriptionText.isEmpty()) {
-            description = text("توضیحی برای این کتاب ثبت نشده است.", 14, MUTED);
-        } else {
-            boolean more = descriptionText.length() > 90;
-            String preview = more ? descriptionText.substring(0, 90).trim() + "… بیشتر" : descriptionText;
-            android.text.SpannableString styled = new android.text.SpannableString(preview);
-            if (more) styled.setSpan(new ForegroundColorSpan(RED), preview.length() - 5,
-                    preview.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            description = text(preview, 14, MUTED);
-            description.setText(styled);
-            description.setOnClickListener(v -> showRecommendationDescription(descriptionText));
-            description.setClickable(true);
-            description.setFocusable(true);
-            applyPressScale(description, .98f);
-        }
-        description.setGravity(Gravity.CENTER);
-        description.setMaxLines(4);
-        description.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        description.setPadding(dp(8), 0, dp(8), 0);
-        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2);
-        descriptionParams.topMargin = dp(12);
-        body.addView(description, descriptionParams);
-
-        if (recommendedRecord != null) {
-            LinearLayout.LayoutParams ratingParams = new LinearLayout.LayoutParams(-1, -2);
-            ratingParams.topMargin = dp(8);
-            body.addView(createBookRatingControl(recommendedRecord), ratingParams);
-        }
-
-        View spacer = new View(this);
-        body.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
-        LinearLayout.LayoutParams readButtonParams = new LinearLayout.LayoutParams(-1, dp(48));
-        readButtonParams.topMargin = dp(6);
-        body.addView(textButton("خواندن کتاب", "book", PURPLE,
-                () -> openRecommendedBookForReading(recommendedRecord)), readButtonParams);
-        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(-1, dp(48));
-        modeParams.topMargin = dp(7);
-        body.addView(recommendationModeButtons(), modeParams);
-        appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+        recommendationUi().show();
     }
 
-    private LinearLayout recommendationModeButtons() {
-        LinearLayout modes = new LinearLayout(this);
-        modes.setOrientation(LinearLayout.HORIZONTAL);
-        modes.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        modes.addView(textButton("پیشنهاد از نخوانده‌ها", "book",
-                recommendationCurrentReadingMode ? SECONDARY_ACCENT : PURPLE, () -> {
-                    recommendationCurrentReadingMode = false;
-                    showRecommendation();
-                }), new LinearLayout.LayoutParams(0, dp(48), 1));
-        LinearLayout.LayoutParams readingParams = new LinearLayout.LayoutParams(0, dp(48), 1);
-        readingParams.leftMargin = dp(7);
-        modes.addView(textButton("پیشنهاد از درحال‌خواندن", "book",
-                recommendationCurrentReadingMode ? PURPLE : SECONDARY_ACCENT, () -> {
-                    recommendationCurrentReadingMode = true;
-                    showRecommendation();
-                }), readingParams);
-        return modes;
+    LinearLayout recommendationModeButtons() {
+        return recommendationUi().modeButtons();
     }
 
+    private RecommendationScreen recommendationUi() {
+        if (recommendationScreen == null) recommendationScreen = new RecommendationScreen(this);
+        return recommendationScreen;
+    }
     private void startRecommendationSession() {
         sessionRejectedRecommendationIds.clear();
         temporaryRecommendationGenre = "";
@@ -2742,7 +2630,7 @@ public final class MainActivity extends Activity {
         recommendationSessionStarted = false;
     }
 
-    private void openRecommendedBookForReading(JSONObject book) {
+    void openRecommendedBookForReading(JSONObject book) {
         if (book == null) return;
         JSONArray chapters = book.optJSONArray("chapters");
         if (chapters == null || chapters.length() == 0) { toast("این کتاب Chapter ندارد."); return; }
@@ -2767,235 +2655,21 @@ public final class MainActivity extends Activity {
         openReader(target);
     }
 
-    private void showRecommendationGenrePicker() {
-        List<String> top = topRecommendationGenres();
-        if (top.isEmpty()) {
-            toast("اول از تنظیمات تگ‌ها چند ژانر محبوب انتخاب کن.");
-            return;
-        }
-        String[] choices = top.toArray(new String[0]);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("این بار چه ژانری پیشنهاد بدهم؟")
-                .setItems(choices, (ignored, which) -> {
-                    if (which < 0 || which >= top.size()) return;
-                    temporaryRecommendationGenre = top.get(which);
-                    sessionRejectedRecommendationIds.clear();
-                    recommendationGenreDialogShown = true;
-                    showRecommendation();
-                }).setNegativeButton("لغو", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
+    void showRecommendationGenrePicker() {
+        recommendationUi().showGenrePicker();
     }
 
-    private List<String> topRecommendationGenres() {
-        ArrayList<String> values = new ArrayList<>(favoriteGenrePreferences);
-        if (values.isEmpty()) {
-            JSONArray all = allGenres();
-            for (int i = 0; i < all.length(); i++) values.add(all.optString(i));
-        }
-        values.sort((left, right) -> Integer.compare(
-                recommendationPreferences.weightFor(right), recommendationPreferences.weightFor(left)));
-        ArrayList<String> top = new ArrayList<>(3);
-        for (String value : values) if (!containsIgnoreCase(top, value) && top.size() < 3) top.add(value);
-        if (top.size() < 3) {
-            JSONArray all = allGenres();
-            for (int i = 0; i < all.length() && top.size() < 3; i++) {
-                String value = all.optString(i);
-                if (!containsIgnoreCase(top, value)) top.add(value);
-            }
-        }
-        return top;
+    void showRecommendationSettings() {
+        recommendationUi().showSettings();
     }
 
-    private void showRecommendationSettings() {
-        setPage("recommendationSettings");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("وزن‌های پیشنهاد", "", "menu", "help",
-                this::openDrawer, () -> showRecommendationWeightsHelp(), 0, 68, true));
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(14), dp(8), dp(14), dp(12));
-
-        TextView detailsButton = text(recommendationDetailsVisible ? "پنهان کردن جزئیات" : "نمایش جزئیات شاخص‌ها",
-                13, TEXT);
-        detailsButton.setGravity(Gravity.CENTER);
-        detailsButton.setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
-        body.addView(detailsButton, new LinearLayout.LayoutParams(-1, dp(44)));
-
-        LinearLayout rows = new LinearLayout(this);
-        rows.setOrientation(LinearLayout.VERTICAL);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setHorizontalScrollBarEnabled(false);
-        scroll.addView(rows);
-        body.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        List<BookRecommendationEngine.Book> books = recommendationBooks(null, Collections.emptySet());
-        Map<Long, BookRecommendationEngine.WeightBreakdown> breakdowns = new HashMap<>();
-        double maxTotal = 0, maxGenre = 0, maxAuthor = 0, maxRating = 0;
-        for (BookRecommendationEngine.Book book : books) {
-            BookRecommendationEngine.WeightBreakdown parts = recommendationEngine.weightBreakdown(book);
-            breakdowns.put(book.id, parts);
-            maxTotal = Math.max(maxTotal, parts.total);
-            maxGenre = Math.max(maxGenre, parts.genre);
-            maxAuthor = Math.max(maxAuthor, parts.author);
-            maxRating = Math.max(maxRating, parts.rating);
-        }
-        Collections.sort(books, (first, second) -> Double.compare(
-                breakdowns.get(second.id).total, breakdowns.get(first.id).total));
-
-        addRecommendationColorControls(rows, recommendationDetailsVisible);
-        if (books.isEmpty()) {
-            rows.addView(emptyLabel("کتاب ناتمام برای بررسی وجود ندارد"),
-                    new LinearLayout.LayoutParams(-1, dp(90)));
-        } else {
-            for (BookRecommendationEngine.Book book : books) {
-                addRecommendationWeightCard(rows, book, breakdowns.get(book.id), maxTotal,
-                        maxGenre, maxAuthor, maxRating, recommendationDetailsVisible);
-            }
-        }
-        detailsButton.setOnClickListener(v -> {
-            recommendationDetailsVisible = !recommendationDetailsVisible;
-            showRecommendationSettings();
-        });
-        applyPressScale(detailsButton);
-        appColumn.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+    void showRecommendationWeightsHelp() {
+        recommendationUi().showWeightsHelp();
     }
 
-    private void showRecommendationWeightsHelp() {
-        TextView help = text("کتاب‌های ناتمام بر اساس وزن نهایی از بالا به پایین مرتب شده‌اند. وزن هر کتاب از ژانرهای آن، ترجیح نویسنده و امتیاز دستی همان کتاب ساخته می‌شود. امتیاز ستاره‌ای یک کتاب فقط وزن همان کتاب را تغییر می‌دهد.",
-                14, TEXT);
-        help.setGravity(Gravity.CENTER);
-        help.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("راهنمای وزن‌ها")
-                .setView(dialogPadding(help)).setPositiveButton("بستن", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
+    void showRecommendationDescription(String value) {
+        recommendationUi().showDescription(value);
     }
-
-    private void addRecommendationColorControls(LinearLayout parent, boolean visible) {
-        if (!visible) return;
-        String[] keys = {"genre", "author", "rating"};
-        String[] labels = {"ژانر", "نویسنده", "امتیاز"};
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER);
-        for (int i = 0; i < keys.length; i++) {
-            final String key = keys[i];
-            TextView chip = text(labels[i], 11, contrastOnAccent());
-            chip.setGravity(Gravity.CENTER);
-            chip.setPadding(dp(7), 0, dp(7), 0);
-            chip.setBackground(roundDrawable(recommendationMetricColor(key), Color.TRANSPARENT, 12));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(32), 1);
-            params.leftMargin = dp(3);
-            params.rightMargin = dp(3);
-            row.addView(chip, params);
-            chip.setOnClickListener(v -> {
-                int next = (getRecommendationMetricColorIndex(key) + 1) % RECOMMENDATION_METRIC_COLORS.length;
-                recommendationState.edit().putInt("metric_color_" + key, next).apply();
-                showRecommendationSettings();
-            });
-            applyPressScale(chip, .98f);
-        }
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(38));
-        params.bottomMargin = dp(5);
-        parent.addView(row, params);
-    }
-
-    private int getRecommendationMetricColorIndex(String key) {
-        int defaultIndex = "genre".equals(key) ? 0 : "author".equals(key) ? 1 : 2;
-        return Math.max(0, Math.min(RECOMMENDATION_METRIC_COLORS.length - 1,
-                recommendationState.getInt("metric_color_" + key, defaultIndex)));
-    }
-
-    private int recommendationMetricColor(String key) {
-        return RECOMMENDATION_METRIC_COLORS[getRecommendationMetricColorIndex(key)];
-    }
-
-    private void addRecommendationWeightCard(LinearLayout parent, BookRecommendationEngine.Book book,
-            BookRecommendationEngine.WeightBreakdown parts, double maxTotal, double maxGenre,
-            double maxAuthor, double maxRating, boolean showDetails) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(12), dp(9), dp(12), dp(9));
-        card.setBackground(roundDrawable(SURFACE, 0xFF40384A, 14));
-        TextView title = text(book.title, 14, TEXT);
-        title.setSingleLine(true);
-        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        TextView score = text(String.format(Locale.US, "%.2f", parts.total), 12, MUTED);
-        LinearLayout heading = new LinearLayout(this);
-        heading.setGravity(Gravity.CENTER_VERTICAL);
-        heading.addView(title, new LinearLayout.LayoutParams(0, dp(30), 1));
-        heading.addView(score, new LinearLayout.LayoutParams(-2, dp(30)));
-        card.addView(heading);
-        addWeightTube(card, parts.total, maxTotal, PURPLE, 8);
-        if (showDetails) {
-            addWeightFactor(card, "ژانر", parts.genre, maxGenre, recommendationMetricColor("genre"));
-            addWeightFactor(card, "نویسنده", parts.author, maxAuthor, recommendationMetricColor("author"));
-            addWeightFactor(card, "امتیاز", parts.rating, maxRating, recommendationMetricColor("rating"));
-        }
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.bottomMargin = dp(8);
-        parent.addView(card, params);
-    }
-
-    private void addWeightFactor(LinearLayout card, String label, double value, double max, int color) {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name = text(label, 10, MUTED);
-        row.addView(name, new LinearLayout.LayoutParams(dp(42), dp(18)));
-        FrameLayout tube = new FrameLayout(this);
-        tube.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 8));
-        View fill = new View(this);
-        fill.setBackground(roundDrawable(color, Color.TRANSPARENT, 8));
-        tube.addView(fill, new FrameLayout.LayoutParams(0, -1, Gravity.LEFT));
-        TextView amount = text(String.format(Locale.US, "%.2f", value), 10, MUTED);
-        LinearLayout.LayoutParams tubeParams = new LinearLayout.LayoutParams(0, dp(8), 1);
-        tubeParams.leftMargin = dp(5);
-        tubeParams.rightMargin = dp(5);
-        row.addView(tube, tubeParams);
-        row.addView(amount, new LinearLayout.LayoutParams(dp(38), dp(18)));
-        tube.post(() -> {
-            int width = tube.getWidth();
-            FrameLayout.LayoutParams fillParams = (FrameLayout.LayoutParams) fill.getLayoutParams();
-            fillParams.width = max <= 0 ? 0 : Math.max(0, Math.min(width, (int) Math.round(width * value / max)));
-            fill.setLayoutParams(fillParams);
-        });
-        card.addView(row);
-    }
-
-    private void addWeightTube(LinearLayout card, double value, double max, int color, int heightDp) {
-        FrameLayout tube = new FrameLayout(this);
-        tube.setBackground(roundDrawable(SURFACE_ALT, Color.TRANSPARENT, 8));
-        View fill = new View(this);
-        fill.setBackground(roundDrawable(color, Color.TRANSPARENT, 8));
-        tube.addView(fill, new FrameLayout.LayoutParams(0, -1, Gravity.LEFT));
-        tube.post(() -> {
-            int width = tube.getWidth();
-            FrameLayout.LayoutParams fillParams = (FrameLayout.LayoutParams) fill.getLayoutParams();
-            fillParams.width = max <= 0 ? 0 : Math.max(dp(3), Math.min(width, (int) Math.round(width * value / max)));
-            fill.setLayoutParams(fillParams);
-        });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(heightDp));
-        params.topMargin = dp(2);
-        card.addView(tube, params);
-    }
-
-    private void showRecommendationDescription(String value) {
-        TextView description = text(value, 15, TEXT);
-        description.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        description.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_RTL);
-        description.setPadding(dp(14), dp(12), dp(14), dp(12));
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setHorizontalScrollBarEnabled(false);
-        scroll.addView(description, new ScrollView.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("توضیحات کتاب")
-                .setView(dialogPadding(scroll)).setPositiveButton("بستن", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
     private void showStatistics() {
         if (statisticsScreen == null) statisticsScreen = new StatisticsScreen(this);
         statisticsScreen.show();
@@ -3933,7 +3607,7 @@ public final class MainActivity extends Activity {
         if (recommendationStateStore != null) recommendationStateStore.rebuildWeights(allGenres());
     }
 
-    private List<BookRecommendationEngine.Book> recommendationBooks(Boolean currentlyReading,
+    List<BookRecommendationEngine.Book> recommendationBooks(Boolean currentlyReading,
                                                                       Set<Long> excludedIds) {
         List<BookRecommendationEngine.Book> result = new ArrayList<>();
         JSONArray books = library.optJSONArray("books");
@@ -4007,7 +3681,7 @@ public final class MainActivity extends Activity {
         return LibraryMetrics.displayBookTitle(book);
     }
 
-    private JSONObject findBookByRecommendationId(long recommendationId) {
+    JSONObject findBookByRecommendationId(long recommendationId) {
         JSONArray books = library.optJSONArray("books");
         if (books == null) return null;
         for (int i = 0; i < books.length(); i++) {
@@ -4021,7 +3695,7 @@ public final class MainActivity extends Activity {
         if (recommendationStateStore != null) recommendationStateStore.load();
     }
 
-    private void persistRecommendationState() {
+    void persistRecommendationState() {
         if (recommendationStateStore != null) recommendationStateStore.save();
     }
 
@@ -4572,11 +4246,11 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void showBookInfo(JSONObject book) {
+    void showBookInfo(JSONObject book) {
         new BookInfoScreen(this).show(book);
     }
 
-    private LinearLayout createBookRatingControl(JSONObject book) {
+    LinearLayout createBookRatingControl(JSONObject book) {
         return new BookInfoScreen(this).createBookRatingControl(book);
     }
 
@@ -6854,7 +6528,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private JSONArray allGenres() {
+    JSONArray allGenres() {
         JSONArray genres = library.optJSONArray("genres"); JSONArray result = new JSONArray();
         List<String> values = new ArrayList<>(); if (genres != null) for (int i = 0; i < genres.length(); i++) values.add(genres.optString(i));
         Collections.sort(values, String.CASE_INSENSITIVE_ORDER); for (String value : values) result.put(value); return result;
@@ -7150,7 +6824,7 @@ public final class MainActivity extends Activity {
         uiComponents.applyPressScale(view, pressedScale);
     }
 
-    private TextView emptyLabel(String value) {
+    TextView emptyLabel(String value) {
         return uiComponents.emptyLabel(value);
     }
 
@@ -7182,7 +6856,7 @@ public final class MainActivity extends Activity {
         return uiComponents.fieldParams();
     }
 
-    private View dialogPadding(View child) {
+    View dialogPadding(View child) {
         return uiComponents.dialogPadding(child);
     }
 
@@ -7206,7 +6880,7 @@ public final class MainActivity extends Activity {
         };
     }
 
-    private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
+    void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
 
     void putJson(JSONObject object, String key, Object value) {
         try { object.put(key, value); }
