@@ -92,7 +92,7 @@ public final class MainActivity extends Activity {
     static final int REQUEST_FOLDER = 41;
     private static final int REQUEST_COVER = 42;
     static final int REQUEST_COLLOQUIALIZER = 43;
-    private static final int REQUEST_BOOK_JSON = 44;
+    static final int REQUEST_BOOK_JSON = 44;
     private static final int REQUEST_CHAPTER_TEXT = 45;
     private static final int SWIPE_MIN_DISTANCE = 50;
     private static final int SWIPE_THRESHOLD_VELOCITY = 100;
@@ -145,7 +145,7 @@ public final class MainActivity extends Activity {
     private RoomLibraryStore libraryStore;
     private ReadingPositionStore readingPositionStore;
     private ResumeReadingPrompt resumeReadingPrompt;
-    private BookJsonPromptStore bookJsonPromptStore;
+    BookJsonPromptStore bookJsonPromptStore;
     Typeface vazir;
     JSONObject library = new JSONObject();
     String page = "dashboard";
@@ -197,8 +197,8 @@ public final class MainActivity extends Activity {
     private String reorderOriginalLibrary;
     private boolean reorderChanged;
     private View coverRemoveButton;
-    private BookJsonImportTarget activeBookJsonImportTarget;
-    private AlertDialog bookJsonInputDialog;
+    BookJsonImportTarget activeBookJsonImportTarget;
+    AlertDialog bookJsonInputDialog;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateBatteryIndicator(intent); }
     };
@@ -252,6 +252,7 @@ public final class MainActivity extends Activity {
     private ChapterListScreen chapterListScreen;
     private BookLibraryScreen bookLibraryScreen;
     private ColloquializerSettingsScreen colloquializerSettingsScreen;
+    private BookJsonImportScreen bookJsonImportScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -3642,353 +3643,24 @@ public final class MainActivity extends Activity {
         void save(LinkedHashSet<String> selected, ArrayList<String> available);
     }
 
-    private void chooseBookJson() {
-        if (activeBookJsonImportTarget == null) {
-            toast("فرم کتاب باز نیست.");
-            return;
-        }
-        showBookJsonInputDialog();
+    private BookJsonImportScreen bookJsonImportUi() {
+        if (bookJsonImportScreen == null) bookJsonImportScreen = new BookJsonImportScreen(this);
+        return bookJsonImportScreen;
     }
 
-    private void showBookJsonInputDialog() {
-        EditText input = edit("محتوای JSON را اینجا بچسبان", true);
-        input.setSingleLine(false);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        input.setMinLines(8);
-        input.setMaxLines(12);
-        input.setHorizontallyScrolling(false);
-        input.setVerticalScrollBarEnabled(false);
-        input.setGravity(Gravity.TOP | Gravity.LEFT);
-        input.setTextDirection(View.TEXT_DIRECTION_LTR);
-        input.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
-        input.setPadding(dp(14), dp(12), dp(14), dp(12));
-        input.setBackground(roundDrawable(SURFACE_ALT, 0xFF352D3F, 15));
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("ورود اطلاعات JSON")
-                .setView(dialogPadding(input))
-                .setNegativeButton("لغو", null)
-                .setNeutralButton("انتخاب فایل موجود", null)
-                .setPositiveButton("اعمال متن", null)
-                .create();
-        bookJsonInputDialog = dialog;
-        dialog.setOnDismissListener(ignored -> {
-            if (bookJsonInputDialog == dialog) bookJsonInputDialog = null;
-        });
-        dialog.setOnShowListener(ignored -> {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> openBookJsonFilePicker());
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                BookJsonData imported;
-                try {
-                    imported = BookJsonParser.parseText(input.getText().toString());
-                } catch (Exception error) {
-                    toast("JSON معتبر نیست؛ متن را بررسی کن.");
-                    return;
-                }
-                BookJsonImportTarget target = activeBookJsonImportTarget;
-                if (target == null) {
-                    toast("فرم کتاب بسته شده است.");
-                    dialog.dismiss();
-                    return;
-                }
-                dialog.dismiss();
-                showBookJsonImportPreview(imported, target);
-            });
-        });
-        dialog.show();
-        styleDialogWindow(dialog);
-        if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    }
+    private void chooseBookJson() { bookJsonImportUi().chooseBookJson(); }
 
-    private void openBookJsonFilePicker() {
-        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        picker.addCategory(Intent.CATEGORY_OPENABLE);
-        picker.setType("*/*");
-        picker.putExtra(Intent.EXTRA_MIME_TYPES,
-                new String[]{"application/json", "text/json", "text/plain"});
-        picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        try {
-            startActivityForResult(picker, REQUEST_BOOK_JSON);
-        } catch (Exception error) {
-            toast("انتخاب فایل JSON در دسترس نیست.");
-        }
-    }
+    private void showBookJsonInputDialog() { bookJsonImportUi().showInputDialog(); }
 
-    private void importBookJson(Uri uri) {
-        try (InputStream input = getContentResolver().openInputStream(uri)) {
-            if (input == null) throw new IOException("Empty input stream");
-            BookJsonData imported = BookJsonParser.parseText(readUtf8(input));
-            if (activeBookJsonImportTarget == null) {
-                toast("فرم کتاب بسته شده است.");
-                return;
-            }
-            showBookJsonImportPreview(imported, activeBookJsonImportTarget);
-        } catch (Exception error) {
-            toast("خواندن JSON ناموفق بود؛ ساختار فایل را بررسی کن.");
-        }
-    }
+    private void importBookJson(Uri uri) { bookJsonImportUi().importJson(uri); }
 
-    private String readUtf8(InputStream input) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[4096];
-        int read;
-        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
-        return new String(output.toByteArray(), StandardCharsets.UTF_8);
-    }
+    void showBookJsonPromptSettings() { bookJsonImportUi().showPromptSettings(); }
 
-    private void showBookJsonImportPreview(BookJsonData data, BookJsonImportTarget target) {
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(12), dp(6), dp(12), dp(8));
-        addJsonPreviewSection(content, "دریافتی از JSON", PURPLE);
-        addJsonPreviewRow(content, "نام کتاب", data.hasTitle ? data.title : target.title.getText().toString(), data.hasTitle);
-        addJsonPreviewRow(content, "نام نویسنده", data.hasAuthor ? data.author : target.author.getText().toString(), data.hasAuthor);
-        addJsonPreviewRow(content, "لینک جلد", data.hasCoverUrl ? data.coverUrl : "بدون تغییر", data.hasCoverUrl);
-        addJsonPreviewRow(content, "توضیحات", data.hasDescription ? shortBookPreview(data.description)
-                : target.description[0], data.hasDescription);
-        String currentGenres = android.text.TextUtils.join("، ", target.selectedGenres);
-        addJsonPreviewRow(content, "ژانرها", data.hasGenres
-                ? android.text.TextUtils.join("، ", data.genres) : currentGenres, data.hasGenres);
-        addJsonPreviewRow(content, "تعداد Chapter", data.hasChapterCount
-                ? Integer.toString(data.chapterCount) : target.count.getText().toString(), data.hasChapterCount);
-        String collectionId = target.collectionId[0];
-        JSONObject currentCollection = findCollectionById(collectionId);
-        String collectionValue = currentCollection == null ? "سایر" : currentCollection.optString("title", "سایر");
-        addJsonPreviewRow(content, "مجموعه", data.hasCollection && !data.collection.isEmpty()
-                ? data.collection : collectionValue, data.hasCollection && !data.collection.isEmpty());
-        addJsonPreviewRow(content, "شماره در مجموعه", data.hasSeriesNumber
-                ? Integer.toString(data.seriesNumber) : target.seriesNumber.getText().toString(), data.hasSeriesNumber);
-
-        TextView legend = text("بنفش: مقدار استخراج‌شده از JSON   ·   خاکستری: مقدار فعلی فرم", 12, MUTED);
-        legend.setGravity(Gravity.CENTER);
-        legend.setPadding(dp(4), dp(8), dp(4), dp(2));
-        content.addView(legend, new LinearLayout.LayoutParams(-1, -2));
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setFillViewport(false);
-        scroll.addView(content);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("بازبینی اطلاعات JSON")
-                .setView(dialogPadding(scroll)).setNegativeButton("لغو", null)
-                .setPositiveButton("اعمال تغییرات", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(32), dp(500)),
-                    Math.min(getResources().getDisplayMetrics().heightPixels - dp(160), dp(540)));
-        }
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            dialog.dismiss();
-            applyBookJson(data, target);
-        });
-    }
-
-    private void addJsonPreviewSection(LinearLayout parent, String label, int color) {
-        TextView heading = text(label, 14, color);
-        heading.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        heading.setPadding(dp(2), dp(5), dp(2), dp(6));
-        parent.addView(heading, new LinearLayout.LayoutParams(-1, -2));
-    }
-
-    private void addJsonPreviewRow(LinearLayout parent, String label, String value, boolean extracted) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(12), dp(8), dp(12), dp(8));
-        row.setBackground(roundDrawable(SURFACE, extracted ? PURPLE : 0xFF39343F, 11));
-        LinearLayout titleRow = new LinearLayout(this);
-        titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name = text(label, 13, TEXT);
-        titleRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView source = text(extracted ? "JSON" : "فعلی", 11, extracted ? PURPLE : MUTED);
-        titleRow.addView(source);
-        row.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
-        TextView content = text(value == null || value.trim().isEmpty() ? "خالی" : value.trim(), 14,
-                value == null || value.trim().isEmpty() ? MUTED : TEXT);
-        content.setGravity(Gravity.RIGHT);
-        content.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
-        content.setMaxLines(4);
-        content.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(-1, -2);
-        valueParams.topMargin = dp(4);
-        row.addView(content, valueParams);
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
-        rowParams.bottomMargin = dp(6);
-        parent.addView(row, rowParams);
-    }
-
-    private String shortBookPreview(String value) {
-        String preview = value == null ? "" : value.replace('\n', ' ').trim();
-        if (preview.isEmpty()) return "خالی";
-        return preview.length() <= 150 ? preview : preview.substring(0, 147) + "…";
-    }
-
-    private String findCollectionIdByTitle(String title) {
-        JSONArray collections = collectionArray();
-        for (int i = 0; i < collections.length(); i++) {
-            JSONObject collection = collections.optJSONObject(i);
-            if (collection != null && collection.optString("title", "").trim().equalsIgnoreCase(title.trim())) {
-                return collection.optString("id", "other");
-            }
-        }
-        return null;
-    }
-
-    private String createCollectionForBookJson(String title, BookJsonImportTarget target) {
-        String collectionTitle = TextNormalization.titleCaseWords(title);
-        if (collectionTitle.isEmpty()) return null;
-        String existingId = findCollectionIdByTitle(collectionTitle);
-        if (existingId != null) return existingId;
-        String id = UUID.randomUUID().toString();
-        try {
-            collectionArray().put(new JSONObject().put("id", id).put("title", collectionTitle)
-                    .put("orderIndex", LibraryOrdering.nextOrderIndex(collectionArray())));
-            target.createdCollectionIds.add(id);
-            return id;
-        } catch (JSONException error) {
-            return null;
-        }
-    }
+    private void showBookJsonPrompt() { bookJsonImportUi().showPrompt(); }
 
     private void removeJsonCreatedCollections(BookJsonImportTarget target) {
-        if (target == null || target.createdCollectionIds.isEmpty()) return;
-        JSONArray current = collectionArray();
-        JSONArray kept = new JSONArray();
-        boolean removed = false;
-        for (int i = 0; i < current.length(); i++) {
-            JSONObject collection = current.optJSONObject(i);
-            if (collection != null && target.createdCollectionIds.contains(collection.optString("id"))) {
-                removed = true;
-            } else if (collection != null) {
-                kept.put(collection);
-            }
-        }
-        target.createdCollectionIds.clear();
-        if (!removed) return;
-        try {
-            library.put("collections", kept);
-        } catch (JSONException ignored) {
-            return;
-        }
-        saveLibrary();
+        bookJsonImportUi().removeCreatedCollections(target);
     }
-
-    private void applyBookJson(BookJsonData data, BookJsonImportTarget target) {
-        if (activeBookJsonImportTarget != target) {
-            toast("فرم کتاب بسته شده است.");
-            return;
-        }
-        if (data.hasTitle) target.title.setText(data.title);
-        if (data.hasAuthor) target.author.setText(data.author);
-        if (data.hasDescription) {
-            target.description[0] = data.description;
-            updateBookDialogEntryButton(target.descriptionEntry, descriptionButtonSummary(data.description));
-        }
-        if (data.hasChapterCount && data.chapterCount > 0 && data.chapterCount <= 5000) {
-            target.count.setText(Integer.toString(data.chapterCount));
-        }
-        if (data.hasSeriesNumber && data.seriesNumber > 0 && data.seriesNumber <= 9999) {
-            target.seriesNumber.setText(Integer.toString(data.seriesNumber));
-        }
-        if (data.hasGenres) {
-            target.selectedGenres.clear();
-            for (String raw : data.genres) addGenreSelection(raw,
-                    target.availableGenres, target.selectedGenres);
-            updateBookDialogEntryButton(target.genreEntry, genreButtonSummary(target.selectedGenres));
-        }
-        if (data.hasCollection && !data.collection.isEmpty()) {
-            String matchingCollection = findCollectionIdByTitle(data.collection);
-            if (matchingCollection == null) matchingCollection = createCollectionForBookJson(data.collection, target);
-            if (matchingCollection != null) {
-                target.collectionId[0] = matchingCollection;
-                target.refreshCollectionChoice.run();
-            }
-        }
-        if (data.hasCoverUrl) downloadBookCover(data.coverUrl, target);
-        toast("اطلاعات اضافه شد؛ جزئیات را بررسی کن.");
-        target.showDetails.run();
-    }
-
-    void showBookJsonPromptSettings() {
-        EditText promptEditor = edit("متن پرایمت", true);
-        promptEditor.setText(bookJsonPromptStore.load());
-        promptEditor.setMinLines(12);
-        promptEditor.setMaxLines(22);
-        promptEditor.setGravity(Gravity.RIGHT | Gravity.TOP);
-        promptEditor.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
-        promptEditor.setVerticalScrollBarEnabled(true);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("متن پرایمت ورود JSON")
-                .setView(dialogPadding(promptEditor))
-                .setNegativeButton("لغو", null)
-                .setNeutralButton("پیش‌فرض", null)
-                .setPositiveButton("ذخیره", null)
-                .create();
-        dialog.setOnShowListener(ignored -> {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v ->
-                    promptEditor.setText(bookJsonPromptStore.defaultPrompt()));
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String value = promptEditor.getText().toString().trim();
-                if (value.isEmpty()) {
-                    promptEditor.setError("متن پرایمت نمی‌تواند خالی باشد");
-                    return;
-                }
-                bookJsonPromptStore.save(value);
-                dialog.dismiss();
-                toast("متن پرایمت ذخیره شد.");
-            });
-        });
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    }
-
-    private void showBookJsonPrompt() {
-        String prompt = bookJsonPromptStore.load();
-        if (prompt.trim().isEmpty()) {
-            toast("متن پرایمت خالی است؛ آن را در تنظیمات عمومی بنویس.");
-            return;
-        }
-        BookJsonImportTarget target = activeBookJsonImportTarget;
-        if (target != null) {
-            prompt = bookJsonPromptStore.fillField(prompt, "عنوان کتاب:", target.title.getText().toString());
-            prompt = bookJsonPromptStore.fillField(prompt, "نویسنده:", target.author.getText().toString());
-            JSONObject collection = "other".equals(target.collectionId[0])
-                    ? null : findCollectionById(target.collectionId[0]);
-            prompt = bookJsonPromptStore.fillField(prompt, "مجموعه:",
-                    collection == null ? "" : collection.optString("title", ""));
-        }
-        final String promptText = prompt;
-        TextView content = text(promptText, 14, TEXT);
-        content.setTextIsSelectable(true);
-        content.setGravity(Gravity.RIGHT | Gravity.TOP);
-        content.setPadding(dp(14), dp(12), dp(14), dp(12));
-        setRtlTextAlignment(content);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.addView(content);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("نمونه برای هوش مصنوعی")
-                .setView(dialogPadding(scroll))
-                .setNegativeButton("بستن", null)
-                .setNeutralButton("اشتراک‌گذاری", (ignored, which) -> shareBookPrompt(promptText))
-                .setPositiveButton("کپی متن", (ignored, which) -> {
-                    copyToClipboard("book-json-prompt", promptText);
-                    toast("متن نمونه کپی شد.");
-                })
-                .create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
-    private void shareBookPrompt(String prompt) {
-        Intent share = new Intent(Intent.ACTION_SEND);
-        share.setType("text/plain");
-        share.putExtra(Intent.EXTRA_SUBJECT, "قالب اطلاعات کتاب برای JSON");
-        share.putExtra(Intent.EXTRA_TEXT, prompt);
-        try { startActivity(Intent.createChooser(share, "اشتراک‌گذاری نمونه")); }
-        catch (Exception error) { toast("اشتراک‌گذاری در دسترس نیست."); }
-    }
-
     private void showBookDetailsDialog(LinearLayout detailsPanel) {
         if (detailsPanel == null || isFinishing()) return;
         detailsPanel.setVisibility(View.VISIBLE);
@@ -4054,18 +3726,18 @@ public final class MainActivity extends Activity {
         return button;
     }
 
-    private void updateBookDialogEntryButton(View button, String summary) {
+    void updateBookDialogEntryButton(View button, String summary) {
         if (button != null && button.getTag() instanceof TextView) {
             ((TextView) button.getTag()).setText(summary);
         }
     }
 
-    private String genreButtonSummary(Set<String> selected) {
+    String genreButtonSummary(Set<String> selected) {
         if (selected.isEmpty()) return "هیچ ژانری انتخاب نشده";
         return android.text.TextUtils.join(" · ", selected);
     }
 
-    private String descriptionButtonSummary(String value) {
+    String descriptionButtonSummary(String value) {
         String summary = value == null ? "" : value.replace('\n', ' ').trim();
         return summary.isEmpty() ? "برای نوشتن توضیحات بزنید" : summary;
     }
@@ -4107,7 +3779,7 @@ public final class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    private void addGenreSelection(String raw, List<String> available, Set<String> selected) {
+    void addGenreSelection(String raw, List<String> available, Set<String> selected) {
         String value = canonicalGenre(TextNormalization.titleCaseWords(raw));
         if (value.isEmpty()) return;
         String[] words = value.trim().split("\\s+");
@@ -4643,7 +4315,7 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void downloadBookCover(String imageUrl, BookJsonImportTarget target) {
+    void downloadBookCover(String imageUrl, BookJsonImportTarget target) {
         if (imageUrl == null || !imageUrl.startsWith("https://") || target == null) {
             toast("لینک جلد باید HTTPS باشد.");
             return;
