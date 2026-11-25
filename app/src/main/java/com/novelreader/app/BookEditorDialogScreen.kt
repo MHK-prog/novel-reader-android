@@ -208,7 +208,7 @@ internal class BookEditorDialogScreen(private val host: MainActivity) {
             isFillViewport = false
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
-            addView(form, ScrollView.LayoutParams(-1, -2))
+            addView(form, FrameLayout.LayoutParams(-1, -2))
         }
         val dialog = AlertDialog.Builder(host)
             .setTitle(if (isNew) "افزودن کتاب" else "ویرایش کتاب")
