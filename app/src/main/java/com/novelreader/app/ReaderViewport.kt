@@ -65,7 +65,7 @@ internal class ReaderViewport(private val host: MainActivity) {
         val lineCenter = editor.top + editor.totalPaddingTop +
             (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
         val range = (readerContentHeight() - scroll.height).coerceAtLeast(0)
-        val target = (lineCenter - scroll.height * .34f).toInt().coerceIn(0, range)
+        val target = Math.round(lineCenter - scroll.height * .34f).coerceIn(0, range)
         scroll.scrollTo(0, target)
     }
 
@@ -80,7 +80,7 @@ internal class ReaderViewport(private val host: MainActivity) {
             if (contentHeight <= 0) return 0
             val scrollY = host.readerScroll?.scrollY ?: 0
             val position = ((scrollY + touchY) / contentHeight).coerceIn(0f, 1f)
-            return (chapterText.length * position).toInt().coerceIn(0, chapterText.length)
+            return Math.round(chapterText.length * position).coerceIn(0, chapterText.length)
         }
 
         val vertical = (touchY.toInt() - preview.totalPaddingTop).coerceAtLeast(0)
@@ -141,7 +141,7 @@ internal class ReaderViewport(private val host: MainActivity) {
         val scroll = host.readerScroll ?: return
         if (!host.hasPendingReaderScrollFraction) return
         val range = (readerContentHeight() - scroll.height).coerceAtLeast(0)
-        scroll.scrollTo(0, (range * host.pendingReaderScrollFraction).toInt())
+        scroll.scrollTo(0, Math.round(range * host.pendingReaderScrollFraction))
         host.hasPendingReaderScrollFraction = false
     }
 

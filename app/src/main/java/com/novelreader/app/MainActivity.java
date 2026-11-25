@@ -110,7 +110,7 @@ public final class MainActivity extends Activity {
     boolean lightTheme;
     int accentIndex;
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    final Handler handler = new Handler(Looper.getMainLooper());
     final Set<String> activeGenreFilter = new HashSet<>();
     final Set<String> selectedBookIds = new LinkedHashSet<>();
     final Set<String> selectedCollectionIds = new LinkedHashSet<>();
@@ -138,7 +138,7 @@ public final class MainActivity extends Activity {
     ChapterColloquializerProcessor chapterColloquializerProcessor;
     NovelStorage storage;
     private RoomLibraryStore libraryStore;
-    private ReadingPositionStore readingPositionStore;
+    ReadingPositionStore readingPositionStore;
     private ResumeReadingPrompt resumeReadingPrompt;
     BookJsonPromptStore bookJsonPromptStore;
     Typeface vazir;
@@ -161,7 +161,7 @@ public final class MainActivity extends Activity {
     private String activeGenre = "";
     int activeChapter;
     String chapterText = "";
-    private JSONObject readerRestoreState;
+    JSONObject readerRestoreState;
     boolean chapterEnd;
     boolean chapterDirty;
     boolean chapterColloquialized;
@@ -251,8 +251,9 @@ public final class MainActivity extends Activity {
     private BookEditorDialogScreen bookEditorDialogScreen;
     private ChapterReaderActions chapterReaderActions;
     private ReaderViewport readerViewport;
-    private View readerProgress;
-    private int lastReaderProgressWidth = -1;
+    private ReaderProgressController readerProgressController;
+    View readerProgress;
+    int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
     private FrameLayout quickScrollButton;
     private NativeIconView quickScrollIcon;
@@ -267,7 +268,7 @@ public final class MainActivity extends Activity {
     private RecommendationStateStore recommendationStateStore;
     ReadingStatsStore readingStats;
     private StatisticsScreen statisticsScreen;
-    private ReadingSessionTimer readingSessionTimer;
+    ReadingSessionTimer readingSessionTimer;
     boolean recommendationDetailsVisible;
     final Set<Long> sessionRejectedRecommendationIds = new HashSet<>();
     boolean recommendationCurrentReadingMode;
@@ -2845,7 +2846,7 @@ public final class MainActivity extends Activity {
     }
     private void afterReaderLayout(Runnable action) { readerViewportUi().afterLayout(action); }
     private void leaveReaderEditMode() { readerViewportUi().leaveEditMode(); }
-    private int readerContentHeight() { return readerViewportUi().readerContentHeight(); }
+    int readerContentHeight() { return readerViewportUi().readerContentHeight(); }
     float readerScrollFraction() { return readerViewportUi().scrollFraction(); }
     private void restoreReaderPositionAfterRender() { readerViewportUi().restorePositionAfterRender(); }
 
@@ -3164,7 +3165,7 @@ public final class MainActivity extends Activity {
         return id.isEmpty() ? null : "chapter-" + id + "-original.txt";
     }
 
-    private void rememberRecentReading() {
+    void rememberRecentReading() {
         JSONObject book = activeBook();
         JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null || readingPositionStore == null) return;
@@ -3181,24 +3182,11 @@ public final class MainActivity extends Activity {
     }
 
     void persistCurrentReadingPosition(boolean commit) {
-        JSONObject book = activeBook();
-        JSONObject chapter = activeChapterObject();
-        if (book == null || chapter == null || readerScroll == null || readingPositionStore == null) return;
-        int viewportHeight = readerScroll.getHeight();
-        int scrollRange = Math.max(0, readerContentHeight() - viewportHeight);
-        readingPositionStore.savePosition(book.optString("id"), book.optString("collectionId", "other"),
-                ChapterCatalog.storageIndex(chapter, activeChapter), chapter, readerScroll.getScrollY(),
-                viewportHeight, scrollRange, commit);
+        readerProgressUi().persistPosition(commit);
     }
 
     int restoreSavedReadingPosition(JSONObject chapter, int scrollRange) {
-        if (readingPositionStore == null || chapter == null) return 0;
-        JSONObject savedState = readerRestoreState == null ? chapter : readerRestoreState;
-        int restored = readingPositionStore.restoreScroll(activeBookId,
-                ChapterCatalog.storageIndex(chapter, activeChapter), savedState,
-                readerScroll == null ? 0 : readerScroll.getHeight(), scrollRange);
-        readerRestoreState = null;
-        return restored;
+        return readerProgressUi().restorePosition(chapter, scrollRange);
     }
 
     private void scheduleSave() {
@@ -3208,59 +3196,28 @@ public final class MainActivity extends Activity {
     }
 
     void scheduleProgressSave() {
-        if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
-        progressRunnable = () -> {
-            if ("reader".equals(page)) {
-                rememberRecentReading();
-                saveLibrary();
-            }
-        };
-        handler.postDelayed(progressRunnable, 900);
+        readerProgressUi().scheduleProgressSave();
     }
 
     void updateProgress() {
-        if (chapterEditor == null || readerScroll == null || readerProgress == null) return;
-        JSONObject chapter = activeChapterObject(); if (chapter == null) return;
-        boolean finishedWriting = chapterEnd;
-        if (chapter.optBoolean("end", false) != finishedWriting) putJson(chapter, "end", finishedWriting);
-        if (!finishedWriting && "reader".equals(page)) stopReadingTimer();
-        int contentHeight = readerContentHeight();
-        int range = Math.max(0, contentHeight - readerScroll.getHeight());
-        boolean hasText = !chapterText.trim().isEmpty();
-        float rawPercent = range == 0 ? 100f : readerScroll.getScrollY() * 100f / range;
-        int percent = !finishedWriting || !hasText ? 0
-                : Math.max(0, Math.min(100, Math.round(rawPercent)));
-        if (finishedWriting && hasText && rawPercent > 97f) percent = 100;
-        putJson(chapter, "percent", percent);
-        putJson(chapter, "done", finishedWriting && hasText && percent >= 100);
-        putJson(chapter, "manualDone", false);
-        putJson(chapter, "scroll", readerScroll.getScrollY());
-        putJson(chapter, "scrollRange", range);
-        putJson(chapter, "scrollViewportHeight", readerScroll.getHeight());
-        putJson(chapter, "scrollFraction", range == 0 ? 0f : readerScroll.getScrollY() / (float) range);
-        int width = readerProgress.getParent() instanceof View ? ((View) readerProgress.getParent()).getWidth() : 0;
-        int progressWidth = Math.round(width * percent / 100f);
-        if (progressWidth != lastReaderProgressWidth) {
-            ViewGroup.LayoutParams lp = readerProgress.getLayoutParams();
-            lp.width = progressWidth;
-            readerProgress.setLayoutParams(lp);
-            lastReaderProgressWidth = progressWidth;
-        }
-        if (chapterAdapter != null && "chapters".equals(page)) chapterAdapter.notifyDataSetChanged();
+        readerProgressUi().updateProgress();
     }
 
     private void startReadingTimer() {
-        if (readingSessionTimer != null) {
-            readingSessionTimer.markActivity("reader".equals(page) && chapterEnd);
-        }
+        readerProgressUi().startReadingTimer();
     }
 
     private void stopReadingTimer() {
-        if (readingSessionTimer != null) readingSessionTimer.stop();
+        readerProgressUi().stopReadingTimer();
     }
 
     private void markReadingActivity() {
-        startReadingTimer();
+        readerProgressUi().markReadingActivity();
+    }
+
+    private ReaderProgressController readerProgressUi() {
+        if (readerProgressController == null) readerProgressController = new ReaderProgressController(this);
+        return readerProgressController;
     }
     private void showQuickScroll(boolean toTop) {
         if (quickScrollButton == null || chapterEditor == null || readerScroll == null) return;
