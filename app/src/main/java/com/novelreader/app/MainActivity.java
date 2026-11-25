@@ -91,7 +91,7 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     static final int REQUEST_FOLDER = 41;
     private static final int REQUEST_COVER = 42;
-    private static final int REQUEST_COLLOQUIALIZER = 43;
+    static final int REQUEST_COLLOQUIALIZER = 43;
     private static final int REQUEST_BOOK_JSON = 44;
     private static final int REQUEST_CHAPTER_TEXT = 45;
     private static final int SWIPE_MIN_DISTANCE = 50;
@@ -134,7 +134,7 @@ public final class MainActivity extends Activity {
             new BookRecommendationEngine.UserPreferences();
     final BookRecommendationEngine recommendationEngine =
             new BookRecommendationEngine(recommendationPreferences);
-    private final ExecutorService colloquializerExecutor = Executors.newSingleThreadExecutor();
+    final ExecutorService colloquializerExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
     private BookCoverStore coverStore;
     private BookCoverDownloader coverDownloader;
@@ -186,7 +186,7 @@ public final class MainActivity extends Activity {
     private TextView batteryPercentView;
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
-    private ColloquializerStore colloquializerStore;
+    ColloquializerStore colloquializerStore;
     private FrameLayout readerActionButton;
     private NativeIconView readerActionIcon;
     private ProgressBar readerActionSpinner;
@@ -251,6 +251,7 @@ public final class MainActivity extends Activity {
     private CollectionScreens collectionScreens;
     private ChapterListScreen chapterListScreen;
     private BookLibraryScreen bookLibraryScreen;
+    private ColloquializerSettingsScreen colloquializerSettingsScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -1015,177 +1016,25 @@ public final class MainActivity extends Activity {
         drawerSettingsAnimator.start();
     }
 
-    private void showColloquializer() {
-        setPage("colloquializer");
-        appColumn.removeAllViews();
-        animatePageTransition();
-        appColumn.addView(makeHeader("محاوره‌ای‌ساز", "", "menu", "help", this::openDrawer,
-                this::showColloquializerHelp, 0, 68, true));
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(8), dp(18), dp(3));
-        boolean installed = colloquializerStore.isInstalled();
-        content.addView(textButton("انتخاب فایل JSON", "scan_text", PURPLE,
-                this::chooseColloquializerRules), fieldParams());
-        addColloquializerControls(content);
-        if (installed) {
-            try {
-                ArrayList<ColloquializerRule> rules = readColloquializerRules(
-                        new JSONArray(colloquializerStore.readRules()));
-                addPreferenceSwitch(content, "فعال‌سازی محاوره‌ای‌ساز", "extensions",
-                        "enabled.colloquializer", true);
-                TextView count = text("", 12, MUTED);
-                count.setGravity(Gravity.CENTER);
-                EditText search = edit("جستجو در قانون‌ها", false);
-                search.setSingleLine(true);
-                content.addView(count, new LinearLayout.LayoutParams(-1, dp(27)));
-                content.addView(clearableInput(search), fieldParams());
-
-                List<Integer> visible = new ArrayList<>();
-                ListView ruleList = new ListView(this);
-                ruleList.setDivider(null);
-                ruleList.setDividerHeight(dp(7));
-                ruleList.setPadding(dp(18), dp(5), dp(18), dp(8));
-                ruleList.setClipToPadding(false);
-                ruleList.setVerticalScrollBarEnabled(false);
-                ruleList.setBackgroundColor(BG);
-                final BaseAdapter[] adapterRef = new BaseAdapter[1];
-                final Runnable[] filterRules = new Runnable[1];
-                adapterRef[0] = new BaseAdapter() {
-                    @Override public int getCount() { return visible.size(); }
-                    @Override public Object getItem(int position) { return rules.get(visible.get(position)); }
-                    @Override public long getItemId(int position) { return visible.get(position); }
-                    @Override public View getView(int position, View convertView, ViewGroup parent) {
-                        LinearLayout row;
-                        TextView sourceText;
-                        TextView replacementText;
-                        FrameLayout editButton;
-                        FrameLayout deleteButton;
-                        if (convertView == null) {
-                            row = new LinearLayout(MainActivity.this);
-                            row.setGravity(Gravity.CENTER_VERTICAL);
-                            row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-                            row.setPadding(dp(10), dp(5), dp(8), dp(5));
-                            row.setBackground(roundDrawable(SURFACE, 0xFF302A38, 13));
-
-                            LinearLayout labels = new LinearLayout(MainActivity.this);
-                            labels.setOrientation(LinearLayout.VERTICAL);
-                            labels.setGravity(Gravity.CENTER_VERTICAL);
-                            sourceText = text("", 14, TEXT);
-                            sourceText.setMaxLines(1);
-                            sourceText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                            setRtlTextAlignment(sourceText);
-                            replacementText = text("", 13, MUTED);
-                            replacementText.setMaxLines(1);
-                            replacementText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                            setRtlTextAlignment(replacementText);
-                            labels.addView(sourceText, new LinearLayout.LayoutParams(-1, 0, 1));
-                            labels.addView(replacementText, new LinearLayout.LayoutParams(-1, 0, 1));
-                            row.addView(labels, new LinearLayout.LayoutParams(0, -1, 1));
-
-                            editButton = iconButton("edit", PURPLE, false, null);
-                            deleteButton = iconButton("delete", RED, false, null);
-                            row.addView(editButton, new LinearLayout.LayoutParams(dp(44), dp(48)));
-                            row.addView(deleteButton, new LinearLayout.LayoutParams(dp(44), dp(48)));
-                            row.setTag(new View[]{sourceText, replacementText, editButton, deleteButton});
-                        } else {
-                            row = (LinearLayout) convertView;
-                            View[] views = (View[]) row.getTag();
-                            sourceText = (TextView) views[0];
-                            replacementText = (TextView) views[1];
-                            editButton = (FrameLayout) views[2];
-                            deleteButton = (FrameLayout) views[3];
-                        }
-
-                        int ruleIndex = visible.get(position);
-                        ColloquializerRule rule = rules.get(ruleIndex);
-                        sourceText.setText(rule.source);
-                        String replacementSummary = "←  " + rule.replacement;
-                        if (!rule.exceptions.isEmpty()) {
-                            replacementSummary += " · بجز " + android.text.TextUtils.join("، ", rule.exceptions);
-                        }
-                        replacementText.setText(replacementSummary);
-                        editButton.setContentDescription("ویرایش قانون " + rule.source);
-                        deleteButton.setContentDescription("حذف قانون " + rule.source);
-                        editButton.setOnClickListener(v -> showEditColloquializerRuleDialog(
-                                rules, ruleIndex, filterRules[0]));
-                        deleteButton.setOnClickListener(v -> confirmDeleteColloquializerRule(
-                                rules, ruleIndex, filterRules[0]));
-                        return row;
-                    }
-                };
-                ruleList.setAdapter(adapterRef[0]);
-                filterRules[0] = () -> {
-                    String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
-                    visible.clear();
-                    for (int i = 0; i < rules.size(); i++) {
-                        ColloquializerRule rule = rules.get(i);
-                        if (query.isEmpty() || rule.source.toLowerCase(Locale.ROOT).contains(query)
-                                || rule.replacement.toLowerCase(Locale.ROOT).contains(query)
-                                || android.text.TextUtils.join(" ", rule.exceptions).toLowerCase(Locale.ROOT).contains(query)) visible.add(i);
-                    }
-                    count.setText(visible.size() + " از " + rules.size() + " قانون");
-                    adapterRef[0].notifyDataSetChanged();
-                };
-                search.addTextChangedListener(watcher(filterRules[0]));
-                filterRules[0].run();
-
-                FrameLayout listFrame = new FrameLayout(this);
-                listFrame.addView(ruleList, new FrameLayout.LayoutParams(-1, -1));
-                TextView empty = emptyLabel("قانونی پیدا نشد.");
-                listFrame.addView(empty, new FrameLayout.LayoutParams(-1, -1));
-                ruleList.setEmptyView(empty);
-                appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
-                appColumn.addView(listFrame, new LinearLayout.LayoutParams(-1, 0, 1));
-            } catch (Exception error) {
-                content.addView(text("فایل قوانین قابل خواندن نیست.", 14, RED), fieldParams());
-                appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
-            }
-        } else {
-            TextView empty = text("هنوز فایل قوانینی انتخاب نشده است.", 14, MUTED);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(24), 0, dp(20));
-            appColumn.addView(content, new LinearLayout.LayoutParams(-1, -2));
-            appColumn.addView(empty, new LinearLayout.LayoutParams(-1, 0, 1));
+    private ColloquializerSettingsScreen colloquializerSettingsUi() {
+        if (colloquializerSettingsScreen == null) {
+            colloquializerSettingsScreen = new ColloquializerSettingsScreen(this);
         }
+        return colloquializerSettingsScreen;
     }
 
-    private void addColloquializerControls(LinearLayout content) {
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        actions.addView(textButton("افزودن جفت", "add", PURPLE,
-                this::showAddColloquializerRuleDialog), new LinearLayout.LayoutParams(0, dp(48), 1));
-        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(48), 1);
-        deleteParams.leftMargin = dp(7);
-        actions.addView(textButton("حذف قوانین", "delete", RED, () -> {
-            try {
-                colloquializerStore.saveRules("[]");
-                toast("قوانین جایگزینی پاک شدند.");
-                showColloquializer();
-            } catch (Exception error) {
-                toast("پاک کردن قوانین ناموفق بود: " + error.getMessage());
-            }
-        }), deleteParams);
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, dp(48));
-        actionParams.bottomMargin = dp(7);
-        content.addView(actions, actionParams);
+    private void showColloquializer() { colloquializerSettingsUi().show(); }
 
+    private void showColloquializerHelp() { colloquializerSettingsUi().showHelp(); }
+
+    void showColloquializerPairDialog(String title, String initialSource,
+                                      List<String> initialExceptions, boolean showChapterOption,
+                                      ColloquializerPairAction saveAction) {
+        colloquializerSettingsUi().showPairDialog(
+                title, initialSource, initialExceptions, showChapterOption, saveAction);
     }
 
-    private void showColloquializerHelp() {
-        TextView help = text("در هر قانون، عبارت مبدأ با عبارت مقصد جایگزین می‌شود. x یک رشته از حروف فارسی را می‌گیرد؛ s هر تعداد فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد؛ n وجود یا نبود «ن» را پوشش می‌دهد.\n\nاستثناها را با ویرگول جدا کن تا قانون کنار آن عبارت اجرا نشود. هر متن فقط یک‌بار و بر اساس متن اصلی پردازش می‌شود؛ مقصد یک قانون دوباره وارد پردازش نمی‌شود. هنگام محاوره‌ای‌سازی، عبارت رسمی کنار تغییر به شکل {عبارت رسمی} ثبت می‌شود و از منوی Chapter می‌توانی نشانه‌ها را برداری یا متن اصلی را برگردانی.", 14, TEXT);
-        help.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        help.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
-        help.setPadding(dp(8), dp(10), dp(8), dp(10));
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("راهنمای محاوره‌ای‌ساز")
-                .setView(dialogPadding(help))
-                .setPositiveButton("بستن", null)
-                .create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
+    private void importColloquializerRules(Uri uri) { colloquializerSettingsUi().importRules(uri); }
 
     private void setRtlTextAlignment(TextView view) {
         view.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
@@ -1194,264 +1043,6 @@ public final class MainActivity extends Activity {
         view.setTextAlignment(View.TEXT_ALIGNMENT_GRAVITY);
         view.setTextDirection(View.TEXT_DIRECTION_RTL);
     }
-
-    private ArrayList<ColloquializerRule> readColloquializerRules(JSONArray json) {
-        ArrayList<ColloquializerRule> rules = new ArrayList<>(json.length());
-        for (int i = 0; i < json.length(); i++) {
-            JSONArray pair = json.optJSONArray(i);
-            if (pair != null && pair.length() >= 2) {
-                ArrayList<String> exceptions = new ArrayList<>();
-                JSONArray exceptionArray = pair.optJSONArray(2);
-                if (exceptionArray != null) {
-                    for (int j = 0; j < exceptionArray.length(); j++) {
-                        String exception = exceptionArray.optString(j).trim();
-                        if (!exception.isEmpty()) exceptions.add(exception);
-                    }
-                }
-                rules.add(new ColloquializerRule(pair.optString(0), pair.optString(1), exceptions));
-            }
-        }
-        return rules;
-    }
-
-    private JSONArray writeColloquializerRules(List<ColloquializerRule> rules) throws JSONException {
-        JSONArray json = new JSONArray();
-        for (ColloquializerRule rule : rules) {
-            JSONArray pair = new JSONArray().put(rule.source).put(rule.replacement);
-            if (!rule.exceptions.isEmpty()) {
-                JSONArray exceptions = new JSONArray();
-                for (String exception : rule.exceptions) exceptions.put(exception);
-                pair.put(exceptions);
-            }
-            json.put(pair);
-        }
-        return json;
-    }
-
-    private void showEditColloquializerRuleDialog(ArrayList<ColloquializerRule> rules,
-                                                   int index, Runnable refresh) {
-        if (index < 0 || index >= rules.size()) return;
-        ColloquializerRule current = rules.get(index);
-        showColloquializerPairDialog("ویرایش قانون جایگزینی", current.source, current.exceptions, false,
-                (newSource, newReplacement, exceptions, ignored) -> {
-                    int wildcardIndex = newSource.indexOf('x');
-                    if (wildcardIndex >= 0 && newSource.indexOf('x', wildcardIndex + 1) >= 0) {
-                        throw new IllegalArgumentException("هر الگو فقط می‌تواند یک x داشته باشد.");
-                    }
-                    for (int i = 0; i < rules.size(); i++) {
-                        if (i != index && rules.get(i).source.equals(newSource)) {
-                            throw new IllegalArgumentException("این الگو از قبل در فهرست وجود دارد.");
-                        }
-                    }
-                    ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
-                    updated.set(index, new ColloquializerRule(newSource, newReplacement, exceptions));
-                    colloquializerStore.saveRules(writeColloquializerRules(updated).toString());
-                    rules.clear();
-                    rules.addAll(updated);
-                    refresh.run();
-                    toast("قانون به‌روزرسانی شد.");
-                });
-    }
-
-    private EditText colloquializerField(String hint) {
-        EditText field = edit(hint, false);
-        field.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        field.setBackground(roundDrawable(SURFACE_ALT, PURPLE, 15));
-        field.setPadding(dp(14), dp(9), dp(14), dp(9));
-        setRtlTextAlignment(field);
-        return field;
-    }
-
-    private interface ColloquializerPairAction {
-        void save(String source, String replacement, List<String> exceptions,
-                  boolean onlyThisChapter) throws Exception;
-    }
-
-    private void showAddColloquializerRuleDialog() {
-        showColloquializerPairDialog("افزودن جفت جایگزینی", "", Collections.emptyList(), false,
-                (newSource, newReplacement, exceptions, ignored) -> {
-                    JSONArray current = colloquializerStore.isInstalled()
-                            ? new JSONArray(colloquializerStore.readRules()) : new JSONArray();
-                    for (int i = 0; i < current.length(); i++) {
-                        JSONArray pair = current.optJSONArray(i);
-                        if (pair != null && newSource.equals(pair.optString(0))) {
-                            throw new IllegalArgumentException("این عبارت مبدأ از قبل وجود دارد.");
-                        }
-                    }
-                    JSONArray pair = new JSONArray().put(newSource).put(newReplacement);
-                    if (!exceptions.isEmpty()) pair.put(new JSONArray(exceptions));
-                    current.put(pair);
-                    colloquializerStore.saveRules(current.toString());
-                    showColloquializer();
-                    toast("جفت جایگزینی ذخیره شد.");
-                });
-    }
-
-    private void showColloquializerPairDialog(String title, String initialSource,
-                                               List<String> initialExceptions, boolean showChapterOption,
-                                               ColloquializerPairAction saveAction) {
-        EditText source = colloquializerField("عبارت مبدأ");
-        EditText replacement = colloquializerField("عبارت مقصد");
-        source.setText(initialSource == null ? "" : initialSource);
-        source.setSelection(source.length());
-        setRtlTextAlignment(source);
-        setRtlTextAlignment(replacement);
-
-        LinearLayout fields = new LinearLayout(this);
-        fields.setOrientation(LinearLayout.HORIZONTAL);
-        fields.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        LinearLayout sourceColumn = colloquializerFieldColumn("عبارت مبدأ", source);
-        LinearLayout replacementColumn = colloquializerFieldColumn("عبارت مقصد", replacement);
-        LinearLayout.LayoutParams sourceParams = new LinearLayout.LayoutParams(0, -2, 1f);
-        sourceParams.leftMargin = dp(8);
-        fields.addView(sourceColumn, sourceParams);
-        fields.addView(replacementColumn, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        LinearLayout.LayoutParams fieldsParams = new LinearLayout.LayoutParams(-1, -2);
-        fieldsParams.bottomMargin = showChapterOption ? dp(9) : 0;
-        form.addView(fields, fieldsParams);
-
-        EditText exceptionsField = colloquializerField("مثلاً شدن، داشته باشد");
-        exceptionsField.setSingleLine(true);
-        exceptionsField.setText(android.text.TextUtils.join("، ", initialExceptions));
-        LinearLayout exceptionsColumn = colloquializerFieldColumn("استثناها (با ویرگول جدا کن)", exceptionsField);
-        LinearLayout.LayoutParams exceptionsParams = new LinearLayout.LayoutParams(-1, -2);
-        exceptionsParams.bottomMargin = showChapterOption ? dp(9) : 0;
-        form.addView(exceptionsColumn, exceptionsParams);
-
-        final android.widget.CheckBox onlyThisChapter = showChapterOption
-                ? new android.widget.CheckBox(this) : null;
-        if (showChapterOption) {
-            onlyThisChapter.setText("فقط همین Chapter؛ در JSON ذخیره نشود");
-            onlyThisChapter.setTextColor(TEXT);
-            onlyThisChapter.setTypeface(vazir == null ? Typeface.DEFAULT : vazir);
-            onlyThisChapter.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-            form.addView(onlyThisChapter, fieldParams());
-        }
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setView(dialogPadding(form))
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("ذخیره", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String newSource = source.getText().toString();
-            String newReplacement = replacement.getText().toString();
-            if (newSource.trim().isEmpty()) { source.setError("عبارت مبدأ خالی است."); source.requestFocus(); return; }
-            if (newSource.indexOf('x') >= 0 && newSource.indexOf('x', newSource.indexOf('x') + 1) >= 0) {
-                source.setError("هر الگو فقط می‌تواند یک x داشته باشد."); source.requestFocus(); return;
-            }
-            try {
-                saveAction.save(newSource, newReplacement,
-                        parseColloquializerExceptions(exceptionsField.getText().toString()),
-                        onlyThisChapter != null && onlyThisChapter.isChecked());
-                dialog.dismiss();
-            } catch (Exception error) {
-                String message = error.getMessage();
-                toast(message == null || message.trim().isEmpty()
-                        ? "ذخیرهٔ جفت ناموفق بود." : message);
-            }
-        }));
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-    }
-
-    private ArrayList<String> parseColloquializerExceptions(String text) {
-        LinkedHashSet<String> exceptions = new LinkedHashSet<>();
-        if (text == null) return new ArrayList<>();
-        for (String value : text.split("[,،\\n]")) {
-            String exception = value.trim();
-            if (!exception.isEmpty()) exceptions.add(exception);
-        }
-        return new ArrayList<>(exceptions);
-    }
-
-    private LinearLayout colloquializerFieldColumn(String label, EditText field) {
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        TextView labelView = text(label, 12, MUTED);
-        setRtlTextAlignment(labelView);
-        column.addView(labelView, new LinearLayout.LayoutParams(-1, dp(22)));
-        column.addView(clearableInput(field), new LinearLayout.LayoutParams(-1, dp(48)));
-        return column;
-    }
-
-    private void confirmDeleteColloquializerRule(ArrayList<ColloquializerRule> rules,
-                                                   int index, Runnable refresh) {
-        if (index < 0 || index >= rules.size()) return;
-        ColloquializerRule rule = rules.get(index);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("حذف قانون؟")
-                .setMessage(rule.source + "  ←  " + rule.replacement)
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("حذف", (ignored, which) -> {
-                    ArrayList<ColloquializerRule> updated = new ArrayList<>(rules);
-                    updated.remove(index);
-                    try {
-                        colloquializerStore.saveRules(writeColloquializerRules(updated).toString());
-                        rules.clear();
-                        rules.addAll(updated);
-                        refresh.run();
-                        toast("قانون حذف شد.");
-                    } catch (Exception error) {
-                        toast("حذف قانون ناموفق بود: " + (error.getMessage() == null ? "" : error.getMessage()));
-                    }
-                })
-                .create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
-    private void chooseColloquializerRules() {
-        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        picker.addCategory(Intent.CATEGORY_OPENABLE);
-        picker.setType("*/*");
-        picker.putExtra(Intent.EXTRA_MIME_TYPES,
-                new String[]{"application/json", "text/json", "text/plain", "application/octet-stream"});
-        try { startActivityForResult(picker, REQUEST_COLLOQUIALIZER); }
-        catch (Exception error) { toast("انتخاب‌گر فایل در دسترس نیست."); }
-    }
-
-    private void importColloquializerRules(Uri uri) {
-        AlertDialog progressDialog = new AlertDialog.Builder(this)
-                .setMessage("در حال بررسی فایل قوانین…").setCancelable(false).create();
-        progressDialog.show();
-        styleDialogWindow(progressDialog);
-        colloquializerExecutor.execute(() -> {
-            String errorMessage = null;
-            try (InputStream input = getContentResolver().openInputStream(uri);
-                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                if (input == null) throw new IOException("فایل خوانده نشد.");
-                byte[] buffer = new byte[8192];
-                int total = 0;
-                int count;
-                while ((count = input.read(buffer)) != -1) {
-                    total += count;
-                    if (total > 10 * 1024 * 1024) throw new IOException("حجم فایل بیشتر از ۱۰ مگابایت است.");
-                    output.write(buffer, 0, count);
-                }
-                colloquializerStore.saveRules(output.toString("UTF-8"));
-            } catch (Exception error) {
-                errorMessage = error.getMessage() == null ? "فایل JSON معتبر نیست." : error.getMessage();
-            }
-            String finalError = errorMessage;
-            runOnUiThread(() -> {
-                if (isFinishing()) return;
-                progressDialog.dismiss();
-                if (finalError == null) toast("قوانین محاوره‌ای‌ساز ذخیره شد.");
-                else toast("بارگذاری ناموفق بود: " + finalError);
-                if ("colloquializer".equals(page)) showColloquializer();
-                else if ("reader".equals(page)) showReader();
-            });
-        });
-    }
-
     private FrameLayout createReaderOptionsButton() {
         FrameLayout button = new FrameLayout(this);
         styleIconButton(button, false);
@@ -1707,8 +1298,8 @@ public final class MainActivity extends Activity {
         settingsUi().showThemes();
     }
 
-    private void addPreferenceSwitch(LinearLayout body, String label, String preferenceFile,
-                                     String key, boolean defaultValue) {
+    void addPreferenceSwitch(LinearLayout body, String label, String preferenceFile,
+                             String key, boolean defaultValue) {
         settingsUi().addPreferenceSwitch(body, label, preferenceFile, key, defaultValue);
     }
     void rerenderCurrentPage() {
