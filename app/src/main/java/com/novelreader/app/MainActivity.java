@@ -93,7 +93,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_COVER = 42;
     static final int REQUEST_COLLOQUIALIZER = 43;
     static final int REQUEST_BOOK_JSON = 44;
-    private static final int REQUEST_CHAPTER_TEXT = 45;
+    static final int REQUEST_CHAPTER_TEXT = 45;
     private static final int SWIPE_MIN_DISTANCE = 50;
     private static final int SWIPE_THRESHOLD_VELOCITY = 100;
     private static final int SWIPE_MAX_OFF_PATH = 180;
@@ -121,7 +121,7 @@ public final class MainActivity extends Activity {
     final Set<String> selectedBookIds = new LinkedHashSet<>();
     final Set<String> selectedCollectionIds = new LinkedHashSet<>();
     final Set<String> selectedChapterKeys = new LinkedHashSet<>();
-    private final ChapterEditHistory chapterEditHistory = new ChapterEditHistory();
+    final ChapterEditHistory chapterEditHistory = new ChapterEditHistory();
     private final RecommendationUserState recommendationUserState = new RecommendationUserState();
     final Set<Long> seenRecommendationIds = recommendationUserState.seenRecommendationIds;
     final Set<String> favoriteGenrePreferences = recommendationUserState.favoriteGenres;
@@ -135,12 +135,12 @@ public final class MainActivity extends Activity {
     final BookRecommendationEngine recommendationEngine =
             new BookRecommendationEngine(recommendationPreferences);
     final ExecutorService colloquializerExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
+    final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
     private BookCoverStore coverStore;
     private BookCoverDownloader coverDownloader;
     ThemeCatalog themeCatalog;
     NativeUiComponents uiComponents;
-    private ChapterColloquializerProcessor chapterColloquializerProcessor;
+    ChapterColloquializerProcessor chapterColloquializerProcessor;
     NovelStorage storage;
     private RoomLibraryStore libraryStore;
     private ReadingPositionStore readingPositionStore;
@@ -157,20 +157,20 @@ public final class MainActivity extends Activity {
     String activeBookId;
     String activeCollectionId = "other";
     private String activeAuthor = "";
-    private String pendingChapterTextBookId;
-    private String pendingChapterTextChapterId;
+    String pendingChapterTextBookId;
+    String pendingChapterTextChapterId;
     String bookShelfSearchQuery = "";
     String bookShelfReturnPage = "collections";
     String collectionBooksReturnPage = "collections";
     private String genreBooksReturnPage = "genreInfo";
     private String activeGenre = "";
-    private int activeChapter;
-    private String chapterText = "";
+    int activeChapter;
+    String chapterText = "";
     private JSONObject readerRestoreState;
-    private boolean chapterEnd;
-    private boolean chapterDirty;
-    private boolean chapterColloquialized;
-    private boolean applyingChapterColloquializer;
+    boolean chapterEnd;
+    boolean chapterDirty;
+    boolean chapterColloquialized;
+    boolean applyingChapterColloquializer;
     private boolean restoringScroll;
     private Runnable saveRunnable;
     private Runnable progressRunnable;
@@ -187,10 +187,10 @@ public final class MainActivity extends Activity {
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
     ColloquializerStore colloquializerStore;
-    private FrameLayout readerActionButton;
-    private NativeIconView readerActionIcon;
-    private ProgressBar readerActionSpinner;
-    private LinearLayout readerBottomBar;
+    FrameLayout readerActionButton;
+    NativeIconView readerActionIcon;
+    ProgressBar readerActionSpinner;
+    LinearLayout readerBottomBar;
     private String activeReorderType;
     private String activeReorderSourceId;
     private String lastReorderTargetId;
@@ -232,16 +232,16 @@ public final class MainActivity extends Activity {
     GridView authorsGrid;
     EditText authorSearchField;
     ChapterCardAdapter chapterAdapter;
-    private EditText chapterEditor;
-    private TextView readerPreview;
+    EditText chapterEditor;
+    TextView readerPreview;
     private FrameLayout readerContentContainer;
-    private boolean readerEditing;
-    private boolean restoreReaderAfterRender;
-    private boolean hasPendingReaderScrollFraction;
-    private float pendingReaderScrollFraction;
+    boolean readerEditing;
+    boolean restoreReaderAfterRender;
+    boolean hasPendingReaderScrollFraction;
+    float pendingReaderScrollFraction;
     private int chapterLoadGeneration;
     private View chapterLoadingOverlay;
-    private ScrollView readerScroll;
+    ScrollView readerScroll;
     ScrollView settingsScroll;
     private SettingsScreen settingsScreen;
     private AuthorInfoScreen authorInfoScreen;
@@ -254,6 +254,7 @@ public final class MainActivity extends Activity {
     private ColloquializerSettingsScreen colloquializerSettingsScreen;
     private BookJsonImportScreen bookJsonImportScreen;
     private BookEditorDialogScreen bookEditorDialogScreen;
+    private ChapterReaderActions chapterReaderActions;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -1045,232 +1046,14 @@ public final class MainActivity extends Activity {
         view.setTextAlignment(View.TEXT_ALIGNMENT_GRAVITY);
         view.setTextDirection(View.TEXT_DIRECTION_RTL);
     }
-    private FrameLayout createReaderOptionsButton() {
-        FrameLayout button = new FrameLayout(this);
-        styleIconButton(button, false);
-        button.setContentDescription("گزینه‌های Chapter");
-        button.setClickable(true);
-        button.setFocusable(true);
-        applyPressScale(button);
-        button.setOnClickListener(view -> showReaderOptions());
-        readerActionButton = button;
-        readerActionIcon = new NativeIconView(this, "menu", PURPLE);
-        button.addView(readerActionIcon,
-                new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
-        readerActionSpinner = new ProgressBar(this);
-        readerActionSpinner.setIndeterminate(true);
-        if (Build.VERSION.SDK_INT >= 21) {
-            readerActionSpinner.setIndeterminateTintList(
-                    android.content.res.ColorStateList.valueOf(PURPLE));
-        }
-        readerActionSpinner.setVisibility(View.GONE);
-        button.addView(readerActionSpinner,
-                new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER));
-        return button;
+    private ChapterReaderActions chapterReaderActionsUi() {
+        if (chapterReaderActions == null) chapterReaderActions = new ChapterReaderActions(this);
+        return chapterReaderActions;
     }
 
-    private void showChapterColloquializerDialog() {
-        if (!"reader".equals(page) || chapterEditor == null) return;
-        ArrayList<String> choices = new ArrayList<>();
-        ArrayList<Integer> actions = new ArrayList<>();
-        choices.add("محاوره‌ای‌سازی Chapter"); actions.add(0);
-        if (chapterColloquialized) {
-            choices.add("بازگرداندن متن اصلی"); actions.add(1);
-        }
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("محاوره‌ای‌ساز")
-                .setItems(choices.toArray(new String[0]), (ignored, which) -> {
-                    int action = actions.get(which);
-                    if (action == 0) runChapterColloquializer(false);
-                    else if (action == 1) runChapterColloquializer(true);
-                })
-                .setNegativeButton("لغو", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
+    private FrameLayout createReaderOptionsButton() { return chapterReaderActionsUi().createOptionsButton(); }
 
-    private void showReaderOptions() {
-        if (!"reader".equals(page) || chapterEditor == null) return;
-        ArrayList<String> labels = new ArrayList<>();
-        ArrayList<Runnable> actions = new ArrayList<>();
-        if (colloquializerStore != null && colloquializerStore.isEnabled()) {
-            labels.add("محاوره‌ای‌سازی");
-            actions.add(this::showChapterColloquializerDialog);
-        }
-        labels.add(chapterEnd ? "لغو پایان نوشتن Chapter" : "اعلام پایان نوشتن Chapter");
-        actions.add(() -> setChapterEnd(!chapterEnd));
-        labels.add("وارد کردن متن از فایل");
-        actions.add(this::pickChapterTextFile);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("گزینه‌های Chapter")
-                .setItems(labels.toArray(new String[0]), (ignored, which) -> actions.get(which).run())
-                .setNegativeButton("بستن", null).create();
-        dialog.show();
-        styleDialogWindow(dialog);
-    }
-
-    private void setChapterEnd(boolean finished) {
-        JSONObject chapter = activeChapterObject();
-        if (chapter == null || chapterEditor == null) return;
-        chapterEnd = finished;
-        putJson(chapter, "end", finished);
-        chapterText = chapterEditor.getText().toString();
-        if (finished) calculateAndStoreChapterEstimate(chapter, chapterText);
-        if (!finished) {
-            putJson(chapter, "done", false);
-            putJson(chapter, "percent", 0);
-        }
-        updateProgress();
-        boolean saved = saveCurrentChapter();
-        if (saved) toast(finished ? "پایان نوشتن Chapter ثبت شد." : "پایان نوشتن Chapter لغو شد.");
-    }
-
-    private void pickChapterTextFile() {
-        JSONObject chapter = activeChapterObject();
-        if (!"reader".equals(page) || chapter == null) return;
-        pendingChapterTextBookId = activeBookId;
-        pendingChapterTextChapterId = chapter.optString("id", "");
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("text/*");
-        try {
-            startActivityForResult(intent, REQUEST_CHAPTER_TEXT);
-        } catch (Exception error) {
-            toast("انتخاب فایل متنی در دسترس نیست.");
-        }
-    }
-
-    private void importChapterText(Uri uri) {
-        final String targetBookId = pendingChapterTextBookId;
-        final String targetChapterId = pendingChapterTextChapterId;
-        pendingChapterTextBookId = null;
-        pendingChapterTextChapterId = null;
-        if (targetBookId == null || targetChapterId == null) return;
-        chapterIoExecutor.execute(() -> {
-            String imported = null;
-            String failure = null;
-            try (InputStream input = getContentResolver().openInputStream(uri);
-                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                if (input == null) throw new IOException("فایل خوانده نشد.");
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = input.read(buffer)) >= 0) output.write(buffer, 0, count);
-                imported = output.toString("UTF-8");
-                if (imported.startsWith("\uFEFF")) imported = imported.substring(1);
-            } catch (Exception error) {
-                failure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-            }
-            final String text = imported;
-            final String errorMessage = failure;
-            runOnUiThread(() -> {
-                JSONObject chapter = activeChapterObject();
-                if (!"reader".equals(page) || !targetBookId.equals(activeBookId) || chapter == null
-                        || !targetChapterId.equals(chapter.optString("id"))) return;
-                if (errorMessage != null || text == null) {
-                    toast("وارد کردن متن ناموفق بود: " + errorMessage);
-                    return;
-                }
-                applyChapterText(text, text.length());
-                chapterEnd = true;
-                putJson(chapter, "end", true);
-                calculateAndStoreChapterEstimate(chapter, text);
-                updateProgress();
-                if (saveCurrentChapter()) toast("متن Chapter وارد و پایان نوشتن فعال شد.");
-            });
-        });
-    }
-
-    private void runChapterColloquializer(boolean restoreOriginal) {
-        if (!"reader".equals(page) || chapterEditor == null || !saveCurrentChapter()) return;
-        final EditText targetEditor = chapterEditor;
-        final String targetBookId = activeBookId;
-        final int targetChapterIndex = activeChapter;
-        final String currentText = targetEditor.getText().toString();
-        final boolean wasColloquialized = chapterColloquialized;
-        final String originalFile = chapterOriginalFileName();
-        if (originalFile == null) return;
-        final FrameLayout targetButton = readerActionButton;
-        final NativeIconView targetIcon = readerActionIcon;
-        final ProgressBar targetSpinner = readerActionSpinner;
-        final LinearLayout targetBottomBar = readerBottomBar;
-
-        targetEditor.setEnabled(false);
-        if (targetBottomBar != null) {
-            for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
-                targetBottomBar.getChildAt(i).setEnabled(false);
-            }
-        }
-        if (targetButton != null) targetButton.setEnabled(false);
-        if (targetIcon != null) targetIcon.setVisibility(View.GONE);
-        if (targetSpinner != null) targetSpinner.setVisibility(View.VISIBLE);
-
-        colloquializerExecutor.execute(() -> {
-            ChapterColloquializerProcessor.Result result = chapterColloquializerProcessor.process(
-                    originalFile, currentText, restoreOriginal, wasColloquialized);
-            final String original = result.source;
-            final String transformed = result.output;
-            final String failure = result.error;
-            runOnUiThread(() -> {
-                if (targetSpinner != null) targetSpinner.setVisibility(View.GONE);
-                if (targetIcon != null) targetIcon.setVisibility(View.VISIBLE);
-                if (targetButton != null) targetButton.setEnabled(true);
-                if (targetBottomBar != null) {
-                    for (int i = 0; i < targetBottomBar.getChildCount(); i++) {
-                        targetBottomBar.getChildAt(i).setEnabled(true);
-                    }
-                }
-                targetEditor.setEnabled(true);
-                if (!"reader".equals(page) || chapterEditor != targetEditor
-                        || !targetBookId.equals(activeBookId) || targetChapterIndex != activeChapter) return;
-                if (failure != null || transformed == null) {
-                    toast("محاوره‌ای‌سازی ناموفق بود: " + failure);
-                    return;
-                }
-
-                if (restoreOriginal || transformed.equals(original)) {
-                    if (wasColloquialized || restoreOriginal) {
-                        setChapterColloquializerText(original, false);
-                        if (saveCurrentChapter()) storage.deleteChapterOriginal(originalFile);
-                    } else {
-                        storage.deleteChapterOriginal(originalFile);
-                    }
-                    if (!restoreOriginal) toast("تغییری برای اعمال پیدا نشد.");
-                    else toast("متن اصلی Chapter برگشت.");
-                    return;
-                }
-
-                setChapterColloquializerText(transformed, true);
-                if (saveCurrentChapter()) toast("متن محاوره‌ای Chapter ذخیره شد.");
-            });
-        });
-    }
-
-    private void setChapterColloquializerText(String value, boolean colloquialized) {
-        if (chapterEditor == null) return;
-        boolean refreshPreview = !readerEditing && readerPreview != null;
-        if (refreshPreview) {
-            pendingReaderScrollFraction = readerScrollFraction();
-            hasPendingReaderScrollFraction = true;
-        }
-        String current = chapterEditor.getText().toString();
-        chapterEditHistory.pushUndo(current);
-        int selection = Math.max(0, chapterEditor.getSelectionStart());
-        chapterColloquialized = colloquialized;
-        applyingChapterColloquializer = true;
-        chapterEditor.setText(value);
-        chapterEditor.setSelection(Math.min(selection, value.length()));
-        applyingChapterColloquializer = false;
-        chapterText = value;
-        chapterDirty = true;
-        JSONObject chapter = activeChapterObject();
-        if (chapter != null) putJson(chapter, "colloquialized", colloquialized);
-        updateProgress();
-        if (refreshPreview) {
-            restoreReaderAfterRender = true;
-            renderReaderPreview();
-        }
-    }
-
+    private void importChapterText(Uri uri) { chapterReaderActionsUi().importChapterText(uri); }
     private void showSettings() {
         settingsUi().showSettings();
     }
@@ -1284,7 +1067,7 @@ public final class MainActivity extends Activity {
                 .getInt("reading_speed_wpm", 200));
     }
 
-    private void calculateAndStoreChapterEstimate(JSONObject chapter, String text) {
+    void calculateAndStoreChapterEstimate(JSONObject chapter, String text) {
         ChapterCatalog.calculateAndStoreEstimate(chapter, text, readingSpeedWordsPerMinute());
     }
 
@@ -3047,7 +2830,7 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void renderReaderPreview() {
+    void renderReaderPreview() {
         final TextView target = readerPreview;
         if (target == null) return;
         target.setText(chapterText);
@@ -3162,7 +2945,7 @@ public final class MainActivity extends Activity {
         return chapterEditor == null ? 0 : chapterEditor.getHeight();
     }
 
-    private float readerScrollFraction() {
+    float readerScrollFraction() {
         if (readerScroll == null) return 0f;
         int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
         return range == 0 ? 0f : Math.max(0f, Math.min(1f, readerScroll.getScrollY() / (float) range));
@@ -3236,7 +3019,7 @@ public final class MainActivity extends Activity {
         if (found >= 0) rules.put(found, pair); else rules.put(pair);
     }
 
-    private void applyChapterText(String updated, int selection) {
+    void applyChapterText(String updated, int selection) {
         if (chapterEditor == null) return;
         boolean refreshPreview = !readerEditing && readerPreview != null;
         if (refreshPreview) {
@@ -3463,7 +3246,7 @@ public final class MainActivity extends Activity {
         openReader(target);
     }
 
-    private boolean saveCurrentChapter() {
+    boolean saveCurrentChapter() {
         if (!"reader".equals(page) || chapterEditor == null) return true;
         if (saveRunnable != null) handler.removeCallbacks(saveRunnable);
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
@@ -3502,7 +3285,7 @@ public final class MainActivity extends Activity {
         return code + ".txt";
     }
 
-    private String chapterOriginalFileName() {
+    String chapterOriginalFileName() {
         JSONObject chapter = activeChapterObject();
         return chapterOriginalFileName(chapter);
     }
@@ -3567,7 +3350,7 @@ public final class MainActivity extends Activity {
         handler.postDelayed(progressRunnable, 900);
     }
 
-    private void updateProgress() {
+    void updateProgress() {
         if (chapterEditor == null || readerScroll == null || readerProgress == null) return;
         JSONObject chapter = activeChapterObject(); if (chapter == null) return;
         boolean finishedWriting = chapterEnd;
@@ -4114,7 +3897,7 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private JSONObject activeChapterObject() {
+    JSONObject activeChapterObject() {
         JSONObject book = activeBook(); JSONArray chapters = book == null ? null : book.optJSONArray("chapters");
         return chapters == null || activeChapter < 0 || activeChapter >= chapters.length() ? null : chapters.optJSONObject(activeChapter);
     }
@@ -4382,7 +4165,7 @@ public final class MainActivity extends Activity {
         return uiComponents.weightedIconButton(icon, action);
     }
 
-    private void styleIconButton(FrameLayout button, boolean selected) {
+    void styleIconButton(FrameLayout button, boolean selected) {
         uiComponents.styleIconButton(button, selected);
     }
 
