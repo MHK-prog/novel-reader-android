@@ -13,8 +13,6 @@ import android.content.SharedPreferences;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.graphics.Canvas;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -29,7 +27,6 @@ import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
@@ -90,7 +87,6 @@ import java.util.concurrent.Executors;
 /** Native Android reader. It intentionally uses platform Views only: no WebView or UI libraries. */
 public final class MainActivity extends Activity {
     static final int REQUEST_FOLDER = 41;
-    private static final int REQUEST_COVER = 42;
     static final int REQUEST_COLLOQUIALIZER = 43;
     static final int REQUEST_BOOK_JSON = 44;
     static final int REQUEST_CHAPTER_TEXT = 45;
@@ -138,6 +134,7 @@ public final class MainActivity extends Activity {
     final ExecutorService chapterIoExecutor = Executors.newSingleThreadExecutor();
     private BookCoverStore coverStore;
     private BookCoverDownloader coverDownloader;
+    private BookCoverActions coverActions;
     ThemeCatalog themeCatalog;
     NativeUiComponents uiComponents;
     ChapterColloquializerProcessor chapterColloquializerProcessor;
@@ -311,6 +308,7 @@ public final class MainActivity extends Activity {
         storage = new NovelStorage(this);
         coverStore = new BookCoverStore(storage);
         coverDownloader = new BookCoverDownloader(coverStore);
+        coverActions = new BookCoverActions(this, coverStore, coverDownloader);
         readingPositionStore = new ReadingPositionStore(this);
         resumeReadingPrompt = new ResumeReadingPrompt(this);
         bookJsonPromptStore = new BookJsonPromptStore(this);
@@ -562,7 +560,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_COVER) {
+        if (requestCode == BookCoverActions.REQUEST_CODE) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) loadImageForCover(data.getData());
             return;
         }
@@ -3725,147 +3723,21 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    void chooseBookCover() {
-        try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                Intent photoPicker = new Intent(MediaStore.ACTION_PICK_IMAGES);
-                photoPicker.setType("image/*");
-                startActivityForResult(photoPicker, REQUEST_COVER);
-            } else {
-                openGalleryIntent();
-            }
-        } catch (android.content.ActivityNotFoundException error) {
-            try { openGalleryIntent(); }
-            catch (Exception fallbackError) { toast("گالری تصویر در دسترس نیست."); }
-        } catch (Exception error) { toast("گالری تصویر در دسترس نیست."); }
-    }
+    void chooseBookCover() { coverActions.chooseBookCover(); }
 
-    private void openGalleryIntent() {
-        Intent gallery = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
-        gallery.setType("image/*");
-        startActivityForResult(gallery, REQUEST_COVER);
-    }
-
-    private void loadImageForCover(Uri uri) {
-        coverStore.execute(() -> {
-            Bitmap bitmap = null;
-            try {
-                BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
-                try (java.io.InputStream input = getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(input, null, bounds); }
-                int sample = 1;
-                while (Math.max(bounds.outWidth, bounds.outHeight) / sample > 1800) sample *= 2;
-                BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = sample;
-                try (java.io.InputStream input = getContentResolver().openInputStream(uri)) { bitmap = BitmapFactory.decodeStream(input, null, options); }
-            } catch (Exception error) { android.util.Log.e("NovelReader", "Could not open cover image", error); }
-            Bitmap loaded = bitmap;
-            if (loaded == null) {
-                runOnUiThread(() -> toast("خواندن تصویر ناموفق بود."));
-                return;
-            }
-            String fileName = saveCoverBitmap(loaded);
-            runOnUiThread(() -> {
-                if (fileName == null) toast("ذخیرهٔ جلد ناموفق بود.");
-                else {
-                    pendingCoverName = fileName;
-                    if (bookCoverPreview != null) renderCoverPreview(bookCoverPreview, pendingCoverName);
-                    if (coverRemoveButton != null) coverRemoveButton.setVisibility(View.VISIBLE);
-                }
-            });
-        });
-    }
+    private void loadImageForCover(Uri uri) { coverActions.loadImageForCover(uri); }
 
     void downloadBookCover(String imageUrl, BookJsonImportTarget target) {
-        if (imageUrl == null || !imageUrl.startsWith("https://") || target == null) {
-            toast("لینک جلد باید HTTPS باشد.");
-            return;
-        }
-        if (target.saveButton != null) target.saveButton.setEnabled(false);
-        coverDownloader.download(imageUrl, fileName -> runOnUiThread(() -> {
-            if (fileName == null) {
-                if (activeBookJsonImportTarget == target) {
-                    if (target.saveButton != null) target.saveButton.setEnabled(true);
-                    toast("دانلود جلد ناموفق بود؛ می‌توانی بعداً جلد را انتخاب کنی.");
-                }
-                return;
-            }
-            if (isFinishing() || activeBookJsonImportTarget != target) {
-                deleteCoverFile(fileName);
-                return;
-            }
-            String previous = pendingCoverName;
-            pendingCoverName = fileName;
-            if (target.saveButton != null) target.saveButton.setEnabled(true);
-            if (target.coverPreview != null) renderCoverPreview(target.coverPreview, fileName);
-            if (target.coverRemoveButton != null) target.coverRemoveButton.setVisibility(View.VISIBLE);
-            if (previous != null && !previous.isEmpty() && !previous.equals(target.originalCoverName)
-                    && !previous.equals(fileName) && !isCoverUsedByBook(previous)) {
-                deleteCoverFile(previous);
-            }
-            toast("جلد کتاب دریافت شد.");
-        }));
-    }
-
-    private boolean isCoverUsedByBook(String coverName) {
-        JSONArray books = library.optJSONArray("books");
-        if (books == null) return false;
-        for (int i = 0; i < books.length(); i++) {
-            JSONObject book = books.optJSONObject(i);
-            if (book != null && coverName.equals(book.optString("cover", ""))) return true;
-        }
-        return false;
-    }
-
-    private String saveCoverBitmap(Bitmap bitmap) {
-        return coverStore.save(bitmap);
-    }
-
-    private Bitmap loadCoverBitmap(String name) {
-        return coverStore.load(name, getResources().getDisplayMetrics().widthPixels);
+        coverActions.downloadBookCover(imageUrl, target);
     }
 
     void bindBookCover(ImageView image, View placeholder, JSONObject book) {
-        if (book != null && book.optBoolean("coverFiltered", false)) {
-            image.setTag("filtered:" + book.optString("id"));
-            image.setImageDrawable(null);
-            placeholder.setVisibility(View.VISIBLE);
-            return;
-        }
-        bindCover(image, placeholder, book == null ? "" : book.optString("cover", ""));
+        coverActions.bindBookCover(image, placeholder, book);
     }
 
-    private void bindCover(ImageView image, View placeholder, String name) {
-        image.setTag(name);
-        image.setImageDrawable(null);
-        Bitmap cached = name == null ? null : coverStore.cached(name);
-        if (cached != null && !cached.isRecycled()) {
-            image.setImageBitmap(cached);
-            placeholder.setVisibility(View.GONE);
-            return;
-        }
-        placeholder.setVisibility(View.VISIBLE);
-        if (name == null || name.isEmpty()) return;
-        coverStore.execute(() -> {
-            Bitmap loaded = loadCoverBitmap(name);
-            runOnUiThread(() -> {
-                if (isFinishing() || image.getTag() == null || !name.equals(image.getTag())) return;
-                image.setImageBitmap(loaded);
-                placeholder.setVisibility(loaded == null ? View.VISIBLE : View.GONE);
-            });
-        });
-    }
+    void renderCoverPreview(ImageView image, String name) { coverActions.renderCoverPreview(image, name); }
 
-    void renderCoverPreview(ImageView image, String name) {
-        if (image == null) return;
-        if (image.getParent() instanceof FrameLayout) {
-            View placeholder = ((FrameLayout) image.getParent()).getTag() instanceof View
-                    ? (View) ((FrameLayout) image.getParent()).getTag() : null;
-            if (placeholder != null) bindCover(image, placeholder, name);
-        }
-    }
-
-    void deleteCoverFile(String name) {
-        coverStore.delete(name);
-    }
+    void deleteCoverFile(String name) { coverActions.deleteCoverFile(name); }
 
     void showGenreFilter() {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8), dp(4), dp(8), dp(4));
