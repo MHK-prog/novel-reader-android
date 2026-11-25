@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
     private boolean suppressNavigationHistory;
     private long lastRootBackPressedAt;
     String bookInfoReturnPage = "collectionBooks";
-    private String chaptersReturnPage = "collectionBooks";
+    String chaptersReturnPage = "collectionBooks";
     String activeBookId;
     String activeCollectionId = "other";
     private String activeAuthor = "";
@@ -196,7 +196,7 @@ public final class MainActivity extends Activity {
     private String lastReorderTargetId;
     private String reorderOriginalLibrary;
     private boolean reorderChanged;
-    private View coverRemoveButton;
+    View coverRemoveButton;
     BookJsonImportTarget activeBookJsonImportTarget;
     AlertDialog bookJsonInputDialog;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
@@ -253,6 +253,7 @@ public final class MainActivity extends Activity {
     private BookLibraryScreen bookLibraryScreen;
     private ColloquializerSettingsScreen colloquializerSettingsScreen;
     private BookJsonImportScreen bookJsonImportScreen;
+    private BookEditorDialogScreen bookEditorDialogScreen;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -262,8 +263,8 @@ public final class MainActivity extends Activity {
     private FrameLayout splashOverlay;
     private ProgressBar splashProgress;
     private ObjectAnimator splashArtAnimator;
-    private ImageView bookCoverPreview;
-    private String pendingCoverName;
+    ImageView bookCoverPreview;
+    String pendingCoverName;
     private int pendingReaderCursorOffset = -1;
     SharedPreferences recommendationState;
     private RecommendationStateStore recommendationStateStore;
@@ -2508,7 +2509,7 @@ public final class MainActivity extends Activity {
         return LibraryMetrics.seriesBookNumber(book);
     }
 
-    private int nextSeriesBookNumber(String collectionId) {
+    int nextSeriesBookNumber(String collectionId) {
         return LibraryMetrics.nextSeriesBookNumber(collectionId, library.optJSONArray("books"));
     }
 
@@ -3625,7 +3626,7 @@ public final class MainActivity extends Activity {
         handler.postDelayed(quickHideRunnable, 1500);
     }
 
-    private long nextRecommendationId() {
+    long nextRecommendationId() {
         Set<Long> used = new HashSet<>();
         JSONArray books = library.optJSONArray("books");
         if (books != null) for (int i = 0; i < books.length(); i++) {
@@ -3637,18 +3638,12 @@ public final class MainActivity extends Activity {
         return candidate;
     }
 
-    private interface BookTextEntryAction { void save(String value); }
-
-    private interface BookGenreSelectionAction {
-        void save(LinkedHashSet<String> selected, ArrayList<String> available);
-    }
-
     private BookJsonImportScreen bookJsonImportUi() {
         if (bookJsonImportScreen == null) bookJsonImportScreen = new BookJsonImportScreen(this);
         return bookJsonImportScreen;
     }
 
-    private void chooseBookJson() { bookJsonImportUi().chooseBookJson(); }
+    void chooseBookJson() { bookJsonImportUi().chooseBookJson(); }
 
     private void showBookJsonInputDialog() { bookJsonImportUi().showInputDialog(); }
 
@@ -3656,12 +3651,12 @@ public final class MainActivity extends Activity {
 
     void showBookJsonPromptSettings() { bookJsonImportUi().showPromptSettings(); }
 
-    private void showBookJsonPrompt() { bookJsonImportUi().showPrompt(); }
+    void showBookJsonPrompt() { bookJsonImportUi().showPrompt(); }
 
-    private void removeJsonCreatedCollections(BookJsonImportTarget target) {
+    void removeJsonCreatedCollections(BookJsonImportTarget target) {
         bookJsonImportUi().removeCreatedCollections(target);
     }
-    private void showBookDetailsDialog(LinearLayout detailsPanel) {
+    void showBookDetailsDialog(LinearLayout detailsPanel) {
         if (detailsPanel == null || isFinishing()) return;
         detailsPanel.setVisibility(View.VISIBLE);
         if (detailsPanel.getParent() instanceof ViewGroup) {
@@ -3690,7 +3685,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private View bookDialogEntryButton(String title, String summary, String icon, Runnable action) {
+    View bookDialogEntryButton(String title, String summary, String icon, Runnable action) {
         LinearLayout button = new LinearLayout(this);
         button.setGravity(Gravity.CENTER_VERTICAL);
         button.setOrientation(LinearLayout.HORIZONTAL);
@@ -3742,8 +3737,8 @@ public final class MainActivity extends Activity {
         return summary.isEmpty() ? "برای نوشتن توضیحات بزنید" : summary;
     }
 
-    private void showBookTextEntryDialog(String title, String hint, String initialValue,
-                                         BookTextEntryAction action) {
+    void showBookTextEntryDialog(String title, String hint, String initialValue,
+                                 BookTextEntryAction action) {
         EditText input = edit(hint, false);
         input.setSingleLine(false);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -3806,8 +3801,8 @@ public final class MainActivity extends Activity {
         selected.add(match);
     }
 
-    private void showBookGenreSelectionDialog(List<String> availableGenres, Set<String> selectedGenres,
-                                              BookGenreSelectionAction action) {
+    void showBookGenreSelectionDialog(List<String> availableGenres, Set<String> selectedGenres,
+                                      BookGenreSelectionAction action) {
         ArrayList<String> draftAvailable = new ArrayList<>(availableGenres);
         LinkedHashSet<String> draftSelected = new LinkedHashSet<>(selectedGenres);
         EditText search = edit("جستجو یا افزودن ژانرها با ،", false);
@@ -3869,333 +3864,14 @@ public final class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    void showBookDialog(JSONObject existing) {
-        boolean isNew = existing == null;
-        boolean noAiAccess = getSharedPreferences("general", MODE_PRIVATE)
-                .getBoolean("no_ai_access", false);
-        boolean compactNewBookForm = isNew && !noAiAccess;
-        String originalCoverName = isNew ? "" : existing.optString("cover", "");
-        String sourcePage = page;
-        String libraryBeforeSave = library.toString();
-        final boolean[] coverCommitted = {false};
-        pendingCoverName = originalCoverName;
+    void showBookDialog(JSONObject existing) { bookEditorUi().show(existing); }
 
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(8), dp(4), dp(8), dp(4));
-        LinearLayout detailsPanel = new LinearLayout(this);
-        detailsPanel.setOrientation(LinearLayout.VERTICAL);
-
-        LinearLayout coverRow = new LinearLayout(this);
-        coverRow.setGravity(Gravity.CENTER);
-        FrameLayout previewFrame = new FrameLayout(this);
-        previewFrame.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 10));
-        previewFrame.setClipToOutline(true);
-        bookCoverPreview = new ImageView(this);
-        bookCoverPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        previewFrame.addView(bookCoverPreview, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout placeholder = new LinearLayout(this);
-        placeholder.setGravity(Gravity.CENTER);
-        placeholder.setOrientation(LinearLayout.VERTICAL);
-        placeholder.addView(new NativeIconView(this, "image", PURPLE), new LinearLayout.LayoutParams(dp(30), dp(30)));
-        TextView chooseCoverLabel = text("انتخاب جلد", 13, PURPLE);
-        chooseCoverLabel.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams chooseLabelParams = new LinearLayout.LayoutParams(-2, -2);
-        chooseLabelParams.topMargin = dp(8);
-        placeholder.addView(chooseCoverLabel, chooseLabelParams);
-        previewFrame.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
-        previewFrame.setTag(placeholder);
-        previewFrame.setOnClickListener(v -> chooseBookCover());
-        applyPressScale(previewFrame, .97f);
-        previewFrame.setContentDescription("انتخاب جلد کتاب");
-        coverRow.addView(previewFrame, new FrameLayout.LayoutParams(dp(128), dp(182), Gravity.CENTER));
-        coverRemoveButton = iconButton("close", TEXT, true, () -> {
-            pendingCoverName = "";
-            renderCoverPreview(bookCoverPreview, pendingCoverName);
-            if (coverRemoveButton != null) coverRemoveButton.setVisibility(View.GONE);
-        });
-        FrameLayout.LayoutParams removeCoverParams = new FrameLayout.LayoutParams(dp(36), dp(36),
-                Gravity.TOP | Gravity.RIGHT);
-        removeCoverParams.topMargin = dp(5);
-        removeCoverParams.rightMargin = dp(5);
-        previewFrame.addView(coverRemoveButton, removeCoverParams);
-        coverRemoveButton.setVisibility(originalCoverName.isEmpty() ? View.GONE : View.VISIBLE);
-        LinearLayout.LayoutParams coverRowParams = new LinearLayout.LayoutParams(-1, dp(194));
-        coverRowParams.bottomMargin = dp(9);
-        detailsPanel.addView(coverRow, coverRowParams);
-        renderCoverPreview(bookCoverPreview, pendingCoverName);
-
-        EditText title = edit("نام کتاب", false);
-        title.setText(isNew ? "" : existing.optString("title"));
-        EditText author = edit("نام نویسنده", false);
-        author.setText(isNew ? "" : existing.optString("author"));
-        final String[] descriptionValue = {isNew ? "" : existing.optString("description", "")};
-        final View[] descriptionEntry = new View[1];
-        descriptionEntry[0] = bookDialogEntryButton("توضیحات کوتاه",
-                descriptionButtonSummary(descriptionValue[0]), "edit", () ->
-                        showBookTextEntryDialog("توضیحات کوتاه کتاب", "توضیحات کوتاه کتاب",
-                                descriptionValue[0], value -> {
-                                    descriptionValue[0] = value;
-                                    updateBookDialogEntryButton(descriptionEntry[0], descriptionButtonSummary(value));
-                                }));
-        EditText count = edit("تعداد Chapter", false);
-        count.setInputType(InputType.TYPE_CLASS_NUMBER);
-        count.setText(isNew ? "" : Integer.toString(ChapterCatalog.largestWholeChapterNumber(existing)));
-        LinearLayout titleAuthorFields = new LinearLayout(this);
-        titleAuthorFields.setOrientation(LinearLayout.VERTICAL);
-        titleAuthorFields.addView(clearableInput(title), fieldParams());
-        titleAuthorFields.addView(clearableInput(author), fieldParams());
-        LinearLayout.LayoutParams titleAuthorParams = new LinearLayout.LayoutParams(-1, -2);
-        if (compactNewBookForm) form.addView(titleAuthorFields, titleAuthorParams);
-        else detailsPanel.addView(titleAuthorFields, titleAuthorParams);
-
-        if (compactNewBookForm) {
-            LinearLayout quickActions = new LinearLayout(this);
-            quickActions.setOrientation(LinearLayout.HORIZONTAL);
-            quickActions.setGravity(Gravity.CENTER_VERTICAL);
-            quickActions.setBaselineAligned(false);
-            quickActions.setClipChildren(false);
-            View promptAction = textButton("ساخت پرامپت", "help", PURPLE, this::showBookJsonPrompt);
-            View importAction = textButton("ورود پاسخ JSON", "scan_text", PURPLE, this::chooseBookJson);
-            LinearLayout.LayoutParams quickButtonParams = new LinearLayout.LayoutParams(0, dp(50), 1);
-            LinearLayout.LayoutParams quickImportParams = new LinearLayout.LayoutParams(0, dp(50), 1);
-            quickImportParams.leftMargin = dp(7);
-            quickActions.addView(promptAction, quickButtonParams);
-            quickActions.addView(importAction, quickImportParams);
-            LinearLayout.LayoutParams quickActionsParams = new LinearLayout.LayoutParams(-1, dp(50));
-            quickActionsParams.bottomMargin = dp(8);
-            form.addView(quickActions, quickActionsParams);
-            TextView detailsButton = text("جزئیات بیشتر", 14, TEXT);
-            detailsButton.setGravity(Gravity.CENTER);
-            detailsButton.setBackground(roundDrawable(SURFACE, 0xFF40384A, 12));
-            LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-1, dp(44));
-            toggleParams.bottomMargin = dp(8);
-            form.addView(detailsButton, toggleParams);
-            detailsPanel.setVisibility(View.GONE);
-            detailsButton.setOnClickListener(v -> showBookDetailsDialog(detailsPanel));
-            applyPressScale(detailsButton);
-        }
-        LinearLayout.LayoutParams descriptionEntryParams = new LinearLayout.LayoutParams(-1, dp(58));
-        descriptionEntryParams.bottomMargin = dp(9);
-        detailsPanel.addView(descriptionEntry[0], descriptionEntryParams);
-        detailsPanel.addView(clearableInput(count), fieldParams());
-
-        String initialCollection = isNew ? activeCollectionId : existing.optString("collectionId", "other");
-        if (findCollectionById(initialCollection) == null) initialCollection = "other";
-        final String[] chosenCollectionId = {initialCollection};
-        final String[] previousCollectionId = {initialCollection};
-        FrameLayout collectionField = new FrameLayout(this);
-        collectionField.setBackground(roundDrawable(SURFACE_ALT, 0xFF40384A, 12));
-        TextView collectionChoice = text("", 14, TEXT);
-        collectionChoice.setSingleLine(true);
-        collectionChoice.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        collectionChoice.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        collectionChoice.setPadding(dp(48), 0, dp(12), 0);
-        collectionField.addView(collectionChoice, new FrameLayout.LayoutParams(-1, -1));
-        NativeIconView dropdownIcon = new NativeIconView(this, "dropdown", PURPLE);
-        FrameLayout.LayoutParams dropdownParams = new FrameLayout.LayoutParams(dp(22), dp(22),
-                Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        dropdownParams.leftMargin = dp(10);
-        collectionField.addView(dropdownIcon, dropdownParams);
-        EditText seriesNumber = edit("شمارهٔ کتاب در مجموعه", false);
-        View seriesNumberRow = clearableInput(seriesNumber);
-        seriesNumber.setInputType(InputType.TYPE_CLASS_NUMBER);
-        seriesNumber.setText(!isNew && !"other".equals(initialCollection)
-                ? Integer.toString(seriesBookNumber(existing))
-                : !"other".equals(initialCollection) ? Integer.toString(nextSeriesBookNumber(initialCollection)) : "");
-        Runnable refreshCollectionChoice = () -> {
-            JSONObject collection = findCollectionById(chosenCollectionId[0]);
-            collectionChoice.setText("مجموعه: " + (collection == null ? "سایر" : collection.optString("title", "سایر")));
-            boolean isSeries = !"other".equals(chosenCollectionId[0]);
-            seriesNumberRow.setVisibility(isSeries ? View.VISIBLE : View.GONE);
-            if (!chosenCollectionId[0].equals(previousCollectionId[0])) {
-                seriesNumber.setText(isSeries ? Integer.toString(nextSeriesBookNumber(chosenCollectionId[0])) : "");
-                previousCollectionId[0] = chosenCollectionId[0];
-            }
-        };
-        refreshCollectionChoice.run();
-        collectionField.setOnClickListener(v -> showCollectionPicker(chosenCollectionId, refreshCollectionChoice));
-        detailsPanel.addView(collectionField, fieldParams());
-        detailsPanel.addView(seriesNumberRow, fieldParams());
-
-        final LinkedHashSet<String> selected = new LinkedHashSet<>();
-        JSONArray oldGenres = isNew ? null : existing.optJSONArray("genres");
-        if (oldGenres != null) for (int i = 0; i < oldGenres.length(); i++) selected.add(oldGenres.optString(i));
-        final ArrayList<String> availableGenres = new ArrayList<>();
-        JSONArray existingGenres = allGenres();
-        for (int i = 0; i < existingGenres.length(); i++) availableGenres.add(existingGenres.optString(i));
-        final View[] genreEntry = new View[1];
-        genreEntry[0] = bookDialogEntryButton("ژانرها", genreButtonSummary(selected), "tag", () ->
-                showBookGenreSelectionDialog(availableGenres, selected, (newSelected, newAvailable) -> {
-                    selected.clear();
-                    selected.addAll(newSelected);
-                    availableGenres.clear();
-                    availableGenres.addAll(newAvailable);
-                    updateBookDialogEntryButton(genreEntry[0], genreButtonSummary(selected));
-                }));
-        LinearLayout.LayoutParams genreEntryParams = new LinearLayout.LayoutParams(-1, dp(58));
-        genreEntryParams.bottomMargin = dp(9);
-        detailsPanel.addView(genreEntry[0], genreEntryParams);
-
-        activeBookJsonImportTarget = new BookJsonImportTarget(title, author, count, seriesNumber,
-                descriptionValue, chosenCollectionId, selected, availableGenres,
-                descriptionEntry[0], genreEntry[0], refreshCollectionChoice,
-                () -> showBookDetailsDialog(detailsPanel), isNew,
-                bookCoverPreview, coverRemoveButton, originalCoverName);
-
-        if (!compactNewBookForm) form.addView(detailsPanel, new LinearLayout.LayoutParams(-1, -2));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(false);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setHorizontalScrollBarEnabled(false);
-        scroll.addView(form, new ScrollView.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(isNew ? "افزودن کتاب" : "ویرایش کتاب")
-                .setView(dialogPadding(scroll))
-                .setNegativeButton("لغو", null)
-                .setPositiveButton("ثبت اطلاعات", null)
-                .create();
-        dialog.setOnDismissListener(ignored -> {
-            if (!coverCommitted[0] && pendingCoverName != null && !pendingCoverName.isEmpty()
-                    && !pendingCoverName.equals(originalCoverName)) deleteCoverFile(pendingCoverName);
-            if (activeBookJsonImportTarget != null && activeBookJsonImportTarget.title == title) {
-                if (!coverCommitted[0]) removeJsonCreatedCollections(activeBookJsonImportTarget);
-                activeBookJsonImportTarget = null;
-            }
-            bookCoverPreview = null;
-            coverRemoveButton = null;
-        });
-        dialog.setOnShowListener(ignored -> {
-            TextView saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            if (activeBookJsonImportTarget != null && activeBookJsonImportTarget.title == title) {
-                activeBookJsonImportTarget.saveButton = saveButton;
-            }
-            saveButton.setOnClickListener(v -> {
-            String bookTitle = TextNormalization.titleCaseWords(title.getText().toString());
-            if (bookTitle.isEmpty()) { title.setError("نام کتاب را وارد کن"); return; }
-            String bookAuthor = TextNormalization.titleCaseWords(author.getText().toString());
-            int chapterTotal = 0;
-            String chapterCountValue = count.getText().toString().trim();
-            if (isNew || !chapterCountValue.isEmpty()) {
-                String value = chapterCountValue;
-                if (value.isEmpty()) {
-                    count.setError("تعداد Chapter را وارد کن");
-                    if (compactNewBookForm) showBookDetailsDialog(detailsPanel);
-                    return;
-                }
-                try { chapterTotal = Integer.parseInt(value); }
-                catch (NumberFormatException error) {
-                    count.setError("تعداد Chapter معتبر نیست");
-                    if (compactNewBookForm) showBookDetailsDialog(detailsPanel);
-                    return;
-                }
-                int minimum = isNew ? 1 : 0;
-                if (chapterTotal < minimum || chapterTotal > 5000) {
-                    count.setError("تعداد باید بین " + minimum + " تا 5000 باشد");
-                    if (compactNewBookForm) showBookDetailsDialog(detailsPanel);
-                    return;
-                }
-            }
-            int bookNumber = 0;
-            if (!"other".equals(chosenCollectionId[0])) {
-                String value = seriesNumber.getText().toString().trim();
-                if (value.isEmpty()) bookNumber = nextSeriesBookNumber(chosenCollectionId[0]);
-                else try { bookNumber = Integer.parseInt(value); }
-                catch (NumberFormatException error) { seriesNumber.setError("شمارهٔ کتاب معتبر نیست"); return; }
-                if (bookNumber < 1 || bookNumber > 9999) {
-                    seriesNumber.setError("شماره باید بین 1 تا 9999 باشد"); return;
-                }
-            }
-            LinkedHashSet<String> normalizedSelected = new LinkedHashSet<>();
-            for (String value : selected) {
-                String normalized = canonicalGenre(TextNormalization.titleCaseWords(value));
-                if (!normalized.isEmpty()) normalizedSelected.add(normalized);
-            }
-            JSONArray savedGenres = new JSONArray();
-            for (String value : normalizedSelected) savedGenres.put(value);
-            JSONArray globalGenres = library.optJSONArray("genres");
-            if (globalGenres == null) globalGenres = new JSONArray();
-            for (String value : normalizedSelected) appendUniqueGenre(globalGenres, value);
-            try { library.put("genres", globalGenres); } catch (JSONException ignoredError) { }
-
-            if (isNew) {
-                JSONArray chapters = new JSONArray();
-                for (int i = 0; i < chapterTotal; i++) {
-                    JSONObject chapter = ChapterCatalog.newChapter();
-                    putJson(chapter, "title", "Chapter " + (i + 1));
-                    putJson(chapter, "storageIndex", i + 1);
-                    putJson(chapter, "orderIndex", i);
-                    chapters.put(chapter);
-                }
-                JSONObject book = new JSONObject();
-                try {
-                    book.put("id", UUID.randomUUID().toString());
-                    book.put("recommendationId", nextRecommendationId());
-                    book.put("title", bookTitle);
-                    book.put("author", bookAuthor);
-                    book.put("description", descriptionValue[0]);
-                    book.put("genres", savedGenres);
-                    book.put("cover", pendingCoverName == null ? "" : pendingCoverName);
-                    book.put("collectionId", chosenCollectionId[0]);
-                    if (bookNumber > 0) book.put("seriesNumber", bookNumber);
-                    book.put("orderIndex", LibraryOrdering.nextOrderIndex(library.optJSONArray("books")));
-                    book.put("chapters", chapters);
-                    library.getJSONArray("books").put(book);
-                } catch (JSONException ignoredError) { }
-                if (!saveLibrary()) {
-                    restoreLibrary(libraryBeforeSave);
-                    dialog.dismiss();
-                    showBookShelf();
-                    return;
-                }
-                coverCommitted[0] = true;
-                rebuildRecommendationWeights();
-                persistRecommendationState();
-                activeCollectionId = chosenCollectionId[0];
-                activeBookId = book.optString("id");
-                bookInfoReturnPage = "allBooks".equals(sourcePage) ? "allBooks" : "collectionBooks";
-                chaptersReturnPage = bookInfoReturnPage;
-                dialog.dismiss();
-                showChapters();
-            } else {
-                putJson(existing, "title", bookTitle);
-                putJson(existing, "author", bookAuthor);
-                putJson(existing, "description", descriptionValue[0]);
-                putJson(existing, "genres", savedGenres);
-                putJson(existing, "cover", pendingCoverName == null ? "" : pendingCoverName);
-                putJson(existing, "collectionId", chosenCollectionId[0]);
-                if (bookNumber > 0) putJson(existing, "seriesNumber", bookNumber);
-                else existing.remove("seriesNumber");
-                if (chapterTotal > 0) ChapterCatalog.addMissingWholeChapters(existing, chapterTotal);
-                if (!saveLibrary()) {
-                    restoreLibrary(libraryBeforeSave);
-                    dialog.dismiss();
-                    if ("chapters".equals(sourcePage)) showChapters();
-                    else if ("bookInfo".equals(sourcePage)) showBookInfo(activeBook());
-                    else showDashboard();
-                    return;
-                }
-                coverCommitted[0] = true;
-                rebuildRecommendationWeights();
-                persistRecommendationState();
-                if ("chapters".equals(sourcePage)) activeCollectionId = chosenCollectionId[0];
-                if (!originalCoverName.isEmpty() && !originalCoverName.equals(pendingCoverName)) {
-                    deleteCoverFile(originalCoverName);
-                }
-                dialog.dismiss();
-                if ("chapters".equals(sourcePage)) showChapters();
-                else if ("bookInfo".equals(sourcePage)) showBookInfo(existing);
-                else if (bookAdapter != null) bookAdapter.notifyDataSetChanged();
-            }
-            });
-        });
-        dialog.show();
-        styleDialogWindow(dialog);
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+    private BookEditorDialogScreen bookEditorUi() {
+        if (bookEditorDialogScreen == null) bookEditorDialogScreen = new BookEditorDialogScreen(this);
+        return bookEditorDialogScreen;
     }
-    private void showCollectionPicker(String[] selectedId, Runnable onSelected) {
+
+    void showCollectionPicker(String[] selectedId, Runnable onSelected) {
         JSONArray collections = collectionArray();
         String[] ids = new String[collections.length()];
         String[] names = new String[collections.length()];
@@ -4244,7 +3920,7 @@ public final class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 
-    private JSONArray genreArray(List<String> values) {
+    JSONArray genreArray(List<String> values) {
         JSONArray result = new JSONArray();
         ArrayList<String> sorted = new ArrayList<>(values);
         Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
@@ -4266,7 +3942,7 @@ public final class MainActivity extends Activity {
         styleDialogWindow(dialog);
     }
 
-    private void chooseBookCover() {
+    void chooseBookCover() {
         try {
             if (Build.VERSION.SDK_INT >= 33) {
                 Intent photoPicker = new Intent(MediaStore.ACTION_PICK_IMAGES);
@@ -4395,7 +4071,7 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void renderCoverPreview(ImageView image, String name) {
+    void renderCoverPreview(ImageView image, String name) {
         if (image == null) return;
         if (image.getParent() instanceof FrameLayout) {
             View placeholder = ((FrameLayout) image.getParent()).getTag() instanceof View
