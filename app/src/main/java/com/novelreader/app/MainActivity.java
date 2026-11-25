@@ -31,7 +31,6 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
-import android.text.Layout;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -42,7 +41,6 @@ import android.view.WindowManager;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 import android.view.animation.DecelerateInterpolator;
-import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -168,9 +166,9 @@ public final class MainActivity extends Activity {
     boolean chapterDirty;
     boolean chapterColloquialized;
     boolean applyingChapterColloquializer;
-    private boolean restoringScroll;
+    boolean restoringScroll;
     private Runnable saveRunnable;
-    private Runnable progressRunnable;
+    Runnable progressRunnable;
     private Runnable quickHideRunnable;
     private boolean drawerOpen;
     boolean returnToSettingsAfterPicker;
@@ -179,7 +177,7 @@ public final class MainActivity extends Activity {
     private float readerPreviewTouchY;
     private boolean readerPreviewTouchMoved;
     private boolean resumePromptShownThisLaunch;
-    private Runnable readingPositionSaveRunnable;
+    Runnable readingPositionSaveRunnable;
     private TextView batteryPercentView;
     private ImageView batteryLevelIcon;
     private boolean batteryReceiverRegistered;
@@ -231,7 +229,7 @@ public final class MainActivity extends Activity {
     ChapterCardAdapter chapterAdapter;
     EditText chapterEditor;
     TextView readerPreview;
-    private FrameLayout readerContentContainer;
+    FrameLayout readerContentContainer;
     boolean readerEditing;
     boolean restoreReaderAfterRender;
     boolean hasPendingReaderScrollFraction;
@@ -252,6 +250,7 @@ public final class MainActivity extends Activity {
     private BookJsonImportScreen bookJsonImportScreen;
     private BookEditorDialogScreen bookEditorDialogScreen;
     private ChapterReaderActions chapterReaderActions;
+    private ReaderViewport readerViewport;
     private View readerProgress;
     private int lastReaderProgressWidth = -1;
     private FrameLayout readerFrame;
@@ -263,7 +262,7 @@ public final class MainActivity extends Activity {
     private ObjectAnimator splashArtAnimator;
     ImageView bookCoverPreview;
     String pendingCoverName;
-    private int pendingReaderCursorOffset = -1;
+    int pendingReaderCursorOffset = -1;
     SharedPreferences recommendationState;
     private RecommendationStateStore recommendationStateStore;
     ReadingStatsStore readingStats;
@@ -2828,156 +2827,27 @@ public final class MainActivity extends Activity {
         });
     }
 
-    void renderReaderPreview() {
-        final TextView target = readerPreview;
-        if (target == null) return;
-        target.setText(chapterText);
-        target.setTypeface(vazir);
-        if (restoreReaderAfterRender) {
-            restoreReaderAfterRender = false;
-            restoreReaderPositionAfterRender();
-        } else updateProgress();
+    private ReaderViewport readerViewportUi() {
+        if (readerViewport == null) readerViewport = new ReaderViewport(this);
+        return readerViewport;
     }
 
-    private void enterReaderEditMode(boolean showKeyboard) {
-        int cursor = chapterEditor == null ? 0 : Math.max(0, chapterEditor.getSelectionStart());
-        enterReaderEditMode(showKeyboard, cursor);
-    }
-
+    void renderReaderPreview() { readerViewportUi().renderPreview(); }
+    private void enterReaderEditMode(boolean showKeyboard) { readerViewportUi().enterEditMode(showKeyboard); }
     private void enterReaderEditMode(boolean showKeyboard, int cursorOffset) {
-        if (readerEditing || chapterEditor == null || readerPreview == null) return;
-        hasPendingReaderScrollFraction = false;
-        readerEditing = true;
-        readerPreview.setVisibility(View.GONE);
-        chapterEditor.setVisibility(View.VISIBLE);
-        if (!chapterEditor.getText().toString().equals(chapterText)) {
-            chapterEditor.setText(chapterText);
-        }
-        int requestedCursor = Math.max(0, Math.min(cursorOffset, chapterEditor.length()));
-        pendingReaderCursorOffset = requestedCursor;
-        chapterEditor.setSelection(requestedCursor);
-        afterReaderLayout(() -> {
-            chapterEditor.setSelection(requestedCursor);
-            positionReaderCursorInUpperHalf(requestedCursor);
-            if (showKeyboard && chapterEditor != null) {
-                chapterEditor.requestFocus();
-                chapterEditor.post(() -> {
-                    InputMethodManager input = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                    if (input != null) input.showSoftInput(chapterEditor, InputMethodManager.SHOW_IMPLICIT);
-                    chapterEditor.postDelayed(() -> positionReaderCursorInUpperHalf(requestedCursor), 180);
-                });
-            }
-            updateProgress();
-        });
+        readerViewportUi().enterEditMode(showKeyboard, cursorOffset);
     }
-
     private void positionReaderCursorInUpperHalf(int cursorOffset) {
-        if (readerScroll == null || chapterEditor == null || !readerEditing) return;
-        android.text.Layout layout = chapterEditor.getLayout();
-        if (layout == null || layout.getLineCount() == 0 || readerScroll.getHeight() <= 0) return;
-        int safeOffset = Math.max(0, Math.min(cursorOffset, chapterEditor.length()));
-        int line = Math.max(0, Math.min(layout.getLineCount() - 1, layout.getLineForOffset(safeOffset)));
-        float lineCenter = chapterEditor.getTop() + chapterEditor.getTotalPaddingTop()
-                + (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f;
-        int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
-        int target = Math.round(lineCenter - readerScroll.getHeight() * .34f);
-        readerScroll.scrollTo(0, Math.max(0, Math.min(range, target)));
+        readerViewportUi().positionCursorInUpperHalf(cursorOffset);
     }
-
     private int readerPreviewCursorOffset(float touchX, float touchY) {
-        if (readerPreview == null || chapterText == null) return 0;
-        android.text.Layout layout = readerPreview.getLayout();
-        CharSequence displayed = readerPreview.getText();
-        if (displayed == null || displayed.length() == 0) return 0;
-        if (layout == null) {
-            int contentHeight = Math.max(readerPreview.getHeight(), readerContentHeight());
-            if (contentHeight <= 0) return 0;
-            float position = Math.max(0f, Math.min(1f,
-                    (readerScroll.getScrollY() + touchY) / (float) contentHeight));
-            return Math.max(0, Math.min(chapterText.length(), Math.round(chapterText.length() * position)));
-        }
-        int vertical = Math.max(0, (int) touchY - readerPreview.getTotalPaddingTop());
-        int line = Math.max(0, Math.min(layout.getLineCount() - 1, layout.getLineForVertical(vertical)));
-        int visibleOffset = Math.max(0, Math.min(displayed.length(),
-                layout.getOffsetForHorizontal(line, touchX - readerPreview.getTotalPaddingLeft())));
-        return Math.max(0, Math.min(visibleOffset, chapterText.length()));
+        return readerViewportUi().previewCursorOffset(touchX, touchY);
     }
-
-    private void afterReaderLayout(Runnable action) {
-        View anchor = readerContentContainer == null ? readerScroll : readerContentContainer;
-        if (anchor == null) {
-            action.run();
-            return;
-        }
-        android.view.ViewTreeObserver observer = anchor.getViewTreeObserver();
-        if (!observer.isAlive()) {
-            anchor.post(() -> anchor.post(action));
-            return;
-        }
-        android.view.ViewTreeObserver.OnGlobalLayoutListener[] listener = new android.view.ViewTreeObserver.OnGlobalLayoutListener[1];
-        listener[0] = () -> {
-            if (anchor.getWidth() <= 0 || anchor.getHeight() <= 0
-                    || readerScroll == null || readerScroll.getHeight() <= 0) return;
-            android.view.ViewTreeObserver currentObserver = anchor.getViewTreeObserver();
-            if (currentObserver.isAlive()) currentObserver.removeOnGlobalLayoutListener(listener[0]);
-            anchor.post(action);
-        };
-        observer.addOnGlobalLayoutListener(listener[0]);
-        anchor.requestLayout();
-    }
-
-    private void leaveReaderEditMode() {
-        if (!readerEditing || chapterEditor == null || readerPreview == null
-                || chapterText.trim().isEmpty()) return;
-        pendingReaderScrollFraction = readerScrollFraction();
-        hasPendingReaderScrollFraction = true;
-        readerEditing = false;
-        chapterEditor.setVisibility(View.GONE);
-        readerPreview.setVisibility(View.VISIBLE);
-        restoreReaderAfterRender = true;
-        renderReaderPreview();
-    }
-
-    private int readerContentHeight() {
-        if (readerContentContainer != null) return readerContentContainer.getHeight();
-        return chapterEditor == null ? 0 : chapterEditor.getHeight();
-    }
-
-    float readerScrollFraction() {
-        if (readerScroll == null) return 0f;
-        int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
-        return range == 0 ? 0f : Math.max(0f, Math.min(1f, readerScroll.getScrollY() / (float) range));
-    }
-
-    private void restoreReaderScrollFraction() {
-        if (!hasPendingReaderScrollFraction || readerScroll == null) return;
-        int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
-        readerScroll.scrollTo(0, Math.round(range * pendingReaderScrollFraction));
-        hasPendingReaderScrollFraction = false;
-    }
-
-    private void restoreReaderPositionAfterRender() {
-        if (readerScroll == null) return;
-        if (hasPendingReaderScrollFraction) {
-            afterReaderLayout(() -> {
-                restoreReaderScrollFraction();
-                restoringScroll = false;
-                updateProgress();
-                persistCurrentReadingPosition(false);
-                scheduleProgressSave();
-            });
-            return;
-        }
-        afterReaderLayout(() -> {
-            JSONObject chapter = activeChapterObject();
-            int range = Math.max(0, readerContentHeight() - readerScroll.getHeight());
-            readerScroll.scrollTo(0, restoreSavedReadingPosition(chapter, range));
-            restoringScroll = false;
-            updateProgress();
-            persistCurrentReadingPosition(false);
-            scheduleProgressSave();
-        });
-    }
+    private void afterReaderLayout(Runnable action) { readerViewportUi().afterLayout(action); }
+    private void leaveReaderEditMode() { readerViewportUi().leaveEditMode(); }
+    private int readerContentHeight() { return readerViewportUi().readerContentHeight(); }
+    float readerScrollFraction() { return readerViewportUi().scrollFraction(); }
+    private void restoreReaderPositionAfterRender() { readerViewportUi().restorePositionAfterRender(); }
 
     private void showSelectedPhraseRuleDialog(int start, String source) {
         showColloquializerPairDialog("افزودن قانون جایگزینی", source, Collections.emptyList(), true,
@@ -3310,7 +3180,7 @@ public final class MainActivity extends Activity {
         handler.postDelayed(readingPositionSaveRunnable, 220);
     }
 
-    private void persistCurrentReadingPosition(boolean commit) {
+    void persistCurrentReadingPosition(boolean commit) {
         JSONObject book = activeBook();
         JSONObject chapter = activeChapterObject();
         if (book == null || chapter == null || readerScroll == null || readingPositionStore == null) return;
@@ -3321,7 +3191,7 @@ public final class MainActivity extends Activity {
                 viewportHeight, scrollRange, commit);
     }
 
-    private int restoreSavedReadingPosition(JSONObject chapter, int scrollRange) {
+    int restoreSavedReadingPosition(JSONObject chapter, int scrollRange) {
         if (readingPositionStore == null || chapter == null) return 0;
         JSONObject savedState = readerRestoreState == null ? chapter : readerRestoreState;
         int restored = readingPositionStore.restoreScroll(activeBookId,
@@ -3337,7 +3207,7 @@ public final class MainActivity extends Activity {
         handler.postDelayed(saveRunnable, 420);
     }
 
-    private void scheduleProgressSave() {
+    void scheduleProgressSave() {
         if (progressRunnable != null) handler.removeCallbacks(progressRunnable);
         progressRunnable = () -> {
             if ("reader".equals(page)) {
