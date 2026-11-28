@@ -88,6 +88,8 @@ public final class MainActivity extends Activity {
     static final int REQUEST_COLLOQUIALIZER = 43;
     static final int REQUEST_BOOK_JSON = 44;
     static final int REQUEST_CHAPTER_TEXT = 45;
+    static final int REQUEST_PROFILE_PHOTO = 46;
+    static final int REQUEST_COLLOQUIALIZER_EXPORT = 47;
     private static final int SWIPE_MIN_DISTANCE = 50;
     private static final int SWIPE_THRESHOLD_VELOCITY = 100;
     private static final int SWIPE_MAX_OFF_PATH = 180;
@@ -212,6 +214,7 @@ public final class MainActivity extends Activity {
     private ValueAnimator drawerSettingsAnimator;
     private boolean drawerSettingsExpanded;
     private boolean drawerLibrariesExpanded;
+    private final AccordionController drawerAccordion = new AccordionController();
     TextView titleView;
     TextView subtitleView;
     EditText searchField;
@@ -247,6 +250,7 @@ public final class MainActivity extends Activity {
     private ChapterListScreen chapterListScreen;
     private BookLibraryScreen bookLibraryScreen;
     private ColloquializerSettingsScreen colloquializerSettingsScreen;
+    private UserProfileScreen userProfileScreen;
     private BookJsonImportScreen bookJsonImportScreen;
     private BookEditorDialogScreen bookEditorDialogScreen;
     private ChapterReaderActions chapterReaderActions;
@@ -313,7 +317,8 @@ public final class MainActivity extends Activity {
         resumeReadingPrompt = new ResumeReadingPrompt(this);
         bookJsonPromptStore = new BookJsonPromptStore(this);
         libraryStore = new RoomLibraryStore(this);
-        colloquializerStore = new ColloquializerStore(storage, getSharedPreferences("extensions", MODE_PRIVATE));
+        colloquializerStore = new ColloquializerStore(this, storage,
+                getSharedPreferences("extensions", MODE_PRIVATE));
         chapterColloquializerProcessor = new ChapterColloquializerProcessor(storage, colloquializerStore);
         recommendationState = getSharedPreferences("recommendations", MODE_PRIVATE);
         recommendationStateStore = new RecommendationStateStore(
@@ -570,6 +575,18 @@ public final class MainActivity extends Activity {
             }
             return;
         }
+        if (requestCode == REQUEST_COLLOQUIALIZER_EXPORT) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                colloquializerSettingsUi().exportRules(data.getData());
+            }
+            return;
+        }
+        if (requestCode == REQUEST_PROFILE_PHOTO) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                profileUi().savePhoto(data.getData());
+            }
+            return;
+        }
         if (requestCode == REQUEST_BOOK_JSON) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 if (bookJsonInputDialog != null) bookJsonInputDialog.dismiss();
@@ -738,6 +755,9 @@ public final class MainActivity extends Activity {
 
     private void buildDrawer() {
         if (drawerSettingsAnimator != null) drawerSettingsAnimator.cancel();
+        drawerAccordion.reset();
+        drawerLibrariesExpanded = false;
+        drawerSettingsExpanded = false;
         drawerPanel.removeAllViews();
         drawerScroll = new ScrollView(this);
         drawerScroll.setFillViewport(false);
@@ -785,6 +805,12 @@ public final class MainActivity extends Activity {
             closeDrawer();
             if (target == null) toast("مطالعهٔ ناتمامی پیدا نشد.");
             else openResumeTarget(target);
+        }, false);
+
+        addDrawerAction(drawerActions, "پروفایل کاربری", "person", SECONDARY_ACCENT, () -> {
+            endRecommendationSession();
+            closeDrawer();
+            showUserProfile();
         }, false);
 
         LinearLayout settingsToggle = drawerSettingsButton();
@@ -849,61 +875,9 @@ public final class MainActivity extends Activity {
     }
 
     private void toggleDrawerLibraries() {
-        if (drawerLibraryOptions == null) return;
-        drawerLibrariesExpanded = !drawerLibrariesExpanded;
-        if (drawerLibraryChevron != null) {
-            drawerLibraryChevron.animate().rotation(drawerLibrariesExpanded ? 180f : 0f)
-                    .setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
-        }
-        LinearLayout options = drawerLibraryOptions;
-        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) options.getLayoutParams();
-        if (drawerLibrariesExpanded) {
-            options.setVisibility(View.VISIBLE);
-            options.setAlpha(0f);
-            options.setTranslationY(-dp(4));
-            options.measure(View.MeasureSpec.makeMeasureSpec(drawerWidth() - dp(28), View.MeasureSpec.AT_MOST),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-            int targetHeight = options.getMeasuredHeight();
-            params.height = 0;
-            options.setLayoutParams(params);
-            options.animate().alpha(1f).translationY(0f).setDuration(190).start();
-            ValueAnimator animator = ValueAnimator.ofInt(0, targetHeight);
-            animator.setDuration(190);
-            animator.setInterpolator(new DecelerateInterpolator());
-            animator.addUpdateListener(value -> {
-                LinearLayout.LayoutParams current = (LinearLayout.LayoutParams) options.getLayoutParams();
-                current.height = (int) value.getAnimatedValue();
-                options.setLayoutParams(current);
-            });
-            animator.addListener(new AnimatorListenerAdapter() {
-                @Override public void onAnimationEnd(Animator animation) {
-                    LinearLayout.LayoutParams current = (LinearLayout.LayoutParams) options.getLayoutParams();
-                    current.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-                    options.setLayoutParams(current);
-                }
-            });
-            animator.start();
-        } else {
-            int currentHeight = options.getHeight();
-            ValueAnimator animator = ValueAnimator.ofInt(currentHeight, 0);
-            animator.setDuration(160);
-            animator.addUpdateListener(value -> {
-                LinearLayout.LayoutParams current = (LinearLayout.LayoutParams) options.getLayoutParams();
-                current.height = (int) value.getAnimatedValue();
-                options.setLayoutParams(current);
-            });
-            animator.addListener(new AnimatorListenerAdapter() {
-                @Override public void onAnimationEnd(Animator animation) {
-                    options.setVisibility(View.GONE);
-                    options.setAlpha(1f);
-                    options.setTranslationY(0f);
-                    LinearLayout.LayoutParams current = (LinearLayout.LayoutParams) options.getLayoutParams();
-                    current.height = 0;
-                    options.setLayoutParams(current);
-                }
-            });
-            animator.start();
-        }
+        drawerAccordion.toggle(drawerLibraryOptions, drawerLibraryChevron);
+        drawerLibrariesExpanded = drawerAccordion.isExpanded(drawerLibraryOptions);
+        drawerSettingsExpanded = drawerAccordion.isExpanded(drawerSettingsOptions);
     }
 
     private LinearLayout drawerSettingsButton() {
@@ -961,60 +935,9 @@ public final class MainActivity extends Activity {
     }
 
     private void toggleDrawerSettings() {
-        if (drawerSettingsOptions == null) return;
-        if (drawerSettingsAnimator != null) drawerSettingsAnimator.cancel();
-        boolean expand = !drawerSettingsExpanded;
-        drawerSettingsExpanded = expand;
-        if (drawerSettingsChevron != null) {
-            drawerSettingsChevron.animate().rotation(expand ? 180f : 0f).setDuration(200)
-                    .setInterpolator(new DecelerateInterpolator()).start();
-        }
-
-        LinearLayout options = drawerSettingsOptions;
-        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) options.getLayoutParams();
-        int startHeight;
-        int endHeight;
-        if (expand) {
-            options.setVisibility(View.VISIBLE);
-            options.setAlpha(0f);
-            options.setTranslationY(-dp(5));
-            int width = Math.max(1, drawerWidth() - drawerPanel.getPaddingLeft() - drawerPanel.getPaddingRight());
-            options.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-            endHeight = options.getMeasuredHeight();
-            startHeight = 0;
-            params.height = 0;
-            options.setLayoutParams(params);
-            options.animate().alpha(1f).translationY(0f).setDuration(210)
-                    .setInterpolator(new DecelerateInterpolator()).start();
-        } else {
-            startHeight = options.getHeight();
-            if (startHeight <= 0) startHeight = options.getMeasuredHeight();
-            endHeight = 0;
-            options.animate().alpha(0f).translationY(-dp(5)).setDuration(190)
-                    .setInterpolator(new DecelerateInterpolator()).start();
-        }
-        drawerSettingsAnimator = ValueAnimator.ofInt(startHeight, endHeight);
-        drawerSettingsAnimator.setDuration(expand ? 210 : 190);
-        drawerSettingsAnimator.setInterpolator(new DecelerateInterpolator());
-        drawerSettingsAnimator.addUpdateListener(animation -> {
-            LinearLayout.LayoutParams current = (LinearLayout.LayoutParams) options.getLayoutParams();
-            current.height = (int) animation.getAnimatedValue();
-            options.setLayoutParams(current);
-        });
-        drawerSettingsAnimator.addListener(new AnimatorListenerAdapter() {
-            @Override public void onAnimationEnd(Animator animation) {
-                if (!expand) {
-                    options.setVisibility(View.GONE);
-                    options.setAlpha(1f);
-                    options.setTranslationY(0f);
-                }
-                LinearLayout.LayoutParams finalParams = (LinearLayout.LayoutParams) options.getLayoutParams();
-                finalParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-                options.setLayoutParams(finalParams);
-            }
-        });
-        drawerSettingsAnimator.start();
+        drawerAccordion.toggle(drawerSettingsOptions, drawerSettingsChevron);
+        drawerSettingsExpanded = drawerAccordion.isExpanded(drawerSettingsOptions);
+        drawerLibrariesExpanded = drawerAccordion.isExpanded(drawerLibraryOptions);
     }
 
     private ColloquializerSettingsScreen colloquializerSettingsUi() {
@@ -1036,6 +959,13 @@ public final class MainActivity extends Activity {
     }
 
     private void importColloquializerRules(Uri uri) { colloquializerSettingsUi().importRules(uri); }
+
+    private UserProfileScreen profileUi() {
+        if (userProfileScreen == null) userProfileScreen = new UserProfileScreen(this);
+        return userProfileScreen;
+    }
+
+    private void showUserProfile() { profileUi().show(); }
 
     private void setRtlTextAlignment(TextView view) {
         view.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
@@ -1103,6 +1033,7 @@ public final class MainActivity extends Activity {
         else if ("statistics".equals(page)) showStatistics();
         else if ("tagSettings".equals(page)) showTagSettings();
         else if ("colloquializer".equals(page)) showColloquializer();
+        else if ("profile".equals(page)) showUserProfile();
         else if ("authors".equals(page)) showAuthors();
         else if ("genres".equals(page)) showGenres();
         else if ("authorBooks".equals(page)) showAllBooksForAuthor(activeAuthor);
@@ -1246,6 +1177,7 @@ public final class MainActivity extends Activity {
             else if ("themes".equals(state.page)) showThemes();
             else if ("tagSettings".equals(state.page)) showTagSettings();
             else if ("colloquializer".equals(state.page)) showColloquializer();
+            else if ("profile".equals(state.page)) showUserProfile();
             else showBookShelfPage(true);
         } finally {
             suppressNavigationHistory = false;
@@ -1272,7 +1204,16 @@ public final class MainActivity extends Activity {
         String gender = authorGender(author);
         if ("female".equals(gender)) return "author_woman";
         if ("male".equals(gender)) return "author_man";
-        return "person";
+        return "author_unknown";
+    }
+
+    void setAuthorGender(String author, String gender) {
+        if (recommendationState == null || author == null) return;
+        String key = "author_gender:" + author.trim().toLowerCase(Locale.ROOT);
+        SharedPreferences.Editor editor = recommendationState.edit();
+        if ("unknown".equals(gender)) editor.remove(key);
+        else editor.putString(key, gender);
+        editor.apply();
     }
 
     void selectAuthorCard(String author) {
@@ -2221,7 +2162,9 @@ public final class MainActivity extends Activity {
     }
 
     void rebuildRecommendationWeights() {
-        if (recommendationStateStore != null) recommendationStateStore.rebuildWeights(allGenres());
+        if (recommendationStateStore != null) {
+            recommendationStateStore.rebuildWeights(allGenres(), library.optJSONArray("books"));
+        }
     }
 
     List<BookRecommendationEngine.Book> recommendationBooks(Boolean currentlyReading,

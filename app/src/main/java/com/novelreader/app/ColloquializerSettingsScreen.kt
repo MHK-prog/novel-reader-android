@@ -45,8 +45,17 @@ internal class ColloquializerSettingsScreen(private val host: MainActivity) {
             setPadding(host.dp(18f), host.dp(8f), host.dp(18f), host.dp(3f))
         }
         val installed = host.colloquializerStore.isInstalled()
-        content.addView(host.textButton("انتخاب فایل JSON", "scan_text", host.PURPLE,
-            Runnable { chooseRules() }), host.fieldParams())
+        val jsonActions = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        jsonActions.addView(host.textButton("ورود JSON", "scan_text", host.PURPLE,
+            Runnable { chooseRules() }), LinearLayout.LayoutParams(0, host.dp(48f), 1f))
+        jsonActions.addView(host.textButton("خروجی JSON", "export", host.SECONDARY_ACCENT,
+            Runnable { chooseExport() }), LinearLayout.LayoutParams(0, host.dp(48f), 1f).apply {
+            leftMargin = host.dp(7f)
+        })
+        content.addView(jsonActions, host.fieldParams())
         addControls(content)
 
         if (!installed) {
@@ -238,12 +247,6 @@ internal class ColloquializerSettingsScreen(private val host: MainActivity) {
                     source.requestFocus()
                     return@setOnClickListener
                 }
-                val wildcard = newSource.indexOf('x')
-                if (wildcard >= 0 && newSource.indexOf('x', wildcard + 1) >= 0) {
-                    source.error = "هر الگو فقط می‌تواند یک x داشته باشد."
-                    source.requestFocus()
-                    return@setOnClickListener
-                }
                 try {
                     saveAction.save(newSource, newReplacement,
                         parseExceptions(exceptionsField.text.toString()), onlyThisChapter?.isChecked == true)
@@ -323,8 +326,8 @@ internal class ColloquializerSettingsScreen(private val host: MainActivity) {
 
     fun showHelp() {
         val help = host.text(
-            "در هر قانون، عبارت مبدأ با عبارت مقصد جایگزین می‌شود. x یک رشته از حروف فارسی را می‌گیرد؛ s هر تعداد فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد؛ n وجود یا نبود «ن» را پوشش می‌دهد.\n\n" +
-                "استثناها را با ویرگول جدا کن تا قانون کنار آن عبارت اجرا نشود. هر متن فقط یک‌بار و بر اساس متن اصلی پردازش می‌شود؛ مقصد یک قانون دوباره وارد پردازش نمی‌شود. هنگام محاوره‌ای‌سازی، عبارت رسمی کنار تغییر به شکل {عبارت رسمی} ثبت می‌شود و از منوی Chapter می‌توانی نشانه‌ها را برداری یا متن اصلی را برگردانی.",
+            "در هر قانون، عبارت مبدأ با عبارت مقصد جایگزین می‌شود. x اولین رشته از حروف فارسی را می‌گیرد؛ x1 دومی و x2 سومی را. می‌توانی هر کدام را در مقصد هم به کار ببری. s هر تعداد فاصله، نیم‌فاصله یا نبود فاصله را می‌پذیرد و n وجود یا نبود «ن» را پوشش می‌دهد.\n\n" +
+                "استثناها را با ویرگول جدا کن تا قانون کنار آن عبارت اجرا نشود. هر متن فقط یک‌بار و بر اساس متن اصلی پردازش می‌شود؛ مقصد یک قانون دوباره وارد پردازش نمی‌شود.",
             14, host.TEXT
         ).apply {
             gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
@@ -345,10 +348,6 @@ internal class ColloquializerSettingsScreen(private val host: MainActivity) {
         val current = rules[index]
         showPairDialog("ویرایش قانون جایگزینی", current.source, current.exceptions, false) {
                 newSource, newReplacement, exceptions, _ ->
-            val wildcard = newSource.indexOf('x')
-            if (wildcard >= 0 && newSource.indexOf('x', wildcard + 1) >= 0) {
-                throw IllegalArgumentException("هر الگو فقط می‌تواند یک x داشته باشد.")
-            }
             for (i in rules.indices) {
                 if (i != index && rules[i].source == newSource) {
                     throw IllegalArgumentException("این الگو از قبل در فهرست وجود دارد.")
@@ -420,6 +419,30 @@ internal class ColloquializerSettingsScreen(private val host: MainActivity) {
             host.startActivityForResult(picker, MainActivity.REQUEST_COLLOQUIALIZER)
         } catch (_: Exception) {
             host.toast("انتخاب‌گر فایل در دسترس نیست.")
+        }
+    }
+
+    private fun chooseExport() {
+        val picker = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "colloquializer-rules.json")
+        }
+        try {
+            host.startActivityForResult(picker, MainActivity.REQUEST_COLLOQUIALIZER_EXPORT)
+        } catch (_: Exception) {
+            host.toast("انتخاب‌گر فایل در دسترس نیست.")
+        }
+    }
+
+    fun exportRules(uri: Uri) {
+        try {
+            val output = host.contentResolver.openOutputStream(uri, "wt")
+                ?: throw IOException("فایل خروجی باز نشد.")
+            output.use { it.write(host.colloquializerStore.readRules().toByteArray(Charsets.UTF_8)) }
+            host.toast("خروجی قوانین ذخیره شد.")
+        } catch (error: Exception) {
+            host.toast("گرفتن خروجی ناموفق بود: ${error.message ?: "خطا"}")
         }
     }
 

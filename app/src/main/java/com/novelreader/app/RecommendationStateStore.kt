@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.util.HashSet
 import java.util.LinkedHashMap
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /** In-memory recommendation choices shared by the engine and the app's settings pages. */
 class RecommendationUserState {
@@ -45,27 +46,37 @@ class RecommendationStateStore(
         preferences.getStringSet("seen_books", emptySet()).orEmpty().forEach { value ->
             value.toLongOrNull()?.let(state.seenRecommendationIds::add)
         }
-        readNames("favorite_genres", state.favoriteGenres)
-        readNames("disliked_genres", state.dislikedGenres)
         readNames("favorite_authors", state.favoriteAuthors)
         readNames("disliked_authors", state.dislikedAuthors)
     }
 
-    fun rebuildWeights(knownGenres: JSONArray?) {
+    fun rebuildWeights(knownGenres: JSONArray?, books: JSONArray?) {
         val names = LinkedHashMap<String, String>()
         if (knownGenres != null) {
             for (i in 0 until knownGenres.length()) rememberGenre(names, knownGenres.optString(i))
         }
-        val preferred = HashSet<String>()
-        val disliked = HashSet<String>()
-        state.favoriteGenres.forEach { rememberGenre(names, it)?.let(preferred::add) }
-        state.dislikedGenres.forEach { rememberGenre(names, it)?.let(disliked::add) }
+        val scores = HashMap<String, Double>()
+        val counts = HashMap<String, Int>()
+        if (books != null) for (i in 0 until books.length()) {
+            val book = books.optJSONObject(i) ?: continue
+            val rating = book.optInt("userRating", 0).coerceIn(0, 5)
+            if (rating == 0) continue
+            val genres = book.optJSONArray("genres") ?: continue
+            val bookGenres = HashSet<String>()
+            for (j in 0 until genres.length()) {
+                val key = rememberGenre(names, genres.optString(j)) ?: continue
+                if (bookGenres.add(key)) {
+                    scores[key] = (scores[key] ?: 0.0) + (rating - 3).toDouble()
+                    counts[key] = (counts[key] ?: 0) + 1
+                }
+            }
+        }
 
         model.genreWeights.clear()
-        names.keys.forEach { model.genreWeights[it] = 10 }
-        preferred.forEach { if (names.containsKey(it)) model.genreWeights[it] = 30 }
-        disliked.forEach {
-            if (it !in preferred && names.containsKey(it)) model.genreWeights[it] = 1
+        names.keys.forEach { key ->
+            val count = counts[key] ?: 0
+            val average = if (count == 0) 0.0 else (scores[key] ?: 0.0) / count
+            model.genreWeights[key] = (10 + (average * 4).roundToInt()).coerceIn(1, MAX_GENRE_WEIGHT)
         }
     }
 
@@ -81,8 +92,8 @@ class RecommendationStateStore(
         preferences.edit()
             .putString("genre_weights", weights.toString())
             .putStringSet("seen_books", seen)
-            .putStringSet("favorite_genres", HashSet(state.favoriteGenres))
-            .putStringSet("disliked_genres", HashSet(state.dislikedGenres))
+            .remove("favorite_genres")
+            .remove("disliked_genres")
             .remove("favorite_book_ids")
             .remove("disliked_book_ids")
             .putStringSet("favorite_authors", HashSet(state.favoriteAuthors))
@@ -103,5 +114,9 @@ class RecommendationStateStore(
         val key = name.lowercase(Locale.ROOT)
         if (!names.containsKey(key)) names[key] = name
         return key
+    }
+
+    companion object {
+        private const val MAX_GENRE_WEIGHT = 50
     }
 }

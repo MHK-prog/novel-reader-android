@@ -32,26 +32,6 @@ internal class GenreInfoScreen(private val host: MainActivity) {
         }
         host.addBookInfoLine(body, "تعداد کتاب", host.genreBookCount(currentGenre).toString())
 
-        val liked = host.containsIgnoreCase(host.favoriteGenrePreferences, currentGenre)
-        val disliked = host.containsIgnoreCase(host.dislikedGenrePreferences, currentGenre)
-        val feedback = LinearLayout(host).apply {
-            gravity = Gravity.CENTER
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-        }
-        feedback.addView(host.plainIconButton("thumb_up", if (liked) MainActivity.GREEN else host.MUTED,
-            Runnable {
-                host.toggleGenrePreference(currentGenre, true)
-                host.rerenderCurrentPage()
-            }), LinearLayout.LayoutParams(host.dp(48f), host.dp(42f)))
-        feedback.addView(host.plainIconButton("thumb_down", if (disliked) MainActivity.RED else host.MUTED,
-            Runnable {
-                host.toggleGenrePreference(currentGenre, false)
-                host.rerenderCurrentPage()
-            }), LinearLayout.LayoutParams(host.dp(48f), host.dp(42f)))
-        body.addView(feedback, LinearLayout.LayoutParams(-1, host.dp(46f)).apply {
-            bottomMargin = host.dp(12f)
-        })
-
         val descriptionValue = detail?.optString("description", "")?.trim().orEmpty()
         body.addView(host.text("توضیحات کوتاه", 14, host.MUTED).apply { gravity = Gravity.RIGHT })
         body.addView(host.text(

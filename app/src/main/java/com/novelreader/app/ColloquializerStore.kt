@@ -1,21 +1,21 @@
 package com.novelreader.app
 
+import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 
-/** Stores the optional replacement rules used by the chapter reader. */
+/** Stores app-owned rules and imports the old extension-folder rules once if present. */
 class ColloquializerStore(
-    private val storage: NovelStorage,
+    private val context: Context,
+    private val legacyStorage: NovelStorage,
     private val preferences: SharedPreferences,
 ) {
-    fun isInstalled(): Boolean = try {
-        storage.readPluginFile(STORAGE_ID, RULES_FILE) != null
-    } catch (_: Exception) {
-        false
-    }
+    fun isInstalled(): Boolean = ensureRulesFile().isFile
 
     fun isEnabled(): Boolean = preferences.getBoolean(ENABLED_KEY, false)
 
@@ -24,16 +24,21 @@ class ColloquializerStore(
     }
 
     @Throws(Exception::class)
-    fun readRules(): String = storage.readPluginFile(STORAGE_ID, RULES_FILE)
-        ?: throw IOException("Colloquializer rules are missing.")
+    fun readRules(): String = ensureRulesFile().readText(Charsets.UTF_8)
 
     @Throws(Exception::class)
     fun saveRules(rulesJson: String) {
         validateRules(rulesJson)
-        if (!storage.writePluginFile(STORAGE_ID, RULES_FILE, rulesJson)) {
-            throw IOException(storage.lastError())
+        val file = ensureRulesFile()
+        val temporary = File(file.parentFile, "$RULES_FILE.tmp")
+        FileOutputStream(temporary).use { output ->
+            output.write(rulesJson.toByteArray(Charsets.UTF_8))
+            output.fd.sync()
         }
-        storage.keepColloquializerRulesOnly()
+        if (!temporary.renameTo(file)) {
+            temporary.delete()
+            throw IOException("Could not save colloquializer rules.")
+        }
         setEnabled(true)
     }
 
@@ -63,6 +68,23 @@ class ColloquializerStore(
             }
         }
         TextReplacementEngine.transform("", pairs.toString())
+    }
+
+    private fun ensureRulesFile(): File {
+        val file = File(context.filesDir, "colloquializer/$RULES_FILE")
+        if (file.isFile) return file
+        file.parentFile?.mkdirs()
+        val legacy = try { legacyStorage.readPluginFile(STORAGE_ID, RULES_FILE) } catch (_: Exception) { null }
+        val contents = if (legacy != null) {
+            try {
+                validateRules(legacy)
+                legacy
+            } catch (_: Exception) {
+                "[]"
+            }
+        } else "[]"
+        file.writeText(contents, Charsets.UTF_8)
+        return file
     }
 
     companion object {

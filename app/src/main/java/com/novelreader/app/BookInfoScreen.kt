@@ -159,26 +159,39 @@ internal class BookInfoScreen(private val host: MainActivity) {
         val items = LinearLayout(host)
         items.orientation = LinearLayout.VERTICAL
         items.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        val accordion = AccordionController()
         if (genres != null) for (i in 0 until genres.length()) {
             val genre = genres.optString(i).trim()
             if (genre.isEmpty()) continue
             val detail = host.findGenreDetail(genre)
             val description = detail?.optString("description", "")?.trim().orEmpty()
-            val item = LinearLayout(host)
-            item.orientation = LinearLayout.VERTICAL
-            item.layoutDirection = View.LAYOUT_DIRECTION_RTL
-            item.setPadding(host.dp(12f), host.dp(10f), host.dp(12f), host.dp(10f))
-            item.background = host.roundDrawable(host.SURFACE_ALT, host.themedStrokeColor(0xFF40384A.toInt()), 12)
-            val name = host.text(genre, 15, host.PURPLE)
-            name.gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
-            item.addView(name, LinearLayout.LayoutParams(-1, -2))
+            val item = LinearLayout(host).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(host.dp(12f), host.dp(10f), host.dp(12f), host.dp(10f))
+                background = host.roundDrawable(host.SURFACE_ALT, host.themedStrokeColor(0xFF40384A.toInt()), 12)
+            }
+            val heading = LinearLayout(host).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+            }
+            val name = host.text(genre, 15, host.TEXT).apply { gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL }
+            val chevron = NativeIconView(host, "chevron_down", host.PURPLE)
+            heading.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+            heading.addView(chevron, LinearLayout.LayoutParams(host.dp(20f), host.dp(20f)))
+            item.addView(heading)
             val note = host.text(description.ifEmpty { "توضیحی برای این ژانر ثبت نشده" }, 13,
-                if (description.isEmpty()) host.MUTED else host.TEXT)
-            note.gravity = Gravity.RIGHT
-            note.setLineSpacing(host.dp(2f).toFloat(), 1.25f)
-            val noteParams = LinearLayout.LayoutParams(-1, -2)
-            noteParams.topMargin = host.dp(4f)
-            item.addView(note, noteParams)
+                if (description.isEmpty()) host.MUTED else host.TEXT).apply {
+                gravity = Gravity.RIGHT
+                setLineSpacing(host.dp(2f).toFloat(), 1.25f)
+                setPadding(0, host.dp(8f), 0, host.dp(2f))
+                visibility = View.GONE
+            }
+            item.addView(note, LinearLayout.LayoutParams(-1, -2))
+            item.isClickable = true
+            item.isFocusable = true
+            item.setOnClickListener { accordion.toggle(note, chevron) }
+            host.applyPressScale(item, .985f)
             val itemParams = LinearLayout.LayoutParams(-1, -2)
             itemParams.bottomMargin = host.dp(8f)
             items.addView(item, itemParams)
@@ -220,29 +233,10 @@ internal class BookInfoScreen(private val host: MainActivity) {
         label.isSingleLine = true
         label.gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
         heading.addView(label, LinearLayout.LayoutParams(0, host.dp(22f), 1f))
-        val hint = host.text("مشاهده همه", 11, host.PURPLE)
+        val hint = host.text("برای مشاهده بزن", 11, host.PURPLE)
         hint.gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
         heading.addView(hint, LinearLayout.LayoutParams(-2, host.dp(22f)))
         card.addView(heading)
-        val preview = JSONArray()
-        val genres = book.optJSONArray("genres")
-        if (genres != null) {
-            var added = 0
-            for (i in 0 until genres.length()) {
-                if (added >= 2) break
-                val genre = genres.optString(i).trim()
-                if (genre.isNotEmpty()) {
-                    preview.put(genre)
-                    added++
-                }
-            }
-        }
-        val chips = GenreCloud(host, host.uiComponents, host.PURPLE, host.contrastOnAccent(), host.SURFACE_ALT, host.TEXT)
-        chips.setReadOnly(true)
-        chips.showGenres(preview, mutableSetOf<String>(), "")
-        val chipsParams = LinearLayout.LayoutParams(-1, -2)
-        chipsParams.topMargin = host.dp(4f)
-        card.addView(chips, chipsParams)
         card.contentDescription = "نمایش همهٔ ژانرهای کتاب"
         card.setOnClickListener { showGenres(book) }
         host.applyPressScale(card, .98f)
@@ -313,6 +307,8 @@ internal class BookInfoScreen(private val host: MainActivity) {
         if (!host.saveLibrary()) host.putJson(book, "userRating", previous)
         val savedRating = book.optInt("userRating", 0).coerceIn(0, 5)
         updateBookRatingLabel(label, savedRating)
+        host.rebuildRecommendationWeights()
+        host.persistRecommendationState()
         for (i in stars.indices) {
             stars[i].isSelected = i < savedRating
             stars[i].invalidate()

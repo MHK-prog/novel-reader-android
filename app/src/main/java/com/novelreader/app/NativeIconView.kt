@@ -61,6 +61,7 @@ class NativeIconView(context: Context, name: String, tint: Int) : View(context) 
             "person" -> "person"
             "author_woman" -> "author_woman"
             "author_man" -> "author_man"
+            "author_unknown" -> "author_unknown"
             "tag" -> "tag"
             "scan_text" -> "scan_text"
             "favorite", "heart_outline" -> "heart_outline"

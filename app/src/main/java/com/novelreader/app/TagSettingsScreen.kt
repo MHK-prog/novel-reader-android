@@ -61,8 +61,6 @@ internal class TagSettingsScreen(private val host: MainActivity) {
         for (index in 0 until tags.length()) {
             val tag = tags.optString(index)
             if (!tag.lowercase(Locale.ROOT).contains(query)) continue
-            val favorite = host.containsIgnoreCase(host.favoriteGenrePreferences, tag)
-            val disliked = host.containsIgnoreCase(host.dislikedGenrePreferences, tag)
             val row = LinearLayout(host).apply {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(host.dp(10f), host.dp(3f), host.dp(10f), host.dp(3f))
@@ -75,22 +73,6 @@ internal class TagSettingsScreen(private val host: MainActivity) {
                 isSingleLine = true
                 ellipsize = android.text.TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(0, -1, 1f))
-
-            val like = host.plainIconButton("thumb_up", if (favorite) MainActivity.GREEN else host.MUTED,
-                Runnable {
-                    host.toggleGenrePreference(tag, true)
-                    renderManagedTags(rows, search)
-                })
-            like.contentDescription = if (favorite) "حذف پسند ژانر" else "پسندیدن ژانر"
-            row.addView(like, LinearLayout.LayoutParams(host.dp(38f), host.dp(42f)))
-
-            val dislike = host.plainIconButton("thumb_down", if (disliked) MainActivity.RED else host.MUTED,
-                Runnable {
-                    host.toggleGenrePreference(tag, false)
-                    renderManagedTags(rows, search)
-                })
-            dislike.contentDescription = if (disliked) "حذف نپسند ژانر" else "نپسندیدن ژانر"
-            row.addView(dislike, LinearLayout.LayoutParams(host.dp(38f), host.dp(42f)))
 
             val edit = host.iconButton("edit", host.MUTED, false,
                 Runnable { host.showEditTagDialog(tag, rows, search) })

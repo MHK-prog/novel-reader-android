@@ -145,6 +145,13 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
             background = host.roundDrawable(host.SURFACE, 0xFF40384A.toInt(), 22)
             addView(NativeIconView(host, host.authorIcon(currentAuthor), host.PURPLE),
                 FrameLayout.LayoutParams(host.dp(60f), host.dp(60f), Gravity.CENTER))
+            contentDescription = "انتخاب جنسیت نویسنده"
+            setOnClickListener {
+                showGenderPicker(host.authorGender(currentAuthor)) { gender ->
+                    host.setAuthorGender(currentAuthor, gender)
+                    showPage(currentAuthor)
+                }
+            }
         }
         val iconParams = LinearLayout.LayoutParams(host.dp(88f), host.dp(88f)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
@@ -152,14 +159,15 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
         }
         body.addView(iconBox, iconParams)
 
-        val genderLabel = when (host.authorGender(currentAuthor)) {
-            "female" -> "زن"
-            "male" -> "مرد"
-            else -> "نامشخص"
-        }
-        body.addView(host.text("جنسیت: $genderLabel", 14, host.MUTED).apply {
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(-1, host.dp(34f)))
+        body.addView(host.textButton(
+            "جنسیت: ${genderLabel(host.authorGender(currentAuthor))}",
+            genderIcon(host.authorGender(currentAuthor)), host.PURPLE
+        ) {
+            showGenderPicker(host.authorGender(currentAuthor)) { gender ->
+                host.setAuthorGender(currentAuthor, gender)
+                showPage(currentAuthor)
+            }
+        }, LinearLayout.LayoutParams(-1, host.dp(46f)).apply { bottomMargin = host.dp(10f) })
 
         val feedback = LinearLayout(host).apply {
             gravity = Gravity.CENTER
@@ -226,47 +234,17 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
             "male" -> 2
             else -> 0
         })
-        val labels = arrayOf("نامشخص", "زن", "مرد")
-        val genderSection = LinearLayout(host).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-        genderSection.addView(host.text("جنسیت نویسنده", 14, host.MUTED).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, host.dp(12f), 0, host.dp(7f))
-        }, LinearLayout.LayoutParams(-1, -2))
-        val options = LinearLayout(host).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-        labels.forEachIndexed { index, label ->
-            val choice = host.text(label, 14,
-                if (selectedGender[0] == index) host.contrastOnAccent() else host.TEXT).apply {
-                gravity = Gravity.CENTER
-                background = host.roundDrawable(
-                    if (selectedGender[0] == index) host.PURPLE else host.SURFACE,
-                    if (selectedGender[0] == index) host.PURPLE else 0xFF40384A.toInt(), 12
-                )
-                setOnClickListener {
-                    selectedGender[0] = index
-                    for (itemIndex in 0 until options.childCount) {
-                        val item = options.getChildAt(itemIndex) as? TextView ?: continue
-                        val selected = itemIndex == index
-                        item.setTextColor(if (selected) host.contrastOnAccent() else host.TEXT)
-                        item.background = host.roundDrawable(
-                            if (selected) host.PURPLE else host.SURFACE,
-                            if (selected) host.PURPLE else 0xFF40384A.toInt(), 12
-                        )
-                    }
-                }
+        val genderButtonRef = arrayOfNulls<LinearLayout>(1)
+        val genderButton = host.textButton(
+            "جنسیت: ${genderLabel(genders[selectedGender[0]])}",
+            genderIcon(genders[selectedGender[0]]), host.PURPLE
+        ) {
+            showGenderPicker(genders[selectedGender[0]]) { chosen ->
+                selectedGender[0] = genders.indexOf(chosen).coerceAtLeast(0)
+                updateGenderButton(genderButtonRef[0]!!, genders[selectedGender[0]])
             }
-            val params = LinearLayout.LayoutParams(0, host.dp(46f), 1f)
-            if (index > 0) params.rightMargin = host.dp(7f)
-            options.addView(choice, params)
-            host.applyPressScale(choice, .98f)
         }
-        genderSection.addView(options, LinearLayout.LayoutParams(-1, host.dp(46f)))
+        genderButtonRef[0] = genderButton
 
         val form = LinearLayout(host).apply {
             orientation = LinearLayout.VERTICAL
@@ -276,7 +254,7 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
         form.addView(host.clearableInput(description), host.fieldParams().apply {
             topMargin = host.dp(8f)
         })
-        form.addView(genderSection, host.fieldParams().apply { topMargin = host.dp(8f) })
+        form.addView(genderButton, host.fieldParams().apply { topMargin = host.dp(8f) })
 
         val formScroll = ScrollView(host).apply {
             isFillViewport = true
@@ -331,5 +309,48 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
             setLayout(minOf(host.resources.displayMetrics.widthPixels - host.dp(32f), host.dp(480f)),
                 minOf(host.dp(590f), availableHeight))
         }
+    }
+
+    private fun showGenderPicker(initial: String, onSelected: (String) -> Unit) {
+        val choices = arrayOf("unknown", "female", "male")
+        val labels = arrayOf("نامشخص", "زن", "مرد")
+        val content = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(host.dp(16f), host.dp(8f), host.dp(16f), host.dp(8f))
+        }
+        val dialog = AlertDialog.Builder(host).setTitle("انتخاب جنسیت").setView(content).create()
+        choices.forEachIndexed { index, gender ->
+            val row = host.textButton(labels[index], genderIcon(gender),
+                if (gender == initial) host.PURPLE else host.SECONDARY_ACCENT) {
+                dialog.dismiss()
+                onSelected(gender)
+            }
+            content.addView(row, LinearLayout.LayoutParams(-1, host.dp(48f)).apply {
+                bottomMargin = if (index == choices.lastIndex) 0 else host.dp(7f)
+            })
+        }
+        dialog.show()
+        host.styleDialogWindow(dialog)
+    }
+
+    private fun genderLabel(gender: String): String = when (gender) {
+        "female" -> "زن"
+        "male" -> "مرد"
+        else -> "نامشخص"
+    }
+
+    private fun genderIcon(gender: String): String = when (gender) {
+        "female" -> "author_woman"
+        "male" -> "author_man"
+        else -> "author_unknown"
+    }
+
+    private fun updateGenderButton(button: LinearLayout, gender: String) {
+        (button.getChildAt(1) as? TextView)?.text = "جنسیت: ${genderLabel(gender)}"
+        val oldIcon = button.getChildAt(0) ?: return
+        val params = oldIcon.layoutParams
+        button.removeViewAt(0)
+        button.addView(NativeIconView(host, genderIcon(gender), host.PURPLE), 0, params)
     }
 }

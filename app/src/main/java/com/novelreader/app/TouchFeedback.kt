@@ -2,6 +2,7 @@ package com.novelreader.app
 
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 
@@ -11,20 +12,26 @@ object TouchFeedback {
     fun applyPressScale(view: View, pressedScale: Float) {
         val originalScaleX = view.scaleX
         val originalScaleY = view.scaleY
+        val touchSlop = ViewConfiguration.get(view.context).scaledTouchSlop
         var pressed = false
+        var startX = 0f
+        var startY = 0f
 
         view.setOnTouchListener { touchedView, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     pressed = true
+                    startX = event.x
+                    startY = event.y
                     animate(touchedView, originalScaleX, originalScaleY, pressedScale, true)
                 }
 
                 MotionEvent.ACTION_MOVE -> if (pressed && (
-                    event.x < 0 || event.y < 0 ||
+                    kotlin.math.abs(event.x - startX) > touchSlop ||
+                        kotlin.math.abs(event.y - startY) > touchSlop ||
+                        event.x < 0 || event.y < 0 ||
                         event.x > touchedView.width || event.y > touchedView.height
-                    )
-                ) {
+                    )) {
                     pressed = false
                     animate(touchedView, originalScaleX, originalScaleY, pressedScale, false)
                 }

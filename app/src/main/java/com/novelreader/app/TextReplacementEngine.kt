@@ -5,6 +5,7 @@ import org.json.JSONException
 import java.util.ArrayList
 import java.util.Collections
 import java.util.HashMap
+import java.util.HashSet
 
 /** Small literal replacement engine with the x, s, and n variables used by the colloquializer. */
 object TextReplacementEngine {
@@ -62,39 +63,49 @@ object TextReplacementEngine {
     private fun compileRule(source: String, replacement: String, exceptions: List<String>): Rule {
         val segments = ArrayList<Segment>()
         val literal = StringBuilder()
-        var xCount = 0
+        val sourceWildcards = HashSet<Int>()
+        var nextImplicitWildcard = 0
         var sCount = 0
         var nCount = 0
         var minimumWidth = 0
+        var index = 0
 
-        for (character in source) {
-            val variable = when (character) {
-                'x' -> SegmentType.WILDCARD
-                's' -> SegmentType.SEPARATOR
-                'n' -> SegmentType.NEGATION
-                else -> null
-            }
-            if (variable == null) {
-                literal.append(character)
-                minimumWidth++
-                continue
-            }
-            flushLiteral(segments, literal)
-            segments.add(Segment(variable, null))
-            when (variable) {
-                SegmentType.WILDCARD -> { xCount++; minimumWidth++ }
-                SegmentType.SEPARATOR -> sCount++
-                SegmentType.NEGATION -> nCount++
-                SegmentType.LITERAL -> Unit
+        while (index < source.length) {
+            val character = source[index]
+            when (character) {
+                'x' -> {
+                    flushLiteral(segments, literal)
+                    val token = parseWildcardToken(source, index, nextImplicitWildcard)
+                    if (!sourceWildcards.add(token.index)) {
+                        throw JSONException("Each x capture must have a unique index in the source.")
+                    }
+                    segments.add(Segment(SegmentType.WILDCARD, null, token.index))
+                    minimumWidth++
+                    nextImplicitWildcard = token.nextImplicitIndex
+                    index = token.endIndex
+                }
+                's', 'n' -> {
+                    flushLiteral(segments, literal)
+                    val variable = if (character == 's') SegmentType.SEPARATOR else SegmentType.NEGATION
+                    segments.add(Segment(variable, null))
+                    if (variable == SegmentType.SEPARATOR) sCount++ else nCount++
+                    index++
+                }
+                else -> {
+                    literal.append(character)
+                    minimumWidth++
+                    index++
+                }
             }
         }
         flushLiteral(segments, literal)
 
         if (minimumWidth == 0) throw JSONException("A rule must contain a literal or x.")
-        if (xCount > 1 || sCount > 1 || nCount > 1) {
-            throw JSONException("A rule can use x, s, and n at most once each.")
+        if (sCount > 1 || nCount > 1) {
+            throw JSONException("A rule can use s and n at most once each.")
         }
-        if ((containsVariable(replacement, 'x') && xCount == 0) ||
+        val replacementWildcards = wildcardIndices(replacement)
+        if (!sourceWildcards.containsAll(replacementWildcards) ||
             (containsVariable(replacement, 's') && sCount == 0) ||
             (containsVariable(replacement, 'n') && nCount == 0)
         ) {
@@ -105,6 +116,32 @@ object TextReplacementEngine {
 
     private fun containsVariable(value: String?, variable: Char): Boolean =
         value?.contains(variable) == true
+
+    private fun wildcardIndices(value: String): Set<Int> {
+        val indices = HashSet<Int>()
+        var nextImplicitIndex = 0
+        var index = 0
+        while (index < value.length) {
+            if (value[index] == 'x') {
+                val token = parseWildcardToken(value, index, nextImplicitIndex)
+                indices.add(token.index)
+                nextImplicitIndex = token.nextImplicitIndex
+                index = token.endIndex
+            } else {
+                index++
+            }
+        }
+        return indices
+    }
+
+    private fun parseWildcardToken(value: String, start: Int, nextImplicitIndex: Int): WildcardToken {
+        var end = start + 1
+        while (end < value.length && value[end] in '0'..'9') end++
+        if (end == start + 1) return WildcardToken(nextImplicitIndex, end, nextImplicitIndex + 1)
+        val captureIndex = value.substring(start + 1, end).toIntOrNull()
+            ?: throw JSONException("x capture index is too large.")
+        return WildcardToken(captureIndex, end, nextImplicitIndex)
+    }
 
     private fun flushLiteral(segments: MutableList<Segment>, literal: StringBuilder) {
         if (literal.isEmpty()) return
@@ -217,7 +254,7 @@ object TextReplacementEngine {
                 for (i in possibleEnds.indices.reversed()) {
                     val candidateEnd = possibleEnds[i]
                     val withWildcard = captures.copy().also {
-                        it.wildcard = text.substring(textIndex, candidateEnd)
+                        it.wildcards[segment.wildcardIndex] = text.substring(textIndex, candidateEnd)
                     }
                     val match = matchSegments(text, candidateEnd, rule, segmentIndex + 1, withWildcard)
                     if (match != null) return match
@@ -237,12 +274,20 @@ object TextReplacementEngine {
 
     private fun expand(replacement: String, captures: Captures): String {
         val result = StringBuilder(replacement.length + 8)
-        for (character in replacement) {
+        var nextImplicitWildcard = 0
+        var index = 0
+        while (index < replacement.length) {
+            val character = replacement[index]
             when (character) {
-                'x' -> result.append(captures.wildcard ?: "")
-                's' -> result.append(captures.separator)
-                'n' -> result.append(captures.negation)
-                else -> result.append(character)
+                'x' -> {
+                    val token = parseWildcardToken(replacement, index, nextImplicitWildcard)
+                    result.append(captures.wildcards[token.index].orEmpty())
+                    nextImplicitWildcard = token.nextImplicitIndex
+                    index = token.endIndex
+                }
+                's' -> { result.append(captures.separator); index++ }
+                'n' -> { result.append(captures.negation); index++ }
+                else -> { result.append(character); index++ }
             }
         }
         return result.toString()
@@ -334,7 +379,8 @@ object TextReplacementEngine {
     }
 
     private enum class SegmentType { LITERAL, WILDCARD, NEGATION, SEPARATOR }
-    private class Segment(val type: SegmentType, val literal: String?)
+    private class Segment(val type: SegmentType, val literal: String?, val wildcardIndex: Int = 0)
+    private class WildcardToken(val index: Int, val endIndex: Int, val nextImplicitIndex: Int)
     private class Rule(
         val source: String,
         val replacement: String,
@@ -345,12 +391,12 @@ object TextReplacementEngine {
     }
 
     private class Captures {
-        var wildcard: String? = null
+        val wildcards = HashMap<Int, String>()
         var separator: String = ""
         var negation: String = ""
 
         fun copy() = Captures().also {
-            it.wildcard = wildcard
+            it.wildcards.putAll(wildcards)
             it.separator = separator
             it.negation = negation
         }

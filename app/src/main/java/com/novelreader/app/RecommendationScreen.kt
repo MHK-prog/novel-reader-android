@@ -169,14 +169,16 @@ internal class RecommendationScreen(private val host: MainActivity) {
     }
 
     private fun topGenres(): List<String> {
-        val values = ArrayList(host.favoriteGenrePreferences)
-        if (values.isEmpty()) {
-            val all = host.allGenres()
-            for (index in 0 until all.length()) values.add(all.optString(index))
-        }
+        val all = host.allGenres()
+        val values = ArrayList<String>()
+        for (index in 0 until all.length()) values.add(all.optString(index))
         values.sortWith(compareByDescending { host.recommendationPreferences.weightFor(it) })
         val top = ArrayList<String>(3)
-        for (value in values) if (!host.containsIgnoreCase(top, value) && top.size < 3) top.add(value)
+        for (value in values) {
+            if (host.recommendationPreferences.weightFor(value) > 10 &&
+                !host.containsIgnoreCase(top, value) && top.size < 3
+            ) top.add(value)
+        }
         if (top.size < 3) {
             val all = host.allGenres()
             for (index in 0 until all.length()) {
