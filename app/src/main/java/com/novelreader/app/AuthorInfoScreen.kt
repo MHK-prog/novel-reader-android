@@ -234,7 +234,7 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
             "male" -> 2
             else -> 0
         })
-        val genderButtonRef = arrayOfNulls<LinearLayout>(1)
+        val genderButtonRef = arrayOfNulls<View>(1)
         val genderButton = host.textButton(
             "جنسیت: ${genderLabel(genders[selectedGender[0]])}",
             genderIcon(genders[selectedGender[0]]), host.PURPLE
@@ -346,11 +346,12 @@ internal class AuthorInfoScreen(private val host: MainActivity) {
         else -> "author_unknown"
     }
 
-    private fun updateGenderButton(button: LinearLayout, gender: String) {
-        (button.getChildAt(1) as? TextView)?.text = "جنسیت: ${genderLabel(gender)}"
-        val oldIcon = button.getChildAt(0) ?: return
+    private fun updateGenderButton(button: View, gender: String) {
+        val row = button as? LinearLayout ?: return
+        (row.getChildAt(1) as? TextView)?.text = "جنسیت: ${genderLabel(gender)}"
+        val oldIcon = row.getChildAt(0) ?: return
         val params = oldIcon.layoutParams
-        button.removeViewAt(0)
-        button.addView(NativeIconView(host, genderIcon(gender), host.PURPLE), 0, params)
+        row.removeViewAt(0)
+        row.addView(NativeIconView(host, genderIcon(gender), host.PURPLE), 0, params)
     }
 }
